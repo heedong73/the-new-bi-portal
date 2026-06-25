@@ -1,0 +1,12 @@
+# 빌드 컨텍스트에서 제외 (이미지 비대화·민감정보 방지)
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.hypothesis
+**/dist
+.git
+.env
+**/*.log
+backend/.venv
+frontend/node_modules

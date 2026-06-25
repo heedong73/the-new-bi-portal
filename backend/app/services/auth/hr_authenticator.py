@@ -1,0 +1,81 @@
+"""HR_Authenticator — 인사정보 뷰 기반 사번/비밀번호 인증 (읽기 전용).
+
+design.md "인증(인사정보 DB)" 참조. 인사 뷰(public.scl_v_insa_*)를 읽기 전용으로
+조회하여 SHA-256 3회 해시로 비밀번호를 검증한다. INSERT/UPDATE/DELETE 금지(R33.3).
+AUTH_MODE=mock이면 인사 DB 없이 더미 사용자로 인증한다.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.services.auth.password_hash import verify_password
+
+@dataclass
+class HRProfile:
+    """인사 뷰에서 가져온 인증 성공 사용자 프로필."""
+    emp_no: str
+    user_name: str
+    cmp_email: str | None
+    cmp_id: str | None
+    dept_id: str | None
+    ofc_id: str | None
+
+class AuthenticationError(Exception):
+    """사번 없음 또는 비밀번호 불일치."""
+
+async def authenticate(db: AsyncSession, emp_no: str, password: str) -> HRProfile:
+    """사번+비밀번호로 인증하고 프로필을 반환. 실패 시 AuthenticationError.
+
+    mock 모드: 비밀번호 'mock' 이면 더미 프로필 반환(인사 DB 미접근).
+    hr-db 모드: scl_v_insa_user_add_pwd에서 login_pwd 조회 후 해시 비교.
+    """
+    if settings.AUTH_MODE == "mock":
+        if password != "mock":
+            raise AuthenticationError("mock 모드: 비밀번호는 'mock' 입니다.")
+        return HRProfile(
+            emp_no=emp_no,
+            user_name=f"테스트사용자_{emp_no}",
+            cmp_email=f"{emp_no}@example.com",
+            cmp_id="MOCK",
+            dept_id="D001",
+            ofc_id="O001",
+        )
+
+    # hr-db 모드: 인사 뷰 읽기 전용 조회
+    row = (
+        await db.execute(
+            text(
+                "SELECT emp_no, login_pwd, cmp_email, user_name, cmp_id "
+                "FROM public.scl_v_insa_user_add_pwd WHERE emp_no = :emp_no"
+            ),
+            {"emp_no": emp_no},
+        )
+    ).first()
+
+    if row is None or not verify_password(password, row.login_pwd):
+        raise AuthenticationError("사번 또는 비밀번호가 올바르지 않습니다.")
+
+    # 조직/직급 조회 (기본 부서: bass_dept_yn='Y' 우선, 없으면 emp_sort_ordr 최상위)
+    job = (
+        await db.execute(
+            text(
+                "SELECT cmp_id, dept_id, ofc_id FROM public.scl_v_insa_my_job "
+                "WHERE emp_no = :emp_no "
+                "ORDER BY (bass_dept_yn = 'Y') DESC, emp_sort_ordr ASC LIMIT 1"
+            ),
+            {"emp_no": emp_no},
+        )
+    ).first()
+
+    return HRProfile(
+        emp_no=row.emp_no,
+        user_name=row.user_name,
+        cmp_email=row.cmp_email,
+        cmp_id=job.cmp_id if job else None,
+        dept_id=job.dept_id if job else None,
+        ofc_id=job.ofc_id if job else None,
+    )

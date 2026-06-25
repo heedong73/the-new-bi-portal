@@ -1,0 +1,60 @@
+version: "3.9"
+
+networks:
+  bip-test-net:
+    driver: bridge
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: bip-postgres-test
+    ports:
+      - "5432:5432"
+    networks:
+      - bip-test-net
+    environment:
+      POSTGRES_DB: bi_portal_test
+      POSTGRES_USER: bip_test
+      POSTGRES_PASSWORD: bip_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bip_test -d bi_portal_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: bip-redis-test
+    ports:
+      - "6379:6379"
+    networks:
+      - bip-test-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend-test:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bip-backend-test
+    networks:
+      - bip-test-net
+    environment:
+      DATABASE_URL: postgresql+asyncpg://bip_test:bip_test@postgres-test:5432/bi_portal_test
+      DATABASE_SSL: disable
+      DATABASE_SCHEMA: bip
+      REDIS_URL: redis://redis-test:6379/0
+      APP_MODE: mock
+      AUTH_MODE: mock
+      APP_TIMEZONE: Asia/Seoul
+      SESSION_SECRET: test-secret-key
+      POWERBI_VERIFY_SSL: "false"
+    command: sh -c "alembic upgrade head && pytest tests/ -v --tb=short"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy

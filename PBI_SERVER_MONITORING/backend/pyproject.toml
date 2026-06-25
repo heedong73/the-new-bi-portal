@@ -1,0 +1,64 @@
+[project]
+name = "powerbi-refresh-monitor-backend"
+version = "1.0.0"
+description = "Power BI Refresh Monitor - Backend API (FastAPI)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # --- Web framework ---
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.30,<0.35",
+    # --- Settings / validation (Pydantic v2) ---
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.3,<3.0",
+    # --- Persistence ---
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "alembic>=1.13,<2.0",
+    "asyncpg>=0.29,<0.31",
+    # --- HTTP client (Power BI / Azure AD) ---
+    "httpx>=0.27,<0.29",
+    # --- Worker / Scheduler / Cache ---
+    "celery>=5.4,<6.0",
+    "redis>=5.0,<6.0",
+    # --- Logging ---
+    "structlog>=24.1,<25.0",
+    # --- Date / timezone helpers (zoneinfo is stdlib; dateutil for parsing) ---
+    "python-dateutil>=2.9,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9.0",
+    "pytest-asyncio>=0.23,<0.25",
+    "hypothesis>=6.100,<7.0",
+    "respx>=0.21,<0.22",
+    "ruff>=0.5,<0.7",
+    "mypy>=1.10,<2.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+/* Power BI Refresh Monitor - 전역 스타일 진입점 (Tailwind CSS v4) */
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  background-color: #f8fafc;
+  color: #0f172a;
+}

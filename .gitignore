@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+backend/.venv/
+backend/.pytest_cache/
+backend/htmlcov/
+.hypothesis/
+*.egg-info/
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+.DS_Store

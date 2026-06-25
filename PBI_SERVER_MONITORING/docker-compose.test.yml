@@ -1,0 +1,11 @@
+# ============================================================
+# Power BI Refresh Monitor - Docker Compose (테스트 오버라이드)
+# ------------------------------------------------------------
+# NOTE: 이 파일은 Task 0.1(부트스트랩) 단계의 최소 골격이다.
+#       테스트 전용 서비스/명령(예: pytest, vitest, testcontainers)은
+#       후속 task에서 추가된다.
+#
+# 사용:   docker compose -f docker-compose.yml -f docker-compose.test.yml up --build
+# ============================================================
+
+services: {}

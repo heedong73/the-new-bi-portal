@@ -1,0 +1,194 @@
+# ============================================================
+# The New BI Portal (BIP) - Docker Compose (v1.0)
+# ------------------------------------------------------------
+# BIP 전체 스택을 단일 정의로 기동한다 (Requirement R25.3, R25.6).
+#
+# 6개 서비스:
+#   nginx / frontend / backend / worker / scheduler / redis
+#
+# 외부 의존성:
+#   - PostgreSQL `bi_portal` (AWS RDS, 서울 ap-northeast-2)는 Compose 외부에
+#     위치하며 `DATABASE_URL`로 연결한다. (Compose 안에 postgres 서비스를 두지 않음)
+#
+# PRM(powerbi-refresh-monitor) compose와의 차이점:
+#   - postgres 서비스 제거 (외부 RDS `bi_portal`로 대체)
+#   - nginx 리버스 프록시 추가 (유일한 외부 진입점)
+#
+# 기동:   docker compose -f docker-compose.bip.yml up --build
+# 종료:   docker compose -f docker-compose.bip.yml down
+# 검증:   docker compose -f docker-compose.bip.yml config
+#
+# 모든 환경 변수는 루트 `.env`에서 주입된다 (.env.example 참고, 태스크 1.3).
+# 실제 RDS 호스트 / SMTP 호스트 / Azure·Power BI 시크릿은 문서가 아닌
+# `.env`(gitignore 대상)에만 보관한다. 아래 fallback 값은 전부 플레이스홀더다.
+#
+# secret 경계: Power BI/Azure/SMTP secret은 backend/worker/scheduler 에만
+# 주입되고 frontend 빌드에는 절대 포함하지 않는다 (R38).
+# ============================================================
+
+services:
+  # ---------------------------------------------------------
+  # Redis 7 - cache / queue / lock / token cache (원장 저장 금지)
+  # ---------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: bip-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - bip-net
+
+  # ---------------------------------------------------------
+  # Backend - FastAPI
+  #   entrypoint.sh: alembic upgrade head → uvicorn
+  #   /api/health healthcheck
+  #   외부 RDS(bi_portal)에 DATABASE_URL로 연결 (SSL 필수)
+  # ---------------------------------------------------------
+  backend:
+    build: ./backend
+    container_name: bip-backend
+    restart: unless-stopped
+    entrypoint: ["./entrypoint.sh"]
+    env_file:
+      - .env
+    environment:
+      # 런타임 모드 (.env 미존재 시에도 mock 으로 안전 기동)
+      APP_MODE: ${APP_MODE:-mock}
+      AUTH_MODE: ${AUTH_MODE:-mock}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Seoul}
+      # 외부 RDS bi_portal — 실제 호스트/자격은 .env 에만 보관 (아래는 플레이스홀더)
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://<user>:<password>@<RDS_HOST>:5432/bi_portal}
+      DATABASE_SSL: ${DATABASE_SSL:-require}
+      DATABASE_SCHEMA: ${DATABASE_SCHEMA:-bip}
+      # compose 내부 Redis
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # 파일 저장소 (StorageService)
+      STORAGE_ROOT_PATH: ${STORAGE_ROOT_PATH:-/data/reportimage}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+    volumes:
+      - bip-reportimage:/data/reportimage
+    expose:
+      - "8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - bip-net
+
+  # ---------------------------------------------------------
+  # Worker - Celery (수집/Export/메일/Refresh)
+  #   backend healthy 후 기동 (마이그레이션 선행 보장)
+  # ---------------------------------------------------------
+  worker:
+    build: ./backend
+    container_name: bip-worker
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      APP_MODE: ${APP_MODE:-mock}
+      AUTH_MODE: ${AUTH_MODE:-mock}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Seoul}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://<user>:<password>@<RDS_HOST>:5432/bi_portal}
+      DATABASE_SSL: ${DATABASE_SSL:-require}
+      DATABASE_SCHEMA: ${DATABASE_SCHEMA:-bip}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      STORAGE_ROOT_PATH: ${STORAGE_ROOT_PATH:-/data/reportimage}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+    volumes:
+      - bip-reportimage:/data/reportimage
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bip-net
+
+  # ---------------------------------------------------------
+  # Scheduler - Celery Beat (동기화/메일 스케줄 트리거)
+  #   worker 기동 후 기동
+  # ---------------------------------------------------------
+  scheduler:
+    build: ./backend
+    container_name: bip-scheduler
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    env_file:
+      - .env
+    environment:
+      APP_MODE: ${APP_MODE:-mock}
+      AUTH_MODE: ${AUTH_MODE:-mock}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Seoul}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://<user>:<password>@<RDS_HOST>:5432/bi_portal}
+      DATABASE_SSL: ${DATABASE_SSL:-require}
+      DATABASE_SCHEMA: ${DATABASE_SCHEMA:-bip}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      worker:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - bip-net
+
+  # ---------------------------------------------------------
+  # Frontend - React 19 + Vite 6 (정적 빌드 산출물)
+  #   nginx 가 서빙하므로 호스트 포트를 직접 노출하지 않는다.
+  #   secret 미주입 (frontend 빌드에는 시크릿이 포함되지 않음, R38)
+  # ---------------------------------------------------------
+  frontend:
+    build: ./frontend
+    container_name: bip-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      - backend
+    networks:
+      - bip-net
+
+  # ---------------------------------------------------------
+  # nginx - 리버스 프록시 (유일한 외부 진입점, 내부망 전용)
+  #   / → frontend 정적, /api/* → backend
+  #   /reportimage/* 정적 서빙은 기본 비활성(SERVE_REPORTIMAGE_STATIC=false, 태스크 1.2)
+  #   nginx 설정 파일(./nginx/nginx.conf)은 태스크 1.2 에서 작성한다.
+  # ---------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: bip-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      # TLS 인증서 (내부망 전용, 실제 인증서는 .env/시크릿 경로에서 마운트)
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - bip-net
+
+volumes:
+  # 레포트 이미지/extracted 저장소 (개발=named volume, 운영=NAS 마운트로 교체)
+  bip-reportimage:
+
+networks:
+  bip-net:
+    name: bip-net
+    driver: bridge

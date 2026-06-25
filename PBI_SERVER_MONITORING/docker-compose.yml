@@ -1,0 +1,155 @@
+# ============================================================
+# Power BI Refresh Monitor - Docker Compose
+# ------------------------------------------------------------
+# 6개 서비스를 단일 파일로 정의한다:
+#   postgres / redis / backend / frontend / worker / scheduler
+#
+# 초기 인도 단계에서는 APP_MODE=mock 이 기본값이므로 worker/scheduler
+# 가 외부 Power BI API 없이도 기동 실패하지 않는다.
+#
+# 기동:   docker compose up --build
+# 종료:   docker compose down
+# 검증:   docker compose config
+#
+# 환경 변수는 루트 .env 파일에서 주입된다 (.env.example 참고).
+# DATABASE_URL / REDIS_URL 은 compose 내부 서비스명(postgres, redis)
+# 기준으로 동작한다.
+# ============================================================
+
+services:
+  # ---------------------------------------------------------
+  # PostgreSQL 16 - 영속 저장소
+  # ---------------------------------------------------------
+  postgres:
+    image: postgres:16
+    container_name: prm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-prm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prm}
+      POSTGRES_DB: ${POSTGRES_DB:-prm}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - prm-net
+
+  # ---------------------------------------------------------
+  # Redis 7 - 토큰 캐시 / 분산 락 / Celery broker
+  # ---------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: prm-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - prm-net
+
+  # ---------------------------------------------------------
+  # Backend - FastAPI (entrypoint.sh: alembic upgrade head + uvicorn)
+  # ---------------------------------------------------------
+  backend:
+    build: ./backend
+    container_name: prm-backend
+    restart: unless-stopped
+    entrypoint: ["./entrypoint.sh"]
+    env_file:
+      - .env
+    environment:
+      # APP_MODE 기본값 보장 (.env 미존재 시에도 mock 으로 기동)
+      APP_MODE: ${APP_MODE:-mock}
+      # compose 내부 서비스명 기준 연결 문자열 (기본값 fallback)
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://prm:prm@postgres:5432/prm}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - prm-net
+
+  # ---------------------------------------------------------
+  # Frontend - React + Vite (빌드 후 정적 서빙, 컨테이너 :80 → 호스트 5173)
+  # ---------------------------------------------------------
+  frontend:
+    build: ./frontend
+    container_name: prm-frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    networks:
+      - prm-net
+
+  # ---------------------------------------------------------
+  # Collector_Worker - Celery worker
+  # ---------------------------------------------------------
+  worker:
+    build: ./backend
+    container_name: prm-worker
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      APP_MODE: ${APP_MODE:-mock}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://prm:prm@postgres:5432/prm}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - prm-net
+
+  # ---------------------------------------------------------
+  # Scheduler - Celery Beat (1분 또는 5분 간격 수집 트리거)
+  # ---------------------------------------------------------
+  scheduler:
+    build: ./backend
+    container_name: prm-scheduler
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    env_file:
+      - .env
+    environment:
+      APP_MODE: ${APP_MODE:-mock}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://prm:prm@postgres:5432/prm}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      worker:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - prm-net
+
+volumes:
+  postgres-data:
+
+networks:
+  prm-net:
+    name: prm-net
