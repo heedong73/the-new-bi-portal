@@ -99,10 +99,10 @@ async def folder_tree(db: SessionDep, current=Depends(get_current_user)):
         db, current["user_id"], PermissionAction.VIEW
     )
 
-    # folder_id -> [report_id] (권한 보유 + 공개 레포트만)
+    # folder_id -> [report_id] (VIEW 권한 보유 레포트만; 가시성은 권한 기반)
     reports_by_folder: dict[int | None, list[int]] = {}
     for r in reports:
-        if r.id in accessible and r.is_published:
+        if r.id in accessible:
             reports_by_folder.setdefault(r.folder_id, []).append(r.id)
 
     # 노드 생성

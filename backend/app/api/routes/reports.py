@@ -5,13 +5,20 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+import os
+import uuid
+
+from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
+from celery.result import AsyncResult
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.constants import AuditAction, RoleCode, PermissionAction
 from app.core.deps import SessionDep, require_role, get_current_user
-from app.core.errors import NotFoundError, ConflictError
+from app.core.errors import NotFoundError, ConflictError, ValidationError
 from app.models.report import Report, Workspace
+from app.workers.celery_app import celery_app
+from app.workers.tasks.pbix_import import pbix_import as pbix_import_task
 from app.schemas.report import (
     ReportCreate, ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse,
 )
@@ -28,6 +35,8 @@ def _to_response(r: Report) -> ReportResponse:
         dataset_id=r.dataset_id, report_name=r.report_name, display_name=r.display_name,
         description=r.description, category=r.category, folder_id=r.folder_id,
         is_published=r.is_published,
+        created_by_user_id=r.created_by_user_id, created_by_label=r.created_by_label,
+        created_at=r.created_at,
     )
 
 async def _upsert_workspace(db: SessionDep, workspace_id: str) -> None:
@@ -43,15 +52,66 @@ async def list_reports(
     current=Depends(get_current_user),
     folder_id: int | None = Query(default=None),
 ):
-    """VIEW 권한 보유 + 공개 레포트 목록 (folder_id 필터 옵션)."""
+    """VIEW 권한 보유 레포트 목록 (folder_id 필터 옵션).
+
+    가시성은 권한(VIEW) 기반이다. 등록 후 권한을 부여해야 노출된다.
+    """
     accessible = await permission_service.accessible_report_ids(
         db, current["user_id"], PermissionAction.VIEW
     )
-    stmt = select(Report).where(Report.is_published == True)  # noqa: E712
+    stmt = select(Report)
     if folder_id is not None:
         stmt = stmt.where(Report.folder_id == folder_id)
     reports = (await db.execute(stmt.order_by(Report.id))).scalars().all()
     return [_to_response(r) for r in reports if r.id in accessible]
+
+@router.get("/all", response_model=list[ReportResponse])
+async def list_all_reports(db: SessionDep, _op=Depends(_require_operator)):
+    """전체 레포트 (미공개 포함) — 관리자 레포트 관리 화면용."""
+    reports = (await db.execute(select(Report).order_by(Report.id))).scalars().all()
+    return [_to_response(r) for r in reports]
+
+@router.post("/import-pbix", status_code=202)
+async def import_pbix(
+    file: UploadFile = File(...),
+    report_name: str = Form(...),
+    workspace_id: str | None = Form(default=None),
+    folder_id: int | None = Form(default=None),
+    description: str | None = Form(default=None),
+    *,
+    op=Depends(_require_operator),
+):
+    """PBIX 파일 업로드 → Power BI 신규 게시 (Worker 비동기). task_id 반환."""
+    if not file.filename or not file.filename.lower().endswith(".pbix"):
+        raise ValidationError("PBIX(.pbix) 파일만 업로드할 수 있습니다.")
+
+    ws = workspace_id or settings.POWERBI_WORKSPACE_ID
+    upload_dir = os.path.join(settings.STORAGE_ROOT_PATH, "_pbix_uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    path = os.path.join(upload_dir, f"{uuid.uuid4().hex}.pbix")
+    with open(path, "wb") as f:
+        f.write(await file.read())
+
+    task = pbix_import_task.delay(
+        file_path=path, workspace_id=ws,
+        report_name=report_name, folder_id=folder_id,
+        description=description,
+        created_by_user_id=op.get("user_id"),
+        created_by_label=op.get("name") or op.get("emp_no"),
+    )
+    return {"task_id": task.id, "status": "enqueued", "report_name": report_name}
+
+@router.get("/import-status/{task_id}")
+async def import_status(task_id: str, _op=Depends(_require_operator)):
+    """PBIX import 작업 진행 상태 조회 (Celery result)."""
+    res = AsyncResult(task_id, app=celery_app)
+    state = res.state
+    payload: dict = {"task_id": task_id, "state": state}
+    if state == "SUCCESS":
+        payload["result"] = res.result
+    elif state == "FAILURE":
+        payload["error"] = str(res.result)
+    return payload
 
 @router.post("", response_model=ReportResponse, status_code=201)
 async def create_report(body: ReportCreate, db: SessionDep, op=Depends(_require_operator)):
@@ -70,7 +130,9 @@ async def create_report(body: ReportCreate, db: SessionDep, op=Depends(_require_
         workspace_id=body.workspace_id, report_id=body.report_id,
         dataset_id=body.dataset_id, report_name=body.report_name,
         display_name=body.display_name, description=body.description,
-        folder_id=body.folder_id, is_published=False,
+        folder_id=body.folder_id, is_published=True,
+        created_by_user_id=op.get("user_id"),
+        created_by_label=op.get("name") or op.get("emp_no"),
     )
     db.add(report)
     await db.flush()

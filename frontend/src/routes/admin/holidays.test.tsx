@@ -42,7 +42,7 @@ describe('HolidaysPage', () => {
     wrap(<HolidaysPage />)
     fireEvent.click(await screen.findByRole('button', { name: /국가공휴일 가져오기/ }))
     await waitFor(() => expect(holidaysApi.seed).toHaveBeenCalled())
-    expect(await screen.findByText(/15건을 추가/)).toBeInTheDocument()
+    expect(await screen.findByText(/15건을 반영/)).toBeInTheDocument()
   })
 
   it('사내 공휴일을 추가한다', async () => {

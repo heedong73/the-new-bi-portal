@@ -1,7 +1,7 @@
 """Feature: the-new-bi-portal, Property 1 & 2: 권한 합집합 + 목록 가시성.
 
 Property 1: accessible_report_ids(action) == 네 출처(user/role/dept/group) 합집합.
-Property 2: 노출 목록 = VIEW 권한 보유 AND is_published=true.
+Property 2: 노출 목록 = VIEW 권한 보유 (권한 기반 가시성).
 
 각 테스트는 conftest.db fixture(트랜잭션 롤백)로 격리된다.
 """
@@ -113,9 +113,10 @@ async def test_permission_union(db, grant):
 @settings(max_examples=50, deadline=None,
           suppress_health_check=[HealthCheck.function_scoped_fixture])
 async def test_report_list_visibility(db, published, has_view):
-    """Property 2: 노출 = VIEW 권한 보유 AND is_published=true.
+    """Property 2: 노출 = VIEW 권한 보유 (권한 기반 가시성).
 
-    공개/비공개 × 권한유무 4조합에서, 둘 다 참일 때만 접근 집합에 포함.
+    가시성 모델이 권한 기반으로 전환되어 is_published는 노출을 좌우하지 않는다.
+    공개 여부와 무관하게, VIEW 권한이 있을 때만 접근 집합에 포함된다.
     """
     user = User(external_id=_uid(), name="u", is_active=True)
     db.add(user)
@@ -132,10 +133,10 @@ async def test_report_list_visibility(db, published, has_view):
     accessible = await permission_service.accessible_report_ids(
         db, user.id, PermissionAction.VIEW
     )
-    # 권한 계산은 VIEW 보유 여부만 본다 (공개 필터는 목록 API에서 AND 적용)
+    # 권한 계산은 VIEW 보유 여부만 본다
     assert (rid in accessible) == has_view
 
-    # 최종 노출 = 권한 AND 공개
-    visible = (rid in accessible) and published
-    assert visible == (has_view and published)
+    # 최종 노출 = VIEW 권한 (공개 여부 무관)
+    visible = rid in accessible
+    assert visible == has_view
 

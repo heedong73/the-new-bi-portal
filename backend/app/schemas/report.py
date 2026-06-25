@@ -1,6 +1,8 @@
 """레포트 카탈로그 I/O 스키마."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 class ReportCreate(BaseModel):
@@ -43,3 +45,15 @@ class ReportResponse(BaseModel):
     category: str | None = None
     folder_id: int | None = None
     is_published: bool
+    created_by_user_id: int | None = None
+    created_by_label: str | None = None
+    created_at: datetime | None = None
+
+
+class WorkspaceReportItem(BaseModel):
+    """라이브 PBI 워크스페이스 레포트 (등록 화면 선택용)."""
+    workspace_id: str
+    report_id: str
+    report_name: str
+    dataset_id: str | None = None
+    dataset_name: str | None = None

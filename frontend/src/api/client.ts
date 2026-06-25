@@ -133,8 +133,13 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const headers: Record<string, string> = { Accept: "application/json" };
   let bodyInit: BodyInit | undefined;
   if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    bodyInit = JSON.stringify(body);
+    if (typeof FormData !== "undefined" && body instanceof FormData) {
+      // multipart: Content-Type은 브라우저가 boundary와 함께 자동 설정
+      bodyInit = body;
+    } else {
+      headers["Content-Type"] = "application/json";
+      bodyInit = JSON.stringify(body);
+    }
   }
 
   let response: Response;

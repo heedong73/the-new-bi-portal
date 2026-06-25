@@ -1,8 +1,9 @@
 /** 관리자 레이아웃 (T-38) — 상단 탭 네비 + 중첩 라우트 Outlet. */
 import { NavLink, Outlet } from 'react-router-dom'
-import { Users, UsersRound, ShieldCheck, CalendarOff } from 'lucide-react'
+import { Users, UsersRound, ShieldCheck, CalendarOff, FileBarChart } from 'lucide-react'
 
 const tabs = [
+  { to: '/admin/reports', label: '레포트', Icon: FileBarChart },
   { to: '/admin/users', label: '사용자', Icon: Users },
   { to: '/admin/groups', label: '그룹', Icon: UsersRound },
   { to: '/admin/roles', label: '역할', Icon: ShieldCheck },

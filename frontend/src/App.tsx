@@ -11,6 +11,7 @@ import AdminLayout from '@/routes/admin/AdminLayout'
 import UsersPage from '@/routes/admin/UsersPage'
 import GroupsPage from '@/routes/admin/GroupsPage'
 import RolesPage from '@/routes/admin/RolesPage'
+import ReportsPage from '@/routes/admin/ReportsPage'
 import HolidaysPage from '@/routes/admin/HolidaysPage'
 import StatsDashboardPage from '@/routes/stats/StatsDashboardPage'
 import OpsStatusPage from '@/routes/monitoring/OpsStatusPage'
@@ -34,7 +35,8 @@ function App() {
                 <Route path="/" element={<HomePage />} />
                 <Route path="/reports/:reportId" element={<ReportViewPage />} />
                 <Route path="/admin" element={<AdminLayout />}>
-                  <Route index element={<Navigate to="users" replace />} />
+                  <Route index element={<Navigate to="reports" replace />} />
+                  <Route path="reports" element={<ReportsPage />} />
                   <Route path="users" element={<UsersPage />} />
                   <Route path="groups" element={<GroupsPage />} />
                   <Route path="roles" element={<RolesPage />} />

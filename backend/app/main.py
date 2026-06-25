@@ -20,6 +20,7 @@ from app.api.routes import audit_logs as audit_logs_routes
 from app.api.routes import stats as stats_routes
 from app.api.routes import holidays as holidays_routes
 from app.api.routes import report_images as report_images_routes
+from app.api.routes import powerbi as powerbi_routes
 
 
 logger = get_logger(__name__)
@@ -64,3 +65,4 @@ app.include_router(audit_logs_routes.router)
 app.include_router(stats_routes.router)
 app.include_router(holidays_routes.router)
 app.include_router(report_images_routes.router)
+app.include_router(powerbi_routes.router)

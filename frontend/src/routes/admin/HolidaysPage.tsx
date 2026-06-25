@@ -38,7 +38,12 @@ export default function HolidaysPage() {
         holiday_date: newDate, name: newName.trim(),
         holiday_type: 'company', is_recurring: recurring,
       }),
-    onSuccess: () => { setNewDate(''); setNewName(''); setRecurring(false); invalidate() },
+    onSuccess: (created) => {
+      // 추가한 공휴일이 보이도록 해당 연도로 전환
+      const y = Number(created?.holiday_date?.slice(0, 4))
+      if (!Number.isNaN(y)) setYear(y)
+      setNewDate(''); setNewName(''); setRecurring(false); invalidate()
+    },
   })
   const deleteMutation = useMutation({
     mutationFn: (id: number) => holidaysApi.remove(id),
@@ -63,7 +68,7 @@ export default function HolidaysPage() {
             aria-label="연도"
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
-            {[thisYear - 1, thisYear, thisYear + 1, thisYear + 2].map((y) => (
+            {[thisYear, thisYear + 1, thisYear + 2].map((y) => (
               <option key={y} value={y}>{y}년</option>
             ))}
           </select>
@@ -83,7 +88,7 @@ export default function HolidaysPage() {
       </p>
 
       {seedMutation.isSuccess && (
-        <p className="mb-3 text-sm text-green-700">국가공휴일 {seedMutation.data?.added}건을 추가했습니다.</p>
+        <p className="mb-3 text-sm text-green-700">국가공휴일 {seedMutation.data?.added}건을 반영했습니다(추가/한글명 갱신).</p>
       )}
 
       {/* 사내 공휴일 추가 */}
@@ -113,6 +118,13 @@ export default function HolidaysPage() {
           <Plus className="h-4 w-4" /> 추가
         </button>
       </form>
+
+      {createMutation.isError && (
+        <p role="alert" className="mb-3 text-sm text-red-600">
+          추가 실패: {(createMutation.error as { errorDescription?: string })?.errorDescription
+            ?? '같은 날짜의 공휴일이 이미 등록되어 있는지 확인하세요.'}
+        </p>
+      )}
 
       {/* 목록 */}
       {listQuery.isLoading ? (

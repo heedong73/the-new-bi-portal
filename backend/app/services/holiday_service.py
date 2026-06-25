@@ -64,20 +64,29 @@ async def is_business_day(
 async def seed_korean_holidays(db: AsyncSession, year: int) -> int:
     """holidays 라이브러리로 해당 연도 KR 국가/대체 공휴일을 시드한다.
 
-    이미 존재하는 날짜는 건너뛴다(관리자 보정 보존). 추가한 건수를 반환한다.
-    대체공휴일(name에 'Alternative' 포함)은 holiday_type='substitute'로 저장.
+    공휴일 이름은 한국어(language="ko")로 저장하며, 대체공휴일(name에 '대체' 포함)은
+    holiday_type='substitute'로 분류한다. 이미 등록된 날짜라도 자동 시드 항목
+    (national/substitute)이면 한글명/구분을 갱신하여 영어명 등 과거 데이터를 보정한다.
+    사내 공휴일(company)은 보존한다. 신규 추가 + 갱신 건수를 합산해 반환한다.
     """
-    kr = holidays_lib.country_holidays("KR", years=year)
-    existing = set(
-        (await db.execute(select(Holiday.holiday_date))).scalars().all()
-    )
-    added = 0
+    kr = holidays_lib.country_holidays("KR", years=year, language="ko")
+    existing = {
+        h.holiday_date: h
+        for h in (await db.execute(select(Holiday))).scalars().all()
+    }
+    changed = 0
     for hday, name in sorted(kr.items()):
-        if hday in existing:
-            continue
-        htype = "substitute" if "Alternative" in name else "national"
-        db.add(Holiday(holiday_date=hday, name=name, holiday_type=htype, is_recurring=False))
-        added += 1
+        htype = "substitute" if "대체" in name else "national"
+        cur = existing.get(hday)
+        if cur is None:
+            db.add(Holiday(holiday_date=hday, name=name, holiday_type=htype, is_recurring=False))
+            changed += 1
+        elif cur.holiday_type in ("national", "substitute"):
+            # 자동 시드 항목이면 한글명/구분 갱신 (사내 공휴일은 보존)
+            if cur.name != name or cur.holiday_type != htype:
+                cur.name = name
+                cur.holiday_type = htype
+                changed += 1
     await db.flush()
-    logger.info("holidays_seeded", year=year, added=added)
-    return added
+    logger.info("holidays_seeded", year=year, changed=changed)
+    return changed
