@@ -51,9 +51,11 @@ async def _count(db: AsyncSession, stmt) -> int:
 
 
 async def get_overview(
-    db: AsyncSession, from_dt: datetime | None, to_dt: datetime | None
+    db: AsyncSession, from_dt: datetime | None, to_dt: datetime | None,
+    report_ids: set[int] | None = None,
 ) -> dict:
-    """기본 운영 통계 (R18.1): 로그인/조회/새로고침/메일 성공·실패 + 실패 Job 수."""
+    """기본 운영 통계 (R18.1). report_ids 지정 시(Super_User) 해당 레포트 조회수만,
+    시스템 전역 지표(로그인/새로고침/메일/실패Job)는 숨긴다."""
     nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
     af, at = _as_aware_utc(from_dt), _as_aware_utc(to_dt)
 
@@ -63,6 +65,19 @@ async def get_overview(
         if nt is not None:
             stmt = stmt.where(AuditLog.occurred_at_utc <= nt)
         return stmt
+
+    # Super_User: 부여된 레포트 조회수만, 전역 지표 숨김
+    if report_ids is not None:
+        scope_str = {str(i) for i in report_ids}
+        if not scope_str:
+            return {"scoped": True, "report_view_count": 0}
+        report_view_count = await _count(db, _audit_range(
+            select(func.count()).select_from(AuditLog).where(
+                AuditLog.action == AuditAction.REPORT_VIEW,
+                AuditLog.resource_id.in_(scope_str),
+            )
+        ))
+        return {"scoped": True, "report_view_count": report_view_count}
 
     def _mail_range(stmt):
         if nf is not None:
@@ -126,13 +141,19 @@ async def get_overview(
 
 
 async def get_usage(
-    db: AsyncSession, from_dt: datetime | None, to_dt: datetime | None
+    db: AsyncSession, from_dt: datetime | None, to_dt: datetime | None,
+    report_ids: set[int] | None = None,
 ) -> dict:
-    """사용 통계 (R18.2): TOP10/부서별 리포트수·조회수/월별/사용자별/메일/Export/Refresh실패/미사용."""
+    """사용 통계 (R18.2). report_ids 지정 시(Super_User) 부여된 레포트로 스코프하고
+    시스템 전역 섹션(메일/Export/Refresh실패)은 제외한다."""
     nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
+    scoped = report_ids is not None
+    scope_str = {str(i) for i in report_ids} if scoped else None
 
     def _audit_view_range(stmt):
         stmt = stmt.where(AuditLog.action == AuditAction.REPORT_VIEW)
+        if scoped:
+            stmt = stmt.where(AuditLog.resource_id.in_(scope_str or {"__none__"}))
         if nf is not None:
             stmt = stmt.where(AuditLog.occurred_at_utc >= nf)
         if nt is not None:
@@ -162,11 +183,15 @@ async def get_usage(
     by_user = await _attach_user_names(db, user_rows)
 
     # 부서(폴더)별 게시 리포트 수 — reports.folder_id → report_folders 그룹핑
-    folder_rows = (await db.execute(
+    folder_stmt = (
         select(ReportFolder.id, ReportFolder.name, func.count(Report.id).label("cnt"))
         .select_from(Report)
         .outerjoin(ReportFolder, ReportFolder.id == Report.folder_id)
-        .group_by(ReportFolder.id, ReportFolder.name)
+    )
+    if scoped:
+        folder_stmt = folder_stmt.where(Report.id.in_(report_ids or {-1}))
+    folder_rows = (await db.execute(
+        folder_stmt.group_by(ReportFolder.id, ReportFolder.name)
         .order_by(func.count(Report.id).desc())
     )).all()
     reports_by_department = [
@@ -187,12 +212,28 @@ async def get_usage(
 
     # 월별 등록 리포트 수
     month_expr = func.to_char(Report.created_at, "YYYY-MM")
+    month_stmt = select(month_expr.label("month"), func.count().label("cnt"))
+    if scoped:
+        month_stmt = month_stmt.where(Report.id.in_(report_ids or {-1}))
     month_rows = (await db.execute(
-        select(month_expr.label("month"), func.count().label("cnt"))
-        .group_by(month_expr)
-        .order_by(month_expr)
+        month_stmt.group_by(month_expr).order_by(month_expr)
     )).all()
     reports_by_month = [{"month": m, "count": int(c)} for m, c in month_rows]
+
+    # 미사용 리포트 (UNUSED_REPORT_DAYS 동안 조회 이력 없는 공개 리포트)
+    unused_reports = await _unused_reports(db, report_ids)
+
+    # Super_User: 부여 레포트 사용 통계만, 시스템 전역 섹션 제외
+    if scoped:
+        return {
+            "scoped": True,
+            "top_reports": top_reports,
+            "by_user": by_user,
+            "reports_by_department": reports_by_department,
+            "views_by_department": views_by_department,
+            "reports_by_month": reports_by_month,
+            "unused_reports": unused_reports,
+        }
 
     # 스케줄 메일 발송 건수 (상태별)
     mail_total = await _count(db, select(func.count()).select_from(MailJob))
@@ -210,9 +251,6 @@ async def get_usage(
     # Refresh 실패 현황
     refresh_failed = await _count(db, select(func.count()).select_from(RefreshRun).where(
         RefreshRun.status == RefreshStatus.FAILED))
-
-    # 미사용 리포트 (UNUSED_REPORT_DAYS 동안 조회 이력 없는 공개 리포트)
-    unused_reports = await _unused_reports(db)
 
     return {
         "top_reports": top_reports,
@@ -264,8 +302,9 @@ async def _attach_user_names(db: AsyncSession, rows) -> list[dict]:
     return result
 
 
-async def _unused_reports(db: AsyncSession) -> list[dict]:
-    """UNUSED_REPORT_DAYS 동안 report_view 이력이 없는 공개 리포트 목록."""
+async def _unused_reports(db: AsyncSession, report_ids: set[int] | None = None) -> list[dict]:
+    """UNUSED_REPORT_DAYS 동안 report_view 이력이 없는 공개 리포트 목록.
+    report_ids 지정 시 해당 레포트로 한정(Super_User)."""
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
         days=settings.UNUSED_REPORT_DAYS
     )
@@ -284,9 +323,10 @@ async def _unused_reports(db: AsyncSession) -> list[dict]:
         except (ValueError, TypeError):
             continue
 
-    published = (await db.execute(
-        select(Report).where(Report.is_published.is_(True))
-    )).scalars().all()
+    stmt = select(Report).where(Report.is_published.is_(True))
+    if report_ids is not None:
+        stmt = stmt.where(Report.id.in_(report_ids or {-1}))
+    published = (await db.execute(stmt)).scalars().all()
     return [
         {"report_id": r.id, "report_name": r.display_name or r.report_name}
         for r in published

@@ -6,10 +6,11 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ReportViewPage from './ReportViewPage'
 import { reportsApi, datasetsApi } from '@/api/portalApi'
 import { ApiError } from '@/api/client'
+import { useTaskStore } from '@/stores/useTaskStore'
 import type { EmbedInfo, RefreshStatus, ReportSummary } from '@/types/report'
 
 vi.mock('@/api/portalApi', () => ({
-  reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn() },
+  reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn(), liveRefreshStatus: vi.fn(), replacePbix: vi.fn(), favorites: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn() },
   datasetsApi: { triggerRefresh: vi.fn() },
 }))
 
@@ -18,7 +19,12 @@ vi.mock('powerbi-client-react', () => ({
   PowerBIEmbed: () => <div data-testid="pbi-embed" />,
 }))
 vi.mock('powerbi-client', () => ({
-  models: { TokenType: { Embed: 1 }, BackgroundType: { Transparent: 1 } },
+  models: {
+    TokenType: { Embed: 1 },
+    BackgroundType: { Transparent: 1 },
+    LayoutType: { Custom: 2 },
+    DisplayOption: { FitToPage: 0, ActualSize: 2 },
+  },
 }))
 
 const REPORT: ReportSummary = {
@@ -44,9 +50,14 @@ function renderAt(path = '/reports/10') {
 describe('ReportViewPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useTaskStore.setState({ tasks: [] })
     vi.mocked(reportsApi.list).mockResolvedValue([REPORT])
     vi.mocked(reportsApi.embed).mockResolvedValue(EMBED)
     vi.mocked(reportsApi.refreshStatus).mockResolvedValue(STATUS)
+    vi.mocked(reportsApi.liveRefreshStatus).mockResolvedValue({
+      has_history: true, status: 'Completed', in_progress: false,
+      start_time: '2026-06-24T00:00:00Z', end_time: '2026-06-24T00:05:00Z',
+    })
     vi.mocked(datasetsApi.triggerRefresh).mockResolvedValue({ status: 'enqueued', dataset_id: 'ds-1' })
   })
 

@@ -15,7 +15,7 @@ vi.mock('react-router-dom', async (orig) => {
 
 vi.mock('@/api/portalApi', () => ({
   foldersApi: { tree: vi.fn() },
-  reportsApi: { list: vi.fn() },
+  reportsApi: { list: vi.fn(), favorites: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn() },
 }))
 
 const TREE: FolderTreeNode[] = [
@@ -48,6 +48,9 @@ describe('HomePage', () => {
     vi.clearAllMocks()
     vi.mocked(foldersApi.tree).mockResolvedValue(TREE)
     vi.mocked(reportsApi.list).mockResolvedValue([REPORT])
+    vi.mocked(reportsApi.favorites).mockResolvedValue([])
+    vi.mocked(reportsApi.addFavorite).mockResolvedValue(undefined as never)
+    vi.mocked(reportsApi.removeFavorite).mockResolvedValue(undefined as never)
   })
 
   it('폴더 트리와 레포트 목록을 렌더링한다', async () => {
@@ -75,5 +78,19 @@ describe('HomePage', () => {
     vi.mocked(reportsApi.list).mockResolvedValue([])
     renderPage()
     expect(await screen.findByText('조회 가능한 레포트가 없습니다.')).toBeInTheDocument()
+  })
+
+  it('전체 보기에서 즐겨찾기 섹션을 렌더링한다', async () => {
+    vi.mocked(reportsApi.favorites).mockResolvedValue([{ ...REPORT, id: 99, display_name: '즐겨찾기 레포트', is_favorite: true }])
+    renderPage()
+    expect(await screen.findByText('즐겨찾기')).toBeInTheDocument()
+    expect(await screen.findByText('즐겨찾기 레포트')).toBeInTheDocument()
+  })
+
+  it('별 토글 클릭 시 즐겨찾기 추가를 호출한다', async () => {
+    renderPage()
+    await screen.findByText('월간 매출')
+    fireEvent.click(screen.getByRole('button', { name: '즐겨찾기 추가' }))
+    await waitFor(() => expect(reportsApi.addFavorite).toHaveBeenCalledWith(10))
   })
 })

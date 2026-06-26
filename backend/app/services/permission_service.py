@@ -23,13 +23,18 @@ async def _is_system_operator(db: AsyncSession, user_id: int) -> bool:
     return code is not None
 
 async def accessible_report_ids(
-    db: AsyncSession, user_id: int, action: str = PermissionAction.VIEW
+    db: AsyncSession, user_id: int, action: str = PermissionAction.VIEW,
+    *, roles: list[str] | None = None,
 ) -> set[int]:
     """user_id가 action 권한을 가진 Report id 집합 (4종 주체 합집합).
 
-    System_Operator면 전체 Report id 반환.
+    System_Operator면 전체 Report id 반환. 세션 roles 힌트에 System_Operator가
+    있으면(로컬 관리자 포함) 즉시 운영자로 간주한다 — 로컬 관리자는 user_roles에
+    매핑되지 않으므로 DB 조회만으로는 운영자 판별이 불가하기 때문.
     """
-    if await _is_system_operator(db, user_id):
+    is_operator = (roles is not None and RoleCode.SYSTEM_OPERATOR.value in roles) \
+        or await _is_system_operator(db, user_id)
+    if is_operator:
         rows = await db.execute(select(Report.id))
         return {r[0] for r in rows.all()}
 
@@ -52,10 +57,12 @@ async def accessible_report_ids(
     return {r[0] for r in rows.all()}
 
 async def has_permission(
-    db: AsyncSession, user_id: int, report_id: int, action: str = PermissionAction.VIEW
+    db: AsyncSession, user_id: int, report_id: int, action: str = PermissionAction.VIEW,
+    *, roles: list[str] | None = None,
 ) -> bool:
     """user_id가 report_id에 대해 action 권한을 가지는지."""
-    if await _is_system_operator(db, user_id):
+    if (roles is not None and RoleCode.SYSTEM_OPERATOR.value in roles) \
+            or await _is_system_operator(db, user_id):
         return True
-    ids = await accessible_report_ids(db, user_id, action)
+    ids = await accessible_report_ids(db, user_id, action, roles=roles)
     return report_id in ids

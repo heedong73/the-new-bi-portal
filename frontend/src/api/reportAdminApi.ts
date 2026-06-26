@@ -39,9 +39,16 @@ export const reportAdminApi = {
   /** 레포트 등록 (ID 수동 + workspace auto-upsert). */
   create: (body: ReportCreate) => apiClient.post<ReportAdmin>('/api/reports', body),
 
-  /** 레포트 메타 수정 (표시명/설명/카테고리). */
-  update: (id: number, body: { display_name?: string; description?: string; category?: string }) =>
+  /** 레포트 메타 수정 (표시명/설명/카테고리/작성자). */
+  update: (id: number, body: { display_name?: string; description?: string; category?: string; author_label?: string | null }) =>
     request<ReportAdmin>(`/api/reports/${id}`, { method: 'PATCH', body }),
+
+  /** 레포트 등록 삭제 (BIP 카탈로그에서 제거). */
+  remove: (id: number) => request<void>(`/api/reports/${id}`, { method: 'DELETE' }),
+
+  /** 레포트 표시 순서 변경 (같은 폴더 내 정렬). */
+  setSortOrder: (id: number, sortOrder: number) =>
+    request<ReportAdmin>(`/api/reports/${id}`, { method: 'PATCH', body: { sort_order: sortOrder } }),
 
   /** 공개/비공개 전환. */
   setVisibility: (id: number, isPublished: boolean) =>
@@ -70,12 +77,13 @@ export const reportAdminApi = {
     request<void>(`/api/reports/${id}/permissions/${permissionId}`, { method: 'DELETE' }),
 
   /** PBIX 업로드 → 신규 게시 (multipart). task_id 반환. */
-  importPbix: (file: File, reportName: string, folderId?: number | null, description?: string | null) => {
+  importPbix: (file: File, reportName: string, folderId?: number | null, description?: string | null, authorLabel?: string | null) => {
     const fd = new FormData()
     fd.append('file', file)
     fd.append('report_name', reportName)
     if (folderId != null) fd.append('folder_id', String(folderId))
     if (description != null && description !== '') fd.append('description', description)
+    if (authorLabel != null && authorLabel !== '') fd.append('author_label', authorLabel)
     return request<{ task_id: string; status: string; report_name: string }>(
       '/api/reports/import-pbix',
       { method: 'POST', body: fd },

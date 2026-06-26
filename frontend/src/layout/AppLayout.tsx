@@ -13,23 +13,26 @@ import {
 
 import { authApi } from '@/api/authApi'
 import { useAuthStore } from '@/stores/useAuthStore'
+import BackgroundTaskDock from '@/components/BackgroundTaskDock'
 
 interface NavItem {
   to: string
   label: string
   Icon: typeof LayoutGrid
-  roles?: string[] // 지정 시 해당 역할 보유자만 노출
+  menu: string // 접근 메뉴 키 (allowed_menus 기준 노출)
 }
 
 const NAV: NavItem[] = [
-  { to: '/', label: '레포트', Icon: LayoutGrid },
-  { to: '/mail/schedules', label: '메일 스케줄', Icon: CalendarClock, roles: ['System_Operator', 'Super_User'] },
-  { to: '/mail/jobs', label: '메일 이력', Icon: Mail, roles: ['System_Operator', 'Super_User'] },
-  { to: '/stats', label: '통계', Icon: BarChart3, roles: ['System_Operator'] },
-  { to: '/monitoring/refresh', label: 'Refresh 현황', Icon: RefreshCw, roles: ['System_Operator'] },
-  { to: '/monitoring/ops', label: '운영 상태', Icon: Activity, roles: ['System_Operator'] },
-  { to: '/admin/users', label: '관리자', Icon: Users, roles: ['System_Operator'] },
+  { to: '/', label: '레포트', Icon: LayoutGrid, menu: 'home' },
+  { to: '/mail/schedules', label: '메일 스케줄', Icon: CalendarClock, menu: 'mail_schedules' },
+  { to: '/mail/jobs', label: '메일 이력', Icon: Mail, menu: 'mail_jobs' },
+  { to: '/stats', label: '통계', Icon: BarChart3, menu: 'stats' },
+  { to: '/monitoring/refresh', label: 'Refresh 현황', Icon: RefreshCw, menu: 'monitoring_refresh' },
+  { to: '/monitoring/ops', label: '운영 상태', Icon: Activity, menu: 'monitoring_ops' },
+  { to: '/admin', label: '관리자', Icon: Users, menu: 'admin_users' },
 ]
+
+const ADMIN_MENUS = ['admin_reports', 'admin_users', 'admin_groups', 'admin_roles', 'admin_holidays']
 
 export default function AppLayout() {
   const navigate = useNavigate()
@@ -38,7 +41,14 @@ export default function AppLayout() {
   const clear = useAuthStore((s) => s.clear)
 
   const roles = user?.roles ?? []
-  const visibleNav = NAV.filter((n) => !n.roles || n.roles.some((r) => roles.includes(r)))
+  const allowedMenus = user?.allowed_menus ?? []
+  const isOperator = roles.includes('System_Operator')
+  const visibleNav = NAV.filter((n) => {
+    if (n.to === '/') return true // 홈(레포트 조회)은 모든 로그인 사용자
+    if (isOperator) return true
+    if (n.to === '/admin') return ADMIN_MENUS.some((m) => allowedMenus.includes(m))
+    return allowedMenus.includes(n.menu)
+  })
 
   const logoutMutation = useMutation({
     mutationFn: authApi.logout,
@@ -101,6 +111,8 @@ export default function AppLayout() {
           <Outlet />
         </div>
       </div>
+
+      <BackgroundTaskDock />
     </div>
   )
 }

@@ -6,14 +6,14 @@ from sqlalchemy import text
 
 from app.core.constants import RoleCode
 from app.core.config import settings
-from app.core.deps import SessionDep, RedisDep, require_role
+from app.core.deps import SessionDep, RedisDep, require_menu
 from app.services import monitoring_service
 from app.services.powerbi.lock import is_collect_locked
 from app.workers.tasks.collect import collect_workspace_task
 
 router = APIRouter(tags=["monitoring"])
 
-_require_operator = require_role(RoleCode.SYSTEM_OPERATOR)
+_require_operator = require_menu("monitoring_ops")
 
 @router.post("/api/collect-now")
 async def collect_now(redis: RedisDep, _op=Depends(_require_operator)):

@@ -1,5 +1,5 @@
 /** 레포트 관리 (관리자) — 폴더 트리 구조 + 폴더/하위폴더 추가 + 레포트 게시/공개/권한/이동. */
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Shield, X, Upload, Folder, FolderPlus,
@@ -9,8 +9,10 @@ import {
 
 import { reportAdminApi, foldersAdminApi } from '@/api/reportAdminApi'
 import type { FolderItem, ReportAdmin } from '@/types/reportAdmin'
+import { useTaskStore } from '@/stores/useTaskStore'
 import ReportPermissionPanel from './ReportPermissionPanel'
 import FolderTreePicker from './FolderTreePicker'
+import AuthorPicker from './AuthorPicker'
 
 export default function ReportsPage() {
   const queryClient = useQueryClient()
@@ -19,6 +21,7 @@ export default function ReportsPage() {
   const [displayName, setDisplayName] = useState('')
   const [registerFolderId, setRegisterFolderId] = useState('')
   const [registerDescription, setRegisterDescription] = useState('')
+  const [registerAuthor, setRegisterAuthor] = useState('')
   const [permsReportId, setPermsReportId] = useState<number | null>(null)
   // PBIX 업로드
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -26,13 +29,18 @@ export default function ReportsPage() {
   const [pbixName, setPbixName] = useState('')
   const [pbixFolderId, setPbixFolderId] = useState('')
   const [pbixDescription, setPbixDescription] = useState('')
-  const [uploadTaskId, setUploadTaskId] = useState<string | null>(null)
+  const [pbixAuthor, setPbixAuthor] = useState('')
+  const addTask = useTaskStore((s) => s.addTask)
   // 레포트 수정/이동
   const [editReport, setEditReport] = useState<ReportAdmin | null>(null)
   const [editMode, setEditMode] = useState<'edit' | 'move'>('edit')
   const [editName, setEditName] = useState('')
   const [editFolderId, setEditFolderId] = useState('')
   const [editDescription, setEditDescription] = useState('')
+  const [editAuthor, setEditAuthor] = useState('')
+  // 레포트 삭제 확인
+  const [deleteTarget, setDeleteTarget] = useState<ReportAdmin | null>(null)
+  const pbixInputRef = useRef<HTMLInputElement>(null)
   // 트리 펼침/폴더 추가 대상
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const [addParentId, setAddParentId] = useState<number | null | 'root'>(null)
@@ -71,23 +79,26 @@ export default function ReportsPage() {
         display_name: displayName.trim() || r.report_name,
         folder_id: registerFolderId ? Number(registerFolderId) : null,
         description: registerDescription.trim() || null,
+        author_label: registerAuthor.trim() || null,
       })
     },
     onSuccess: () => {
       setRegisterOpen(false); setSelectedPbi(''); setDisplayName('')
-      setRegisterFolderId(''); setRegisterDescription(''); invalidate()
+      setRegisterFolderId(''); setRegisterDescription(''); setRegisterAuthor(''); invalidate()
     },
   })
   const editReportMutation = useMutation({
     mutationFn: async () => {
       if (!editReport) return
       if (editMode === 'edit') {
-        const patch: { display_name?: string; description?: string } = {}
+        const patch: { display_name?: string; description?: string; author_label?: string | null } = {}
         const newName = editName.trim()
         const curName = editReport.display_name ?? editReport.report_name ?? ''
         if (newName && newName !== curName) patch.display_name = newName
         const newDesc = editDescription.trim()
         if (newDesc !== (editReport.description ?? '')) patch.description = newDesc
+        const newAuthor = editAuthor.trim()
+        if (newAuthor !== (editReport.author_label ?? '')) patch.author_label = newAuthor || null
         if (Object.keys(patch).length > 0) {
           await reportAdminApi.update(editReport.id, patch)
         }
@@ -99,6 +110,21 @@ export default function ReportsPage() {
       }
     },
     onSuccess: () => { setEditReport(null); invalidate() },
+  })
+  const deleteReportMutation = useMutation({
+    mutationFn: (id: number) => reportAdminApi.remove(id),
+    onSuccess: () => { setDeleteTarget(null); invalidate() },
+  })
+  // 같은 폴더 내 레포트 순서 재배치: 정렬된 형제 목록을 받아 변경분만 sort_order PATCH
+  const reportReorderMutation = useMutation({
+    mutationFn: async (ordered: ReportAdmin[]) => {
+      await Promise.all(
+        ordered
+          .map((r, i) => ((r.sort_order ?? 0) !== i ? reportAdminApi.setSortOrder(r.id, i) : null))
+          .filter((p): p is Promise<ReportAdmin> => p !== null),
+      )
+    },
+    onSuccess: invalidate,
   })
   const createFolderMutation = useMutation({
     mutationFn: ({ name, parentId }: { name: string; parentId: number | null }) =>
@@ -133,21 +159,17 @@ export default function ReportsPage() {
         pbixName.trim() || pbixFile.name.replace(/\.pbix$/i, ''),
         pbixFolderId ? Number(pbixFolderId) : null,
         pbixDescription.trim() || null,
+        pbixAuthor.trim() || null,
       )
     },
-    onSuccess: (res) => setUploadTaskId(res.task_id),
-  })
-  const uploadStatus = useQuery({
-    queryKey: ['pbix-status', uploadTaskId],
-    queryFn: () => reportAdminApi.importStatus(uploadTaskId as string),
-    enabled: uploadTaskId !== null,
-    refetchInterval: (q) => {
-      const st = (q.state.data as any)?.state
-      return st === 'SUCCESS' || st === 'FAILURE' ? false : 2000
+    onSuccess: (res) => {
+      const label = pbixName.trim() || pbixFile?.name?.replace(/\.pbix$/i, '') || '새 레포트'
+      addTask({ id: res.task_id, label, kind: 'pbix_import', status: 'pending' })
+      closeUpload()
     },
   })
   function closeUpload() {
-    setUploadOpen(false); setPbixFile(null); setPbixName(''); setPbixFolderId(''); setPbixDescription(''); setUploadTaskId(null); invalidate()
+    setUploadOpen(false); setPbixFile(null); setPbixName(''); setPbixFolderId(''); setPbixDescription(''); setPbixAuthor(''); invalidate()
   }
 
   function openEdit(r: ReportAdmin, mode: 'edit' | 'move') {
@@ -156,6 +178,7 @@ export default function ReportsPage() {
     setEditName(r.display_name ?? r.report_name ?? '')
     setEditFolderId(r.folder_id != null ? String(r.folder_id) : '')
     setEditDescription(r.description ?? '')
+    setEditAuthor(r.author_label ?? '')
   }
 
   // ---- 트리 구성 ----
@@ -192,38 +215,61 @@ export default function ReportsPage() {
   const wsCandidates = (wsQuery.data ?? []).filter((r) => !registeredPbiIds.has(r.report_id))
 
   // ---- 렌더: 레포트 행 (컴포넌트가 아닌 렌더 함수 — 부모 리렌더 시 재마운트로 인한 한글 IME 끊김 방지) ----
-  const renderReportRow = (r: ReportAdmin, depth: number) => (
-      <div key={r.id} className="rounded-md py-1.5 pr-2 hover:bg-slate-50" style={{ paddingLeft: depth * 20 + 28 }}>
-        <div className="flex items-center gap-2">
+  const renderReportRow = (r: ReportAdmin, depth: number) => {
+    const name = r.display_name || r.report_name || r.report_id
+    const siblings = reportsByFolder.get(r.folder_id ?? null) ?? []
+    const idx = siblings.findIndex((x) => x.id === r.id)
+    const isFirst = idx <= 0
+    const isLast = idx >= siblings.length - 1
+    const moveReport = (dir: -1 | 1) => {
+      const target = idx + dir
+      if (target < 0 || target >= siblings.length) return
+      const next = [...siblings]
+      const [m] = next.splice(idx, 1)
+      next.splice(target, 0, m)
+      reportReorderMutation.mutate(next)
+    }
+    return (
+      <div key={r.id}
+        className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_minmax(0,1.4fr)_280px] items-center gap-3 rounded-md py-2 pr-2 text-sm hover:bg-slate-50">
+        <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: depth * 20 + 4 }}>
           <FileBarChart className="h-4 w-4 shrink-0 text-blue-500" />
-          <span className="flex-1 truncate text-sm text-slate-800">{r.display_name || r.report_name || r.report_id}</span>
+          <span className="truncate text-slate-800" title={name}>{name}</span>
+        </div>
+        <span className="truncate font-mono text-xs text-slate-500" title={r.report_id}>{r.report_id}</span>
+        <span className="text-slate-500">{r.created_at ? r.created_at.slice(0, 10) : '-'}</span>
+        <span className="truncate text-slate-500" title={r.created_by_label ?? ''}>{r.created_by_label || '알 수 없음'}</span>
+        <span className="truncate text-slate-500" title={r.description ?? ''}>{r.description || '-'}</span>
+        <div className="flex shrink-0 items-center justify-end gap-1 whitespace-nowrap">
+          <button type="button" disabled={isFirst} onClick={() => moveReport(-1)}
+            title="위로" aria-label={`${name} 위로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30">
+            <ArrowUp className="h-4 w-4" />
+          </button>
+          <button type="button" disabled={isLast} onClick={() => moveReport(1)}
+            title="아래로" aria-label={`${name} 아래로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30">
+            <ArrowDown className="h-4 w-4" />
+          </button>
           <button type="button" onClick={() => openEdit(r, 'move')}
-            className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100">
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100">
             <FolderInput className="h-3.5 w-3.5" /> 이동
           </button>
           <button type="button" onClick={() => openEdit(r, 'edit')}
-            className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100">
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100">
             <Pencil className="h-3.5 w-3.5" /> 수정
           </button>
           <button type="button" onClick={() => setPermsReportId(permsReportId === r.id ? null : r.id)}
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
+            className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-blue-600 hover:underline">
             <Shield className="h-3.5 w-3.5" /> 권한
           </button>
-        </div>
-        {/* 메타 라인: 등록일 · 생성자 · 설명 */}
-        <div className="mt-0.5 flex items-center gap-2 pl-6 text-xs text-slate-400">
-          <span>등록 {r.created_at ? r.created_at.slice(0, 10) : '-'}</span>
-          <span className="text-slate-300">·</span>
-          <span>생성자 {r.created_by_label || '알 수 없음'}</span>
-          {r.description && (
-            <>
-              <span className="text-slate-300">·</span>
-              <span className="max-w-[48ch] truncate" title={r.description}>{r.description}</span>
-            </>
-          )}
+          <button type="button" onClick={() => setDeleteTarget(r)}
+            aria-label={`${name} 삭제`}
+            className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50">
+            <Trash2 className="h-3.5 w-3.5" /> 삭제
+          </button>
         </div>
       </div>
-  )
+    )
+  }
 
   // ---- 렌더: 폴더 노드 (재귀, 렌더 함수) ----
   const renderFolderNode = (folder: FolderItem, depth: number): ReactNode => {
@@ -249,17 +295,17 @@ export default function ReportsPage() {
             {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </button>
           <Folder className="h-4 w-4 shrink-0 text-amber-500" />
-          <span className="flex-1 truncate text-sm font-medium text-slate-700">{folder.name}</span>
+          <span className="flex-1 truncate text-sm font-bold text-slate-800">{folder.name}</span>
           <button type="button" disabled={isFirst} onClick={() => move(-1)}
-            title="위로" aria-label={`${folder.name} 위로`} className="text-slate-400 hover:text-blue-600 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button>
+            title="위로" aria-label={`${folder.name} 위로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30"><ArrowUp className="h-[18px] w-[18px]" /></button>
           <button type="button" disabled={isLast} onClick={() => move(1)}
-            title="아래로" aria-label={`${folder.name} 아래로`} className="text-slate-400 hover:text-blue-600 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button>
+            title="아래로" aria-label={`${folder.name} 아래로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30"><ArrowDown className="h-[18px] w-[18px]" /></button>
           <button type="button" onClick={() => { setAddParentId(folder.id); setNewFolderName('') }}
-            title="하위 폴더 추가" className="text-slate-400 hover:text-blue-600"><FolderPlus className="h-4 w-4" /></button>
+            title="하위 폴더 추가" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600"><FolderPlus className="h-[18px] w-[18px]" /></button>
           <button type="button" onClick={() => { const n = prompt('폴더 이름', folder.name); if (n && n.trim()) renameFolderMutation.mutate({ id: folder.id, name: n.trim() }) }}
-            title="이름 수정" className="text-slate-400 hover:text-blue-600"><Pencil className="h-3.5 w-3.5" /></button>
+            title="이름 수정" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600"><Pencil className="h-[18px] w-[18px]" /></button>
           <button type="button" onClick={() => { if (confirm(`'${folder.name}' 폴더를 삭제할까요?`)) deleteFolderMutation.mutate(folder.id) }}
-            title="삭제" className="text-slate-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
+            title="삭제" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-red-600"><Trash2 className="h-[18px] w-[18px]" /></button>
         </div>
 
         {/* 하위 폴더 추가 인라인 입력 */}
@@ -322,6 +368,15 @@ export default function ReportsPage() {
 
       {/* 트리 */}
       <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+        {/* 컬럼 헤더 */}
+        <div className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_minmax(0,1.4fr)_280px] items-center gap-3 border-b border-slate-200 px-2 py-2.5 text-sm font-semibold text-slate-500">
+          <span className="pl-1">레포트명</span>
+          <span>레포트 ID</span>
+          <span>등록일</span>
+          <span>생성자</span>
+          <span>설명</span>
+          <span className="text-right">관리</span>
+        </div>
         {reportsQuery.isLoading || foldersQuery.isLoading ? (
           <p className="px-2 py-6 text-sm text-slate-400">불러오는 중…</p>
         ) : (
@@ -376,6 +431,10 @@ export default function ReportsPage() {
                   rows={2} placeholder="레포트 용도/내용 간단 설명 (선택)"
                   className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm" />
               </label>
+              <div>
+                <span className="mb-1 block text-xs font-medium text-slate-600">작성자 (현업 화면에 표시)</span>
+                <AuthorPicker value={registerAuthor} onChange={setRegisterAuthor} />
+              </div>
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-slate-600">폴더 * (트리에서 선택)</span>
                 <FolderTreePicker folders={folders} value={registerFolderId} onChange={setRegisterFolderId} />
@@ -399,12 +458,20 @@ export default function ReportsPage() {
               <h3 className="text-lg font-semibold text-slate-800">PBIX 업로드 게시 (신규)</h3>
               <button type="button" aria-label="닫기" onClick={closeUpload} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
-            {uploadTaskId === null ? (
-              <form onSubmit={(e) => { e.preventDefault(); if (pbixFile) uploadMutation.mutate() }} className="space-y-4">
+            <form onSubmit={(e) => { e.preventDefault(); if (pbixFile) uploadMutation.mutate() }} className="space-y-4">
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-slate-600">PBIX 파일 *</span>
-                  <input type="file" accept=".pbix" aria-label="PBIX 파일" onChange={(e) => setPbixFile(e.target.files?.[0] ?? null)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  <input ref={pbixInputRef} type="file" accept=".pbix" aria-label="PBIX 파일" className="hidden"
+                    onChange={(e) => setPbixFile(e.target.files?.[0] ?? null)} />
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => pbixInputRef.current?.click()}
+                      className="shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                      파일 선택
+                    </button>
+                    <span className={`truncate text-sm ${pbixFile ? 'text-slate-700' : 'text-slate-400'}`}>
+                      {pbixFile ? pbixFile.name : '선택된 파일 없음'}
+                    </span>
+                  </div>
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-slate-600">레포트 이름 (비우면 파일명)</span>
@@ -417,6 +484,10 @@ export default function ReportsPage() {
                     rows={2} placeholder="레포트 용도/내용 간단 설명 (선택)"
                     className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                 </label>
+                <div>
+                  <span className="mb-1 block text-xs font-medium text-slate-600">작성자 (현업 화면에 표시)</span>
+                  <AuthorPicker value={pbixAuthor} onChange={setPbixAuthor} />
+                </div>
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-slate-600">폴더 * (트리에서 선택)</span>
                   <FolderTreePicker folders={folders} value={pbixFolderId} onChange={setPbixFolderId} />
@@ -428,17 +499,8 @@ export default function ReportsPage() {
                     {uploadMutation.isPending ? '업로드 중…' : '업로드 게시'}
                   </button>
                 </div>
-                <p className="text-xs text-amber-600">⚠️ 운영 워크스페이스에 실제 레포트가 새로 생성돼요.</p>
+                <p className="text-xs text-amber-600">⚠️ 운영 워크스페이스에 실제 레포트가 새로 생성돼요. 게시 시작 후엔 좌측 하단 '진행중'에서 상태를 확인하세요.</p>
               </form>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-sm text-slate-600">게시 상태: <span className="font-semibold">{uploadStatus.data?.state ?? 'PENDING'}</span>
-                  {['PENDING', 'STARTED'].includes(uploadStatus.data?.state ?? 'PENDING') && ' (처리 중…)'}</p>
-                {uploadStatus.data?.state === 'SUCCESS' && <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">게시 완료! 트리에서 공개 전환 후 사용하세요.</p>}
-                {uploadStatus.data?.state === 'FAILURE' && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">게시 실패: {uploadStatus.data?.error}</p>}
-                <div className="flex justify-end"><button type="button" onClick={closeUpload} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500">닫기</button></div>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -466,6 +528,10 @@ export default function ReportsPage() {
                       rows={3} placeholder="레포트 용도/내용 간단 설명 (선택)"
                       className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm" />
                   </label>
+                  <div>
+                    <span className="mb-1 block text-xs font-medium text-slate-600">작성자 (현업 화면에 표시)</span>
+                    <AuthorPicker value={editAuthor} onChange={setEditAuthor} />
+                  </div>
                 </>
               ) : (
                 <label className="block">
@@ -480,6 +546,39 @@ export default function ReportsPage() {
                   className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">저장</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 레포트 삭제 확인 모달 */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
+          <div role="dialog" aria-modal="true" aria-label="레포트 삭제 확인" className="my-24 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-red-600" />
+              <h3 className="text-lg font-semibold text-slate-800">레포트 삭제</h3>
+            </div>
+            <p className="text-sm text-slate-600">
+              <span className="font-medium text-slate-800">{deleteTarget.display_name || deleteTarget.report_name || deleteTarget.report_id}</span>
+              {' '}레포트를 삭제하시겠습니까?
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              포털 등록과 권한 부여가 함께 삭제됩니다. Power BI 워크스페이스의 실제 레포트는 삭제되지 않습니다.
+            </p>
+            {deleteReportMutation.isError && (
+              <p role="alert" className="mt-2 text-sm text-red-600">
+                {(deleteReportMutation.error as { errorDescription?: string })?.errorDescription
+                  ?? '삭제에 실패했습니다. 이 레포트를 사용하는 메일 스케줄이 있는지 확인하세요.'}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setDeleteTarget(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">취소</button>
+              <button type="button" onClick={() => deleteReportMutation.mutate(deleteTarget.id)} disabled={deleteReportMutation.isPending}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50">
+                {deleteReportMutation.isPending ? '삭제 중…' : '삭제'}
+              </button>
+            </div>
           </div>
         </div>
       )}

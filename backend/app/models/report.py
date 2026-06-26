@@ -53,6 +53,8 @@ class Report(Base):
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     category: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    author_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_by_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -75,4 +77,16 @@ class ReportPermission(Base):
     subject_type: Mapped[str] = mapped_column(String(16), nullable=False)
     subject_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     permission: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class ReportFavorite(Base):
+    """사용자별 레포트 즐겨찾기."""
+    __tablename__ = "report_favorites"
+    __table_args__ = {"schema": SCHEMA}
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    report_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.reports.id", ondelete="CASCADE"), primary_key=True
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

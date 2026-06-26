@@ -13,16 +13,26 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 
 from app.core.config import settings
-from app.core.constants import RoleCode
-from app.core.deps import RedisDep, SessionDep, require_role
-from app.services import stats_service
+from app.core.constants import RoleCode, PermissionAction
+from app.core.deps import RedisDep, SessionDep, require_menu
+from app.services import stats_service, permission_service
 from app.services.cache import cache_get_json, cache_set_json
 
 router = APIRouter(tags=["stats"])
 
 
-def _cache_key(prefix: str, from_dt: datetime | None, to_dt: datetime | None) -> str:
-    return f"bip:cache:stats:{prefix}:{from_dt or '-'}:{to_dt or '-'}"
+def _cache_key(prefix: str, from_dt: datetime | None, to_dt: datetime | None, scope: str = "all") -> str:
+    return f"bip:cache:stats:{prefix}:{scope}:{from_dt or '-'}:{to_dt or '-'}"
+
+
+async def _report_scope(db, current: dict) -> tuple[set[int] | None, str]:
+    """통계 스코프 계산. System_Operator는 전체(None), 그 외(Super_User)는 부여 레포트만."""
+    if RoleCode.SYSTEM_OPERATOR.value in current.get("roles", []) or current.get("is_local_admin"):
+        return None, "all"
+    ids = await permission_service.accessible_report_ids(
+        db, current["user_id"], PermissionAction.VIEW
+    )
+    return ids, f"u{current['user_id']}"
 
 
 @router.get("/api/stats/overview")
@@ -32,14 +42,15 @@ async def stats_overview(
     *,
     db: SessionDep,
     redis: RedisDep,
-    current: dict = Depends(require_role(RoleCode.SYSTEM_OPERATOR)),
+    current: dict = Depends(require_menu("stats")),
 ):
-    """기본 운영 통계: 로그인/조회/새로고침/메일 성공·실패 + 실패 Job 수."""
-    key = _cache_key("overview", from_, to)
+    """기본 운영 통계. Super_User는 부여 레포트 조회수만(전역 지표 숨김)."""
+    scope, scope_key = await _report_scope(db, current)
+    key = _cache_key("overview", from_, to, scope_key)
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
-    data = await stats_service.get_overview(db, from_, to)
+    data = await stats_service.get_overview(db, from_, to, scope)
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
 
@@ -51,13 +62,14 @@ async def stats_usage(
     *,
     db: SessionDep,
     redis: RedisDep,
-    current: dict = Depends(require_role(RoleCode.SYSTEM_OPERATOR)),
+    current: dict = Depends(require_menu("stats")),
 ):
-    """사용 통계: TOP10/부서별/월별/사용자별/메일/Export/Refresh실패/미사용."""
-    key = _cache_key("usage", from_, to)
+    """사용 통계. Super_User는 부여 레포트로 스코프(전역 섹션 제외)."""
+    scope, scope_key = await _report_scope(db, current)
+    key = _cache_key("usage", from_, to, scope_key)
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
-    data = await stats_service.get_usage(db, from_, to)
+    data = await stats_service.get_usage(db, from_, to, scope)
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 
 from app.core.constants import AuditAction, RoleCode
-from app.core.deps import SessionDep, require_role
+from app.core.deps import SessionDep, require_menu
 from app.core.errors import ConflictError, NotFoundError
 from app.models.holiday import Holiday
 from app.schemas.holiday import (
@@ -27,7 +27,7 @@ from app.services.holiday_service import seed_korean_holidays
 
 router = APIRouter(prefix="/api/holidays", tags=["holidays"])
 
-_require_operator = require_role(RoleCode.SYSTEM_OPERATOR)
+_require_operator = require_menu("admin_holidays")
 
 
 def _to_response(h: Holiday) -> HolidayResponse:

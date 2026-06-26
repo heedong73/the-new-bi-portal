@@ -13,11 +13,11 @@ import time
 from typing import Any
 
 import httpx
+import redis.asyncio as aioredis
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.redis import redis_client
 from app.db.session import AsyncSessionLocal
 from app.models.report import Report, Workspace
 from app.services.powerbi.token_service import MockTokenService, TokenService
@@ -31,6 +31,7 @@ _IMPORT_POLL_TIMEOUT_SEC = 300
 async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | None,
                          report_name: str | None, folder_id: int | None,
                          description: str | None = None,
+                         author_label: str | None = None,
                          created_by_user_id: int | None = None,
                          created_by_label: str | None = None) -> dict[str, Any]:
     """workspace upsert + report 신규/갱신 (nameConflict=CreateOrOverwrite 의미)."""
@@ -49,7 +50,7 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
             report = Report(
                 workspace_id=workspace_id, report_id=report_id, dataset_id=dataset_id,
                 report_name=report_name, folder_id=folder_id, is_published=True,
-                description=description,
+                description=description, author_label=author_label,
                 created_by_user_id=created_by_user_id, created_by_label=created_by_label,
             )
             db.add(report)
@@ -59,6 +60,8 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
             report.report_name = report_name
             if description is not None:
                 report.description = description
+            if author_label is not None:
+                report.author_label = author_label
             created = False
         await db.flush()
         await db.commit()
@@ -67,55 +70,63 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
 async def _powerbi_import_live(file_path: str, workspace_id: str, dataset_display_name: str,
                                name_conflict: str) -> dict[str, Any]:
     """live Power BI Import API: POST imports(multipart) → GET imports/{id} 폴링."""
-    token_service = (
-        MockTokenService() if settings.APP_MODE == "mock"
-        else TokenService(settings=settings, redis=redis_client)
-    )
-    token = await token_service.get_token()
-    base = settings.POWERBI_API_BASE_URL.rstrip("/")
-    headers = {"Authorization": f"Bearer {token}"}
+    # 워커는 asyncio.run()으로 매 호출 새 이벤트 루프를 쓰므로, 전역 redis_client(이전 루프
+    # 바인딩) 재사용 시 'Event loop is closed'가 발생한다. 현재 루프 전용 redis를 새로 만든다.
+    if settings.APP_MODE == "mock":
+        token_service = MockTokenService()
+        redis = None
+    else:
+        redis = aioredis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+        token_service = TokenService(settings=settings, redis=redis)
+    try:
+        token = await token_service.get_token()
+        base = settings.POWERBI_API_BASE_URL.rstrip("/")
+        headers = {"Authorization": f"Bearer {token}"}
 
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=5.0, read=120.0, write=120.0, pool=120.0),
-        verify=settings.POWERBI_VERIFY_SSL,
-    ) as client:
-        # 1) 업로드 (multipart). datasetDisplayName 은 .pbix 확장자 포함 권장.
-        with open(file_path, "rb") as fh:
-            files = {"file": (dataset_display_name, fh, "application/octet-stream")}
-            resp = await client.post(
-                f"{base}/groups/{workspace_id}/imports",
-                params={"datasetDisplayName": dataset_display_name,
-                        "nameConflict": name_conflict},
-                headers=headers,
-                files=files,
-            )
-        if resp.status_code >= 400:
-            return {"status": "Failed", "reason": f"import 요청 실패 (HTTP {resp.status_code}): {resp.text[:200]}"}
-        import_id = resp.json().get("id")
-        if not import_id:
-            return {"status": "Failed", "reason": "importId를 받지 못했습니다."}
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=120.0, write=120.0, pool=120.0),
+            verify=settings.POWERBI_VERIFY_SSL,
+        ) as client:
+            # 1) 업로드 (multipart). datasetDisplayName 은 .pbix 확장자 포함 권장.
+            with open(file_path, "rb") as fh:
+                files = {"file": (dataset_display_name, fh, "application/octet-stream")}
+                resp = await client.post(
+                    f"{base}/groups/{workspace_id}/imports",
+                    params={"datasetDisplayName": dataset_display_name,
+                            "nameConflict": name_conflict},
+                    headers=headers,
+                    files=files,
+                )
+            if resp.status_code >= 400:
+                return {"status": "Failed", "reason": f"import 요청 실패 (HTTP {resp.status_code}): {resp.text[:200]}"}
+            import_id = resp.json().get("id")
+            if not import_id:
+                return {"status": "Failed", "reason": "importId를 받지 못했습니다."}
 
-        # 2) 폴링
-        deadline = time.monotonic() + _IMPORT_POLL_TIMEOUT_SEC
-        while time.monotonic() < deadline:
-            await asyncio.sleep(_IMPORT_POLL_INTERVAL_SEC)
-            poll = await client.get(f"{base}/groups/{workspace_id}/imports/{import_id}", headers=headers)
-            if poll.status_code >= 400:
-                continue
-            data = poll.json()
-            state = data.get("importState")
-            if state == "Succeeded":
-                reports = data.get("reports") or []
-                datasets = data.get("datasets") or []
-                return {
-                    "status": "Succeeded",
-                    "report_id": reports[0]["id"] if reports else None,
-                    "dataset_id": datasets[0]["id"] if datasets else None,
-                    "report_name": reports[0].get("name") if reports else dataset_display_name,
-                }
-            if state == "Failed":
-                return {"status": "Failed", "reason": "Power BI import 실패", "detail": data.get("error")}
-        return {"status": "Failed", "reason": "import 폴링 타임아웃"}
+            # 2) 폴링
+            deadline = time.monotonic() + _IMPORT_POLL_TIMEOUT_SEC
+            while time.monotonic() < deadline:
+                await asyncio.sleep(_IMPORT_POLL_INTERVAL_SEC)
+                poll = await client.get(f"{base}/groups/{workspace_id}/imports/{import_id}", headers=headers)
+                if poll.status_code >= 400:
+                    continue
+                data = poll.json()
+                state = data.get("importState")
+                if state == "Succeeded":
+                    reports = data.get("reports") or []
+                    datasets = data.get("datasets") or []
+                    return {
+                        "status": "Succeeded",
+                        "report_id": reports[0]["id"] if reports else None,
+                        "dataset_id": datasets[0]["id"] if datasets else None,
+                        "report_name": reports[0].get("name") if reports else dataset_display_name,
+                    }
+                if state == "Failed":
+                    return {"status": "Failed", "reason": "Power BI import 실패", "detail": data.get("error")}
+            return {"status": "Failed", "reason": "import 폴링 타임아웃"}
+    finally:
+        if redis is not None:
+            await redis.aclose()
 
 
 def _powerbi_import(file_path: str, workspace_id: str, dataset_display_name: str,
@@ -138,6 +149,7 @@ def pbix_import(
     folder_id: int | None = None,
     name_conflict: str = "CreateOrOverwrite",
     description: str | None = None,
+    author_label: str | None = None,
     created_by_user_id: int | None = None,
     created_by_label: str | None = None,
 ) -> dict[str, Any]:
@@ -166,6 +178,7 @@ def pbix_import(
         report_name=report_name or result.get("report_name"),
         folder_id=folder_id,
         description=description,
+        author_label=author_label,
         created_by_user_id=created_by_user_id,
         created_by_label=created_by_label,
     ))

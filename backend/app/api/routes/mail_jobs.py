@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query
 
 from app.core.constants import MailJobStatus
-from app.core.deps import SessionDep, require_role
+from app.core.deps import SessionDep, require_menu
 from app.core.errors import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.mail import MailJob
@@ -30,7 +30,7 @@ async def list_mail_jobs(
     limit: int = Query(default=100, ge=1, le=500),
     *,
     db: SessionDep,
-    current: dict = Depends(require_role("admin", "report_manager")),
+    current: dict = Depends(require_menu("mail_jobs")),
 ):
     """메일 발송 잡 이력 조회. 최신순 정렬, schedule/status 필터 가능."""
     stmt = select(MailJob).order_by(MailJob.id.desc()).limit(limit)
@@ -58,7 +58,7 @@ async def retry_mail_job(
     job_id: int,
     *,
     db: SessionDep,
-    current: dict = Depends(require_role("admin", "report_manager")),
+    current: dict = Depends(require_menu("mail_jobs")),
 ):
     """실패한 메일 잡을 새 회차로 재발송 큐잉.
 

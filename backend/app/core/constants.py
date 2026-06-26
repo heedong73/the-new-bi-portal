@@ -7,6 +7,46 @@ class RoleCode(StrEnum):
     SYSTEM_OPERATOR = "System_Operator"
 
 
+class MenuKey(StrEnum):
+    """메뉴(페이지) 권한 키 — 역할별 메뉴 권한 매트릭스에서 사용."""
+    HOME = "home"                          # 홈(레포트 조회)
+    STATS = "stats"                        # 통계
+    MAIL_SCHEDULES = "mail_schedules"      # 메일 스케줄
+    MAIL_JOBS = "mail_jobs"                # 메일 이력
+    MONITORING_REFRESH = "monitoring_refresh"  # Refresh 현황
+    MONITORING_OPS = "monitoring_ops"      # 운영 상태
+    ADMIN_REPORTS = "admin_reports"        # 관리자-레포트 관리
+    ADMIN_USERS = "admin_users"            # 관리자-사용자
+    ADMIN_GROUPS = "admin_groups"          # 관리자-그룹
+    ADMIN_ROLES = "admin_roles"            # 관리자-역할
+    ADMIN_HOLIDAYS = "admin_holidays"      # 관리자-공휴일
+
+
+# 메뉴 카탈로그 (키 → 표시명). 프론트/매트릭스 노출 순서.
+MENU_CATALOG: list[tuple[str, str]] = [
+    (MenuKey.HOME, "홈 (레포트 조회)"),
+    (MenuKey.STATS, "통계"),
+    (MenuKey.MAIL_SCHEDULES, "메일 스케줄"),
+    (MenuKey.MAIL_JOBS, "메일 이력"),
+    (MenuKey.MONITORING_REFRESH, "Refresh 현황"),
+    (MenuKey.MONITORING_OPS, "운영 상태"),
+    (MenuKey.ADMIN_REPORTS, "관리자 · 레포트 관리"),
+    (MenuKey.ADMIN_USERS, "관리자 · 사용자"),
+    (MenuKey.ADMIN_GROUPS, "관리자 · 그룹"),
+    (MenuKey.ADMIN_ROLES, "관리자 · 역할"),
+    (MenuKey.ADMIN_HOLIDAYS, "관리자 · 공휴일"),
+]
+
+ALL_MENU_KEYS: list[str] = [k for k, _ in MENU_CATALOG]
+
+# 역할별 기본 메뉴 권한 (시드). System_Operator는 항상 전체(코드에서 강제).
+DEFAULT_ROLE_MENUS: dict[str, list[str]] = {
+    RoleCode.GENERAL_USER: [MenuKey.HOME],
+    RoleCode.SUPER_USER: [MenuKey.HOME, MenuKey.STATS],
+    RoleCode.SYSTEM_OPERATOR: list(ALL_MENU_KEYS),
+}
+
+
 class PermissionAction(StrEnum):
     VIEW = "VIEW"
     DOWNLOAD = "DOWNLOAD"

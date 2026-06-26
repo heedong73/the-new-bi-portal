@@ -7,18 +7,29 @@
  *   레포트의 dataset_id 는 목록(VIEW 필터)에서 조회.
  * 요구사항: R9, R10, R13
  */
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, RefreshCw } from 'lucide-react'
+import { models, type Report } from 'powerbi-client'
+import {
+  ArrowLeft, RefreshCw, Upload, X, AlertTriangle, Star,
+  Maximize2, Monitor, ScanLine, ChevronDown,
+} from 'lucide-react'
 
 import { datasetsApi, reportsApi } from '@/api/portalApi'
 import { ApiError } from '@/api/client'
-import { reportDisplayName } from '@/types/report'
+import { reportDisplayName, type RefreshStatus } from '@/types/report'
+import { useTaskStore } from '@/stores/useTaskStore'
 import PowerBIEmbed from '@/components/embed/PowerBIEmbed'
 import RefreshStatusBadge from '@/components/refresh/RefreshStatusBadge'
 
-const REFRESH_STATUS_POLL_MS = 30_000
+const REFRESH_TERMINAL_FAIL = ['Failed', 'Cancelled', 'Disabled']
+
+function fmtLocal(iso?: string | null): string | undefined {
+  if (!iso) return undefined
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? undefined : d.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })
+}
 
 export default function ReportViewPage() {
   const navigate = useNavigate()
@@ -46,11 +57,67 @@ export default function ReportViewPage() {
   })
 
   const statusQuery = useQuery({
-    queryKey: ['refresh-status', reportDbId],
-    queryFn: ({ signal }) => reportsApi.refreshStatus(reportDbId, signal),
+    queryKey: ['live-refresh', reportDbId],
+    queryFn: ({ signal }) => reportsApi.liveRefreshStatus(reportDbId, signal),
     enabled: validId,
-    refetchInterval: REFRESH_STATUS_POLL_MS,
-    staleTime: 10_000,
+    refetchInterval: (q) => ((q.state.data as { in_progress?: boolean } | undefined)?.in_progress ? 5000 : 30000),
+    staleTime: 5_000,
+  })
+
+  // 완료 알림: 진행 중(true) → 종료(false) 전환 감지
+  const [refreshDone, setRefreshDone] = useState<{ ok: boolean; msg: string } | null>(null)
+  const prevInProgress = useRef(false)
+  useEffect(() => {
+    const ip = !!statusQuery.data?.in_progress
+    if (prevInProgress.current && !ip) {
+      const st = statusQuery.data?.status ?? ''
+      if (st === 'Completed') setRefreshDone({ ok: true, msg: '새로고침이 완료되었습니다.' })
+      else if (REFRESH_TERMINAL_FAIL.includes(st)) setRefreshDone({ ok: false, msg: `새로고침 실패 (${st})` })
+      window.setTimeout(() => setRefreshDone(null), 8000)
+    }
+    prevInProgress.current = ip
+  }, [statusQuery.data])
+
+  const addTask = useTaskStore((s) => s.addTask)
+  const tasks = useTaskStore((s) => s.tasks)
+
+  // 임베드된 Report 인스턴스 (보기 옵션 제어용)
+  const reportRef = useRef<Report | null>(null)
+  const [viewMenuOpen, setViewMenuOpen] = useState(false)
+
+  async function applyFullscreen() {
+    setViewMenuOpen(false)
+    try {
+      reportRef.current?.fullscreen()
+    } catch {
+      /* noop */
+    }
+  }
+
+  async function applyDisplayOption(option: models.DisplayOption) {
+    setViewMenuOpen(false)
+    const r = reportRef.current
+    if (!r) return
+    try {
+      await r.updateSettings({
+        layoutType: models.LayoutType.Custom,
+        customLayout: { displayOption: option },
+      })
+    } catch {
+      /* noop */
+    }
+  }
+
+  // 즐겨찾기 토글
+  const favoriteMutation = useMutation({
+    mutationFn: () =>
+      report?.is_favorite
+        ? reportsApi.removeFavorite(reportDbId)
+        : reportsApi.addFavorite(reportDbId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
+      queryClient.invalidateQueries({ queryKey: ['favorites'] })
+    },
   })
 
   const refreshMutation = useMutation({
@@ -61,7 +128,28 @@ export default function ReportViewPage() {
       return datasetsApi.triggerRefresh(report.dataset_id)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['refresh-status', reportDbId] })
+      addTask({
+        id: `refresh-${reportDbId}-${Date.now()}`,
+        label: report ? reportDisplayName(report) : '레포트',
+        kind: 'refresh',
+        status: 'pending',
+        reportId: reportDbId,
+        startedAt: Date.now(),
+      })
+      queryClient.invalidateQueries({ queryKey: ['live-refresh', reportDbId] })
+    },
+  })
+
+  const [replaceOpen, setReplaceOpen] = useState(false)
+  const [replaceFile, setReplaceFile] = useState<File | null>(null)
+  const replaceInputRef = useRef<HTMLInputElement>(null)
+  const replaceMutation = useMutation({
+    mutationFn: (file: File) => reportsApi.replacePbix(reportDbId, file),
+    onSuccess: (res) => {
+      const label = report ? reportDisplayName(report) : '레포트'
+      addTask({ id: res.task_id, label, kind: 'pbix_replace', status: 'pending' })
+      setReplaceOpen(false)
+      setReplaceFile(null)
     },
   })
 
@@ -77,6 +165,37 @@ export default function ReportViewPage() {
 
   const title = report ? reportDisplayName(report) : '레포트'
   const canRefresh = Boolean(report?.dataset_id)
+  // 새로고침 진행 중: 트리거 POST 중 / PBI가 진행중 보고 / 도크 작업 진행 중
+  const live = statusQuery.data
+  const refreshing = refreshMutation.isPending || !!live?.in_progress || tasks.some(
+    (t) => t.kind === 'refresh' && t.reportId === reportDbId && t.status === 'pending',
+  )
+  // 배지용 상태 (라이브 PBI 기준)
+  const badgeStatus: RefreshStatus = live && live.has_history
+    ? {
+        has_history: true,
+        status: live.status ?? 'Unknown',
+        last_refresh_local: fmtLocal(live.end_time ?? live.start_time),
+      }
+    : { has_history: false }
+
+  // 마지막 업데이트 = max(라이브 새로고침 end_time, report.updated_at)
+  // PBIX 교체는 새로고침 이력에 안 남을 수 있으므로 updated_at도 함께 고려한다.
+  const lastUpdateLabel = useMemo(() => {
+    const candidates: number[] = []
+    if (live?.end_time) {
+      const t = new Date(live.end_time).getTime()
+      if (!Number.isNaN(t)) candidates.push(t)
+    }
+    if (report?.updated_at) {
+      const t = new Date(report.updated_at).getTime()
+      if (!Number.isNaN(t)) candidates.push(t)
+    }
+    if (candidates.length === 0) return null
+    return fmtLocal(new Date(Math.max(...candidates)).toISOString())
+  }, [live?.end_time, report?.updated_at])
+
+  const isFavorite = !!report?.is_favorite
 
   if (!validId) {
     return (
@@ -101,19 +220,89 @@ export default function ReportViewPage() {
           <ArrowLeft className="h-4 w-4" />
           목록
         </button>
-        <h1 className="text-lg font-bold text-slate-800">{title}</h1>
+        <div className="flex min-w-0 flex-col">
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-lg font-bold text-slate-800">{title}</h1>
+            <button
+              type="button"
+              aria-label={isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+              aria-pressed={isFavorite}
+              disabled={favoriteMutation.isPending}
+              onClick={() => favoriteMutation.mutate()}
+              className="shrink-0 rounded-full p-1 transition hover:bg-slate-100 disabled:opacity-50"
+            >
+              <Star className={`h-5 w-5 ${isFavorite ? 'fill-yellow-400 text-yellow-400' : 'text-slate-400'}`} />
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+            <span>작성자: {report?.author_label || '-'}</span>
+            <span className="text-slate-300">·</span>
+            <span>마지막 업데이트: {lastUpdateLabel ?? '-'}</span>
+          </div>
+        </div>
 
         <div className="ml-auto flex items-center gap-3">
-          <RefreshStatusBadge status={statusQuery.data} isLoading={statusQuery.isLoading} />
+          <RefreshStatusBadge status={badgeStatus} isLoading={statusQuery.isLoading} />
+
+          {/* 보기 옵션 드롭다운 */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setViewMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={viewMenuOpen}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              <Monitor className="h-4 w-4" />
+              보기 옵션
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+            {viewMenuOpen && (
+              <>
+                <button
+                  type="button"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                  className="fixed inset-0 z-10 cursor-default"
+                  onClick={() => setViewMenuOpen(false)}
+                />
+                <div role="menu" className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                  <button type="button" role="menuitem" onClick={applyFullscreen}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
+                    <Maximize2 className="h-4 w-4 text-slate-500" /> 전체 화면
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => applyDisplayOption(models.DisplayOption.FitToPage)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
+                    <Monitor className="h-4 w-4 text-slate-500" /> 페이지 맞춤
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => applyDisplayOption(models.DisplayOption.ActualSize)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
+                    <ScanLine className="h-4 w-4 text-slate-500" /> 실제 크기
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {report?.can_manage && (
+            <button
+              type="button"
+              onClick={() => { setReplaceFile(null); replaceMutation.reset(); setReplaceOpen(true) }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-600 px-3 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+            >
+              <Upload className="h-4 w-4" />
+              레포트 업데이트(교체)
+            </button>
+          )}
           {canRefresh && (
             <button
               type="button"
               onClick={() => refreshMutation.mutate()}
-              disabled={refreshMutation.isPending}
+              disabled={refreshing}
               className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
             >
-              <RefreshCw className={`h-4 w-4 ${refreshMutation.isPending ? 'animate-spin' : ''}`} />
-              새로고침
+              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? '새로고침 중…' : '새로고침'}
             </button>
           )}
         </div>
@@ -128,6 +317,16 @@ export default function ReportViewPage() {
       {refreshMutation.isSuccess && (
         <div className="bg-green-50 px-5 py-2 text-sm text-green-700">
           새로고침을 요청했습니다. 잠시 후 상태가 갱신됩니다.
+        </div>
+      )}
+      {refreshDone && (
+        <div role="status" className={`px-5 py-2 text-sm ${refreshDone.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+          {refreshDone.msg}
+        </div>
+      )}
+      {replaceMutation.isSuccess && (
+        <div className="bg-green-50 px-5 py-2 text-sm text-green-700">
+          레포트 업데이트(교체)를 요청했습니다. 게시 반영까지 잠시 걸릴 수 있습니다.
         </div>
       )}
 
@@ -146,11 +345,75 @@ export default function ReportViewPage() {
             </p>
           </div>
         ) : embedQuery.data ? (
-          <div className="h-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <PowerBIEmbed embed={embedQuery.data} />
+          <div className="relative h-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <PowerBIEmbed embed={embedQuery.data} onReport={(r) => { reportRef.current = r }} />
+            {refreshing && (
+              <div className="absolute inset-0 z-10 flex cursor-wait items-center justify-center bg-white/40 backdrop-blur-[1px]">
+                <span className="inline-flex items-center gap-2 rounded-lg bg-white/95 px-4 py-2.5 text-sm font-medium text-slate-700 shadow-lg">
+                  <RefreshCw className="h-4 w-4 animate-spin text-blue-600" />
+                  새로고침 중… 잠시 후 다시 시도하세요
+                </span>
+              </div>
+            )}
           </div>
         ) : null}
       </main>
+
+      {/* 레포트 업데이트(교체) 모달 */}
+      {replaceOpen && (
+        <div className="fixed inset-0 z-20 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
+          <div role="dialog" aria-modal="true" aria-label="레포트 업데이트(교체)" className="my-24 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-800">레포트 업데이트(교체)</h3>
+              <button type="button" aria-label="닫기" onClick={() => setReplaceOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+
+            {/* 경고 문구 */}
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-700">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>기존 업로드된 레포트의 데이터셋과 다르다면 업데이트 불가할 수 있습니다.</span>
+            </div>
+
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">PBIX 파일 선택</span>
+              <input
+                ref={replaceInputRef}
+                type="file"
+                accept=".pbix"
+                aria-label="PBIX 파일"
+                className="hidden"
+                onChange={(e) => setReplaceFile(e.target.files?.[0] ?? null)}
+              />
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => replaceInputRef.current?.click()}
+                  className="shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                  파일 선택
+                </button>
+                <span className={`truncate text-sm ${replaceFile ? 'text-slate-700' : 'text-slate-400'}`}>
+                  {replaceFile ? replaceFile.name : '선택된 파일 없음'}
+                </span>
+              </div>
+            </label>
+
+            {replaceMutation.isError && (
+              <p role="alert" className="mt-3 text-sm text-red-600">
+                업데이트에 실패했습니다. 파일/권한 또는 데이터셋 호환성을 확인하세요.
+              </p>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setReplaceOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">취소</button>
+              <button type="button" disabled={!replaceFile || replaceMutation.isPending}
+                onClick={() => replaceFile && replaceMutation.mutate(replaceFile)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">
+                <Upload className="h-4 w-4" />
+                {replaceMutation.isPending ? '업데이트 중…' : '업데이트(교체)'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

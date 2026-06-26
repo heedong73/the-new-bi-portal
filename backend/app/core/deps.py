@@ -47,10 +47,38 @@ PowerBIClientDep = Annotated[PowerBIClient, Depends(get_powerbi_client)]
 from fastapi import Cookie, Request
 from sqlalchemy import select
 from app.core.errors import UnauthenticatedError, PermissionDeniedError
-from app.models.auth import User, UserRole, Role
+from app.core.constants import RoleCode, ALL_MENU_KEYS
+from app.models.auth import User, UserRole, Role, RoleMenuPermission
 from app.services.auth import session_service
 
 SESSION_COOKIE_NAME = "bip_session"
+
+
+async def _allowed_menus_for_roles(db: AsyncSession, role_codes: list[str], role_ids: list[int]) -> list[str]:
+    """역할 집합의 메뉴 권한 합집합. System_Operator는 전체."""
+    if RoleCode.SYSTEM_OPERATOR.value in role_codes:
+        return list(ALL_MENU_KEYS)
+    if not role_ids:
+        return []
+    rows = await db.execute(
+        select(RoleMenuPermission.menu_key)
+        .where(RoleMenuPermission.role_id.in_(role_ids))
+        .distinct()
+    )
+    return [r[0] for r in rows.all()]
+
+
+async def allowed_menus_for_user(db: AsyncSession, user_id: int) -> list[str]:
+    """user_id의 메뉴 권한 합집합 (로그인 응답 등에서 사용)."""
+    role_rows = (await db.execute(
+        select(Role.id, Role.code)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .where(UserRole.user_id == user_id)
+    )).all()
+    return await _allowed_menus_for_roles(
+        db, [c for _, c in role_rows], [i for i, _ in role_rows]
+    )
+
 
 async def get_current_user(
     db: SessionDep,
@@ -59,19 +87,20 @@ async def get_current_user(
 ) -> dict:
     """세션 쿠키로 현재 사용자를 해석. 없거나 만료면 401.
 
-    반환: {user_id, emp_no, name, roles:[...], is_active}
+    반환: {user_id, emp_no, name, roles:[...], allowed_menus:[...], is_active}
     """
     session = await session_service.get_session(redis, bip_session)
     if session is None:
         raise UnauthenticatedError()
 
-    # 로컬 관리자(비상): users 테이블과 독립이므로 세션 페이로드를 신뢰한다.
+    # 로컬 관리자(비상): users 테이블과 독립이므로 세션 페이로드를 신뢰한다. 전체 메뉴.
     if session.get("is_local_admin"):
         return {
             "user_id": session.get("user_id"),
             "emp_no": session.get("emp_no"),
             "name": session.get("name"),
             "roles": session.get("roles", []),
+            "allowed_menus": list(ALL_MENU_KEYS),
             "is_active": True,
             "is_local_admin": True,
         }
@@ -82,19 +111,22 @@ async def get_current_user(
         # 비활성/삭제된 사용자는 세션 거부
         raise UnauthenticatedError()
 
-    # 역할 조회
-    role_rows = await db.execute(
-        select(Role.code)
+    # 역할 조회 (id + code)
+    role_rows = (await db.execute(
+        select(Role.id, Role.code)
         .join(UserRole, UserRole.role_id == Role.id)
         .where(UserRole.user_id == user_id)
-    )
-    roles = [r[0] for r in role_rows.all()]
+    )).all()
+    role_ids = [rid for rid, _ in role_rows]
+    roles = [code for _, code in role_rows]
+    allowed_menus = await _allowed_menus_for_roles(db, roles, role_ids)
 
     return {
         "user_id": user.id,
         "emp_no": user.external_id,
         "name": user.name,
         "roles": roles,
+        "allowed_menus": allowed_menus,
         "is_active": user.is_active,
     }
 
@@ -106,6 +138,21 @@ def require_role(*allowed: str):
         if not any(r in current["roles"] for r in allowed):
             raise PermissionDeniedError()
         return current
+    return _checker
+
+
+def require_menu(menu_key: str):
+    """해당 메뉴(페이지) 접근 권한을 요구하는 의존성 팩토리.
+
+    역할별 메뉴 권한 매트릭스(role_menu_permissions) 기반. System_Operator/로컬관리자는 전체 허용.
+    """
+    async def _checker(current=Depends(get_current_user)) -> dict:
+        roles = current.get("roles", [])
+        if RoleCode.SYSTEM_OPERATOR.value in roles or current.get("is_local_admin"):
+            return current
+        if menu_key in current.get("allowed_menus", []):
+            return current
+        raise PermissionDeniedError()
     return _checker
 
 
@@ -124,7 +171,7 @@ def require_report_permission(action: str = PermissionAction.VIEW):
         current=Depends(get_current_user),
     ) -> dict:
         ok = await permission_service.has_permission(
-            db, current["user_id"], report_id, action
+            db, current["user_id"], report_id, action, roles=current.get("roles")
         )
         if not ok:
             raise PermissionDeniedError()

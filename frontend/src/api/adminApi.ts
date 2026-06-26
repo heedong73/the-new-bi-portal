@@ -5,7 +5,11 @@ import type {
   GroupResponse,
   Holiday,
   HolidayCreate,
+  OrgCompany,
+  OrgMember,
+  OrgNode,
   RoleResponse,
+  RoleMenusResponse,
   UserListItem,
 } from '@/types/admin'
 
@@ -31,6 +35,35 @@ export const usersApi = {
     }),
 }
 
+export const orgApi = {
+  /** GET /api/org/companies — 회사(조직 최상위) 목록. */
+  companies: (signal?: AbortSignal) =>
+    apiClient.get<OrgCompany[]>('/api/org/companies', { signal }),
+  /** GET /api/org/tree — 조직도 트리 (cmp_id 한정 옵션). */
+  tree: (cmpId?: string, signal?: AbortSignal) =>
+    apiClient.get<OrgNode[]>('/api/org/tree', { query: { cmp_id: cmpId }, signal }),
+  /** GET /api/org/members — 부서 구성원 + BIP 등록 상태. */
+  members: (
+    params: { deptId?: string; q?: string; descendants?: boolean },
+    signal?: AbortSignal,
+  ) =>
+    apiClient.get<OrgMember[]>('/api/org/members', {
+      query: { dept_id: params.deptId, q: params.q, descendants: params.descendants },
+      signal,
+    }),
+  /** POST /api/org/members/{emp_no}/groups — 권한 그룹 부여(다중, 미등록 자동등록). */
+  addGroup: (empNo: string, groupId: number) =>
+    apiClient.post<void>(`/api/org/members/${encodeURIComponent(empNo)}/groups`, { group_id: groupId }),
+  /** DELETE /api/org/members/{emp_no}/groups/{group_id} — 권한 그룹 회수. */
+  removeGroup: (empNo: string, groupId: number) =>
+    request<void>(`/api/org/members/${encodeURIComponent(empNo)}/groups/${groupId}`, { method: 'DELETE' }),
+  /** PUT /api/org/members/{emp_no}/role-level — 역할 레벨 설정(미등록 자동등록). */
+  setRoleLevel: (empNo: string, roleCode: string) =>
+    request<void>(`/api/org/members/${encodeURIComponent(empNo)}/role-level`, {
+      method: 'PUT', body: { role_code: roleCode },
+    }),
+}
+
 export const groupsApi = {
   list: (signal?: AbortSignal) => apiClient.get<GroupResponse[]>('/api/groups', { signal }),
   members: (groupId: number, signal?: AbortSignal) =>
@@ -49,6 +82,11 @@ export const groupsApi = {
 
 export const rolesApi = {
   list: (signal?: AbortSignal) => apiClient.get<RoleResponse[]>('/api/roles', { signal }),
+  /** GET /api/roles/menus — 역할-메뉴 권한 매트릭스. */
+  getMenus: (signal?: AbortSignal) => apiClient.get<RoleMenusResponse>('/api/roles/menus', { signal }),
+  /** PUT /api/roles/{id}/menus — 역할 메뉴 권한 일괄 설정. */
+  setMenus: (roleId: number, menus: string[]) =>
+    request<void>(`/api/roles/${roleId}/menus`, { method: 'PUT', body: { menus } }),
 }
 
 export const holidaysApi = {

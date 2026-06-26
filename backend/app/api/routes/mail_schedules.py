@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, delete
 
 from app.core.constants import AuditAction
-from app.core.deps import SessionDep, require_role
+from app.core.deps import SessionDep, require_menu
 from app.core.errors import NotFoundError
 from app.models.mail import MailRecipient, MailSchedule, MailSchedulePage
 from app.models.report import Report
@@ -102,7 +102,7 @@ async def list_mail_schedules(
     enabled: bool | None = Query(default=None, description="활성화 여부 필터"),
     *,
     db: SessionDep,
-    current: dict = Depends(require_role("admin", "report_manager")),
+    current: dict = Depends(require_menu("mail_schedules")),
 ):
     """메일 스케줄 목록 조회. report_id / enabled 로 필터 가능."""
     stmt = select(MailSchedule).order_by(MailSchedule.id)
@@ -124,7 +124,7 @@ async def create_mail_schedule(
     body: MailScheduleCreate,
     *,
     db: SessionDep,
-    current: dict = Depends(require_role("admin", "report_manager")),
+    current: dict = Depends(require_menu("mail_schedules")),
 ):
     """메일 스케줄 생성. recipients / pages 동시 저장."""
     # 연결된 리포트 존재 확인
@@ -194,7 +194,7 @@ async def get_mail_schedule(
     schedule_id: int,
     *,
     db: SessionDep,
-    current: dict = Depends(require_role("admin", "report_manager")),
+    current: dict = Depends(require_menu("mail_schedules")),
 ):
     """메일 스케줄 단건 조회."""
     schedule = await _get_schedule_or_404(db, schedule_id)
@@ -211,7 +211,7 @@ async def update_mail_schedule(
     body: MailScheduleUpdate,
     *,
     db: SessionDep,
-    current: dict = Depends(require_role("admin", "report_manager")),
+    current: dict = Depends(require_menu("mail_schedules")),
 ):
     """메일 스케줄 부분 수정.
 
@@ -281,7 +281,7 @@ async def delete_mail_schedule(
     schedule_id: int,
     *,
     db: SessionDep,
-    current: dict = Depends(require_role("admin", "report_manager")),
+    current: dict = Depends(require_menu("mail_schedules")),
 ):
     """메일 스케줄 삭제 (CASCADE 로 recipients, pages 자동 삭제)."""
     schedule = await _get_schedule_or_404(db, schedule_id)

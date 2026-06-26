@@ -13,6 +13,7 @@ class ReportCreate(BaseModel):
     report_name: str | None = Field(default=None, max_length=255)
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=500)
+    author_label: str | None = Field(default=None, max_length=255)
     folder_id: int | None = None
 
 class ReportUpdate(BaseModel):
@@ -20,6 +21,8 @@ class ReportUpdate(BaseModel):
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=500)
     category: str | None = Field(default=None, max_length=128)
+    author_label: str | None = Field(default=None, max_length=255)
+    sort_order: int | None = None
 
 class VisibilityUpdate(BaseModel):
     """공개/비공개 전환 요청."""
@@ -44,10 +47,15 @@ class ReportResponse(BaseModel):
     description: str | None = None
     category: str | None = None
     folder_id: int | None = None
+    sort_order: int = 0
     is_published: bool
+    author_label: str | None = None
+    updated_at: datetime | None = None
+    is_favorite: bool = False
     created_by_user_id: int | None = None
     created_by_label: str | None = None
     created_at: datetime | None = None
+    can_manage: bool = False  # MANAGE_REPORT 권한(레포트 교체 가능) 여부
 
 
 class WorkspaceReportItem(BaseModel):

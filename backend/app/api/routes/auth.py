@@ -4,7 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Response, Cookie
 
 from app.core.config import settings
-from app.core.constants import AuditAction, RoleCode
+from app.core.constants import AuditAction, RoleCode, ALL_MENU_KEYS
+from app.core import deps
 from app.core.deps import (
     SessionDep, RedisDep, CurrentUserDep,
     get_current_user, SESSION_COOKIE_NAME,
@@ -45,6 +46,13 @@ async def login(body: LoginRequest, response: Response, db: SessionDep, redis: R
         raise UnauthenticatedError("사번 또는 비밀번호가 올바르지 않습니다.")
 
     user = await user_mapper.map_user(db, profile)
+    if not user.is_active:
+        await append_audit(db, action=AuditAction.LOGIN, result="failure",
+                           actor_user_id=user.id, actor_label=user.external_id,
+                           meta={"emp_no": user.external_id, "reason": "inactive"})
+        await db.commit()
+        raise UnauthenticatedError("비활성화된 계정입니다. 관리자에게 문의하세요.")
+
     roles = await _roles_for(db, user.id)
     session_id = await session_service.create_session(
         redis, user.id, {"emp_no": user.external_id, "name": user.name, "roles": roles}
@@ -58,6 +66,7 @@ async def login(body: LoginRequest, response: Response, db: SessionDep, redis: R
     return LoginResponse(user=UserSummary(
         id=user.id, emp_no=user.external_id, name=user.name,
         email=user.email, department_id=user.department_id, roles=roles,
+        allowed_menus=await deps.allowed_menus_for_user(db, user.id),
     ))
 
 @router.post("/local/login", response_model=LoginResponse)
@@ -82,6 +91,7 @@ async def local_login(body: LocalLoginRequest, response: Response, db: SessionDe
     _set_session_cookie(response, session_id)
     return LoginResponse(user=UserSummary(
         id=admin.id, emp_no=admin.username, name=admin.username, roles=roles,
+        allowed_menus=list(ALL_MENU_KEYS),
     ))
 
 @router.post("/logout")
@@ -106,4 +116,5 @@ async def me(current: CurrentUserDep, db: SessionDep):
         email=user.email if user else None,
         department_id=user.department_id if user else None,
         roles=current["roles"],
+        allowed_menus=current.get("allowed_menus", []),
     )

@@ -23,6 +23,31 @@ export const reportsApi = {
   /** GET /api/reports/{id}/refresh-status — 마지막 새로고침 + 다음 예약. */
   refreshStatus: (reportDbId: number, signal?: AbortSignal) =>
     apiClient.get<RefreshStatus>(`/api/reports/${reportDbId}/refresh-status`, { signal }),
+
+  /** GET /api/reports/{id}/live-refresh-status — Power BI 직접 최신 새로고침 상태(실시간). */
+  liveRefreshStatus: (reportDbId: number, signal?: AbortSignal) =>
+    apiClient.get<{ has_history: boolean; status: string | null; in_progress: boolean; start_time?: string | null; end_time?: string | null }>(
+      `/api/reports/${reportDbId}/live-refresh-status`, { signal },
+    ),
+
+  /** POST /api/reports/{id}/replace-pbix — PBIX 재업로드로 레포트 교체 (MANAGE_REPORT 권한). */
+  replacePbix: (reportDbId: number, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return apiClient.post<{ task_id: string; status: string; report_id: number }>(
+      `/api/reports/${reportDbId}/replace-pbix`, fd,
+    )
+  },
+
+  /** GET /api/reports/favorites — 내 즐겨찾기 레포트 목록. */
+  favorites: (signal?: AbortSignal) =>
+    apiClient.get<ReportSummary[]>('/api/reports/favorites', { signal }),
+  /** PUT /api/reports/{id}/favorite — 즐겨찾기 추가. */
+  addFavorite: (reportDbId: number) =>
+    apiClient.put<void>(`/api/reports/${reportDbId}/favorite`),
+  /** DELETE /api/reports/{id}/favorite — 즐겨찾기 해제. */
+  removeFavorite: (reportDbId: number) =>
+    apiClient.del<void>(`/api/reports/${reportDbId}/favorite`),
 }
 
 export const datasetsApi = {

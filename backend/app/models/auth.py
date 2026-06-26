@@ -60,6 +60,17 @@ class UserRole(Base):
     role: Mapped["Role"] = relationship()
 
 
+class RoleMenuPermission(Base):
+    """역할별 메뉴(페이지) 접근 권한."""
+    __tablename__ = "role_menu_permissions"
+    __table_args__ = {"schema": SCHEMA}
+
+    role_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.roles.id", ondelete="CASCADE"), primary_key=True
+    )
+    menu_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+
 class LocalAdmin(Base):
     __tablename__ = "local_admins"
     __table_args__ = {"schema": SCHEMA}

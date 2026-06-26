@@ -10,13 +10,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
 from celery.result import AsyncResult
-from sqlalchemy import select
+from sqlalchemy import select, func, delete
 
 from app.core.config import settings
 from app.core.constants import AuditAction, RoleCode, PermissionAction
-from app.core.deps import SessionDep, require_role, get_current_user
-from app.core.errors import NotFoundError, ConflictError, ValidationError
-from app.models.report import Report, Workspace
+from app.core.deps import SessionDep, require_menu, require_report_permission, get_current_user, PowerBIClientDep
+from app.core.errors import NotFoundError, ConflictError, ValidationError, PermissionDeniedError
+from app.models.report import Report, Workspace, ReportFavorite
+from app.models.mail import MailSchedule
 from app.workers.celery_app import celery_app
 from app.workers.tasks.pbix_import import pbix_import as pbix_import_task
 from app.schemas.report import (
@@ -27,14 +28,24 @@ from app.services import permission_service
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
-_require_operator = require_role(RoleCode.SYSTEM_OPERATOR)
+_require_operator = require_menu("admin_reports")
+
+def _creator_label(op: dict) -> str | None:
+    """생성자 라벨 '이름(사번)' 포맷. 이름 없으면 사번만."""
+    name = op.get("name")
+    emp = op.get("emp_no")
+    if name and emp:
+        return f"{name}({emp})"
+    return name or emp
+
 
 def _to_response(r: Report) -> ReportResponse:
     return ReportResponse(
         id=r.id, workspace_id=r.workspace_id, report_id=r.report_id,
         dataset_id=r.dataset_id, report_name=r.report_name, display_name=r.display_name,
         description=r.description, category=r.category, folder_id=r.folder_id,
-        is_published=r.is_published,
+        is_published=r.is_published, sort_order=r.sort_order,
+        author_label=r.author_label, updated_at=r.updated_at,
         created_by_user_id=r.created_by_user_id, created_by_label=r.created_by_label,
         created_at=r.created_at,
     )
@@ -57,18 +68,84 @@ async def list_reports(
     가시성은 권한(VIEW) 기반이다. 등록 후 권한을 부여해야 노출된다.
     """
     accessible = await permission_service.accessible_report_ids(
-        db, current["user_id"], PermissionAction.VIEW
+        db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
     )
+    manage_ids = await permission_service.accessible_report_ids(
+        db, current["user_id"], PermissionAction.MANAGE_REPORT, roles=current.get("roles")
+    )
+    fav_ids = {
+        rid for (rid,) in (await db.execute(
+            select(ReportFavorite.report_id).where(ReportFavorite.user_id == current["user_id"])
+        )).all()
+    }
     stmt = select(Report)
     if folder_id is not None:
         stmt = stmt.where(Report.folder_id == folder_id)
-    reports = (await db.execute(stmt.order_by(Report.id))).scalars().all()
-    return [_to_response(r) for r in reports if r.id in accessible]
+    reports = (await db.execute(stmt.order_by(Report.sort_order, Report.id))).scalars().all()
+    result = []
+    for r in reports:
+        if r.id in accessible:
+            resp = _to_response(r)
+            resp.can_manage = r.id in manage_ids
+            resp.is_favorite = r.id in fav_ids
+            result.append(resp)
+    return result
+
+
+@router.get("/favorites", response_model=list[ReportResponse])
+async def list_favorites(db: SessionDep, current=Depends(get_current_user)):
+    """현재 사용자가 즐겨찾기한 레포트(VIEW 권한 보유분)."""
+    accessible = await permission_service.accessible_report_ids(
+        db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
+    )
+    fav_ids = [
+        rid for (rid,) in (await db.execute(
+            select(ReportFavorite.report_id).where(ReportFavorite.user_id == current["user_id"])
+        )).all()
+    ]
+    if not fav_ids:
+        return []
+    reports = (await db.execute(
+        select(Report).where(Report.id.in_(fav_ids)).order_by(Report.sort_order, Report.id)
+    )).scalars().all()
+    out = []
+    for r in reports:
+        if r.id in accessible:
+            resp = _to_response(r)
+            resp.is_favorite = True
+            out.append(resp)
+    return out
+
+
+@router.put("/{report_id}/favorite", status_code=204)
+async def add_favorite(report_id: int, db: SessionDep, current=Depends(get_current_user)):
+    """즐겨찾기 추가 (멱등). VIEW 권한 필요."""
+    ok = await permission_service.has_permission(
+        db, current["user_id"], report_id, PermissionAction.VIEW, roles=current.get("roles")
+    )
+    if not ok:
+        raise PermissionDeniedError()
+    existing = await db.scalar(select(ReportFavorite).where(
+        ReportFavorite.user_id == current["user_id"], ReportFavorite.report_id == report_id,
+    ))
+    if existing is None:
+        db.add(ReportFavorite(user_id=current["user_id"], report_id=report_id))
+        await db.flush()
+    await db.commit()
+
+
+@router.delete("/{report_id}/favorite", status_code=204)
+async def remove_favorite(report_id: int, db: SessionDep, current=Depends(get_current_user)):
+    """즐겨찾기 해제 (멱등)."""
+    await db.execute(delete(ReportFavorite).where(
+        ReportFavorite.user_id == current["user_id"], ReportFavorite.report_id == report_id,
+    ))
+    await db.commit()
 
 @router.get("/all", response_model=list[ReportResponse])
 async def list_all_reports(db: SessionDep, _op=Depends(_require_operator)):
     """전체 레포트 (미공개 포함) — 관리자 레포트 관리 화면용."""
-    reports = (await db.execute(select(Report).order_by(Report.id))).scalars().all()
+    reports = (await db.execute(select(Report).order_by(Report.sort_order, Report.id))).scalars().all()
     return [_to_response(r) for r in reports]
 
 @router.post("/import-pbix", status_code=202)
@@ -78,6 +155,7 @@ async def import_pbix(
     workspace_id: str | None = Form(default=None),
     folder_id: int | None = Form(default=None),
     description: str | None = Form(default=None),
+    author_label: str | None = Form(default=None),
     *,
     op=Depends(_require_operator),
 ):
@@ -95,9 +173,9 @@ async def import_pbix(
     task = pbix_import_task.delay(
         file_path=path, workspace_id=ws,
         report_name=report_name, folder_id=folder_id,
-        description=description,
+        description=description, author_label=author_label,
         created_by_user_id=op.get("user_id"),
-        created_by_label=op.get("name") or op.get("emp_no"),
+        created_by_label=_creator_label(op),
     )
     return {"task_id": task.id, "status": "enqueued", "report_name": report_name}
 
@@ -131,8 +209,9 @@ async def create_report(body: ReportCreate, db: SessionDep, op=Depends(_require_
         dataset_id=body.dataset_id, report_name=body.report_name,
         display_name=body.display_name, description=body.description,
         folder_id=body.folder_id, is_published=True,
+        author_label=body.author_label,
         created_by_user_id=op.get("user_id"),
-        created_by_label=op.get("name") or op.get("emp_no"),
+        created_by_label=_creator_label(op),
     )
     db.add(report)
     await db.flush()
@@ -154,6 +233,10 @@ async def update_report(report_id: int, body: ReportUpdate, db: SessionDep, op=D
         report.description = body.description
     if body.category is not None:
         report.category = body.category
+    if body.author_label is not None:
+        report.author_label = body.author_label
+    if body.sort_order is not None:
+        report.sort_order = body.sort_order
     await db.flush()
     await append_audit(db, action=AuditAction.REPORT_UPDATE, result="success",
                        actor_user_id=op["user_id"], actor_label=op["emp_no"],
@@ -273,7 +356,7 @@ async def get_embed(
         raise NotFoundError("레포트를 찾을 수 없습니다.")
 
     allowed = await _perm.has_permission(
-        db, current["user_id"], report_id, PermissionAction.VIEW
+        db, current["user_id"], report_id, PermissionAction.VIEW, roles=current.get("roles")
     )
     if not allowed:
         await append_audit(db, action=AuditAction.PERMISSION_DENIED, result="failure",
@@ -314,7 +397,7 @@ async def refresh_status(
         raise NotFoundError("레포트를 찾을 수 없습니다.")
 
     allowed = await _perm.has_permission(
-        db, current["user_id"], report_id, PermissionAction.VIEW
+        db, current["user_id"], report_id, PermissionAction.VIEW, roles=current.get("roles")
     )
     if not allowed:
         raise PermissionDeniedError()
@@ -341,7 +424,7 @@ async def start_export(
         raise NotFoundError("레포트를 찾을 수 없습니다.")
 
     allowed = await _perm.has_permission(
-        db, current["user_id"], report_id, PermissionAction.DOWNLOAD
+        db, current["user_id"], report_id, PermissionAction.DOWNLOAD, roles=current.get("roles")
     )
     if not allowed:
         await append_audit(
@@ -373,3 +456,98 @@ async def start_export(
 
     export_poll.delay(job.id)
     return {"export_job_id": job.id, "status": "enqueued"}
+
+
+@router.post("/{report_id}/replace-pbix", status_code=202)
+async def replace_pbix(
+    report_id: int,
+    file: UploadFile = File(...),
+    *,
+    db: SessionDep,
+    current=Depends(require_report_permission(PermissionAction.MANAGE_REPORT)),
+):
+    """기존 레포트를 PBIX 재업로드로 교체(덮어쓰기). MANAGE_REPORT 권한 필요.
+
+    Super_User는 운영자가 MANAGE_REPORT를 부여한 레포트에 한해 콘텐츠를 교체할 수 있다.
+    Power BI Import(nameConflict=CreateOrOverwrite)로 동일 이름 레포트를 덮어쓴다.
+    """
+    if not file.filename or not file.filename.lower().endswith(".pbix"):
+        raise ValidationError("PBIX(.pbix) 파일만 업로드할 수 있습니다.")
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise NotFoundError("레포트를 찾을 수 없습니다.")
+
+    upload_dir = os.path.join(settings.STORAGE_ROOT_PATH, "_pbix_uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    path = os.path.join(upload_dir, f"{uuid.uuid4().hex}.pbix")
+    with open(path, "wb") as f:
+        f.write(await file.read())
+
+    task = pbix_import_task.delay(
+        file_path=path, workspace_id=report.workspace_id,
+        report_name=report.report_name or report.display_name,
+        folder_id=report.folder_id, name_conflict="CreateOrOverwrite",
+    )
+    await append_audit(db, action=AuditAction.REPORT_UPDATE, result="success",
+                       actor_user_id=current["user_id"], actor_label=current["emp_no"],
+                       resource_type="report", resource_id=str(report_id),
+                       meta={"target": "replace_pbix", "report_id": report_id})
+    await db.commit()
+    return {"task_id": task.id, "status": "enqueued", "report_id": report_id}
+
+
+@router.delete("/{report_id}", status_code=204)
+async def delete_report(report_id: int, db: SessionDep, op=Depends(_require_operator)):
+    """레포트 등록 삭제(BIP 카탈로그에서 제거). 권한/Export 기록은 CASCADE로 함께 삭제.
+
+    이 레포트를 사용하는 메일 스케줄이 있으면 409로 거부한다(먼저 스케줄 삭제 필요).
+    Power BI 워크스페이스의 실제 레포트는 삭제하지 않는다(포털 등록만 해제).
+    """
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise NotFoundError("레포트를 찾을 수 없습니다.")
+
+    sched_count = await db.scalar(
+        select(func.count()).select_from(MailSchedule).where(MailSchedule.report_id == report_id)
+    )
+    if sched_count and sched_count > 0:
+        raise ConflictError("이 레포트를 사용하는 메일 스케줄이 있어 삭제할 수 없습니다. 먼저 메일 스케줄을 삭제하세요.")
+
+    await db.delete(report)
+    await append_audit(db, action=AuditAction.REPORT_DELETE, result="success",
+                       actor_user_id=op["user_id"], actor_label=op["emp_no"],
+                       resource_type="report", resource_id=str(report_id),
+                       meta={"report_id": report_id})
+    await db.commit()
+
+
+@router.get("/{report_id}/live-refresh-status")
+async def live_refresh_status(
+    report_id: int,
+    db: SessionDep,
+    client: PowerBIClientDep,
+    current=Depends(require_report_permission(PermissionAction.VIEW)),
+):
+    """Power BI에 직접 최신 새로고침 상태를 조회(수집기/DB와 무관, 실시간).
+
+    진행 중 판정용으로 도크가 폴링한다. terminal=Completed/Failed/Disabled/Cancelled.
+    """
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise NotFoundError("레포트를 찾을 수 없습니다.")
+    if not report.dataset_id:
+        return {"has_history": False, "in_progress": False, "status": None}
+
+    runs = await client.list_refreshes(report.workspace_id, report.dataset_id, top=1)
+    if not runs:
+        return {"has_history": False, "in_progress": False, "status": None}
+
+    r = runs[0]
+    terminal = r.status in ("Completed", "Failed", "Disabled", "Cancelled")
+    return {
+        "has_history": True,
+        "status": r.status,
+        "in_progress": not terminal,
+        "start_time": r.start_time.isoformat() if r.start_time else None,
+        "end_time": r.end_time.isoformat() if r.end_time else None,
+    }

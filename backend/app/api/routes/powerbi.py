@@ -9,12 +9,12 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.config import settings
 from app.core.constants import RoleCode
-from app.core.deps import PowerBIClientDep, require_role
+from app.core.deps import PowerBIClientDep, require_menu
 from app.schemas.report import WorkspaceReportItem
 
 router = APIRouter(prefix="/api/powerbi", tags=["powerbi"])
 
-_require_operator = require_role(RoleCode.SYSTEM_OPERATOR)
+_require_operator = require_menu("admin_reports")
 
 
 @router.get("/workspace-reports", response_model=list[WorkspaceReportItem])

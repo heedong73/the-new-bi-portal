@@ -1,13 +1,14 @@
 /** 통계/운영 모니터링 타입 (백엔드 stats_service, monitoring_service 응답과 대응). */
 
 export interface StatsOverview {
-  login_count: number
+  scoped?: boolean
+  login_count?: number
   report_view_count: number
-  refresh_success: number
-  refresh_failed: number
-  mail_success: number
-  mail_failed: number
-  failed_job_count: number
+  refresh_success?: number
+  refresh_failed?: number
+  mail_success?: number
+  mail_failed?: number
+  failed_job_count?: number
 }
 
 export interface TopReport {
@@ -39,14 +40,15 @@ export interface UnusedReport {
 }
 
 export interface StatsUsage {
+  scoped?: boolean
   top_reports: TopReport[]
   by_user: UserCount[]
   reports_by_department: DeptReports[]
   views_by_department: DeptViews[]
   reports_by_month: MonthCount[]
-  mail_jobs: { total: number; succeeded: number; failed: number }
-  export_jobs: { succeeded: number; failed: number }
-  refresh_failed: number
+  mail_jobs?: { total: number; succeeded: number; failed: number }
+  export_jobs?: { succeeded: number; failed: number }
+  refresh_failed?: number
   unused_reports: UnusedReport[]
 }
 

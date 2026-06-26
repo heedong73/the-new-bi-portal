@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.deps import SessionDep, get_current_user
+from app.core.deps import SessionDep, require_menu
 from app.models.refresh import RefreshSchedule
 from app.models.report import Dataset
 from app.schemas.refresh import DatasetOut, RefreshRunOut, ScheduleOut, SummaryOut
@@ -22,7 +22,7 @@ async def refresh_history(
     date: date = Query(...),
     *,
     db: SessionDep,
-    current=Depends(get_current_user),
+    current=Depends(require_menu("monitoring_refresh")),
 ):
     return await query_refresh_history(db, settings.POWERBI_WORKSPACE_ID, target_date=date)
 
@@ -36,7 +36,7 @@ async def refresh_timetable(
     datasetId: str | None = Query(None),
     *,
     db: SessionDep,
-    current=Depends(get_current_user),
+    current=Depends(require_menu("monitoring_refresh")),
 ):
     from_dt = datetime.fromisoformat(from_) if from_ else None
     to_dt = datetime.fromisoformat(to) if to else None
@@ -52,20 +52,20 @@ async def summary(
     date: date = Query(...),
     *,
     db: SessionDep,
-    current=Depends(get_current_user),
+    current=Depends(require_menu("monitoring_refresh")),
 ):
     runs = await query_refresh_history(db, settings.POWERBI_WORKSPACE_ID, target_date=date)
     return build_summary(runs)
 
 
 @router.get("/api/datasets", response_model=list[DatasetOut])
-async def list_datasets(db: SessionDep, current=Depends(get_current_user)):
+async def list_datasets(db: SessionDep, current=Depends(require_menu("monitoring_refresh"))):
     rows = (await db.execute(select(Dataset).order_by(Dataset.id))).scalars().all()
     return [DatasetOut(datasetId=r.dataset_id, datasetName=r.dataset_name) for r in rows]
 
 
 @router.get("/api/refresh-schedules", response_model=list[ScheduleOut])
-async def list_schedules(db: SessionDep, current=Depends(get_current_user)):
+async def list_schedules(db: SessionDep, current=Depends(require_menu("monitoring_refresh"))):
     rows = (await db.execute(select(RefreshSchedule).order_by(RefreshSchedule.id))).scalars().all()
     return [ScheduleOut(
         datasetId=r.dataset_id, datasetName=None,

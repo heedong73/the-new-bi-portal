@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, delete
 
 from app.core.constants import AuditAction, RoleCode
-from app.core.deps import SessionDep, require_role
+from app.core.deps import SessionDep, require_menu
 from app.core.errors import NotFoundError, ConflictError
 from app.models.portal import UserGroup, UserGroupMember
 from app.models.auth import User
@@ -14,7 +14,7 @@ from app.services.audit_service import append_audit
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 
-_require_operator = require_role(RoleCode.SYSTEM_OPERATOR)
+_require_operator = require_menu("admin_groups")
 
 @router.get("", response_model=list[GroupResponse])
 async def list_groups(db: SessionDep, _op=Depends(_require_operator)):

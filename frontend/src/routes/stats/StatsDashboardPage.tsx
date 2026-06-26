@@ -54,15 +54,22 @@ export default function StatsDashboardPage() {
       {/* 기본 운영 통계 */}
       {overviewQuery.isLoading || !o ? (
         <p className="text-sm text-slate-400">불러오는 중…</p>
+      ) : o.scoped ? (
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <StatCard label="레포트 조회" value={o.report_view_count} Icon={Eye} tone="blue" />
+        </div>
       ) : (
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <StatCard label="로그인" value={o.login_count} Icon={LogIn} tone="blue" />
+          <StatCard label="로그인" value={o.login_count ?? 0} Icon={LogIn} tone="blue" />
           <StatCard label="레포트 조회" value={o.report_view_count} Icon={Eye} tone="blue" />
-          <StatCard label="새로고침 성공" value={o.refresh_success} Icon={RefreshCw} tone="green" />
-          <StatCard label="새로고침 실패" value={o.refresh_failed} Icon={RefreshCw} tone="red" />
-          <StatCard label="메일 성공" value={o.mail_success} Icon={Mail} tone="green" />
-          <StatCard label="실패 Job" value={o.failed_job_count} Icon={AlertTriangle} tone="red" />
+          <StatCard label="새로고침 성공" value={o.refresh_success ?? 0} Icon={RefreshCw} tone="green" />
+          <StatCard label="새로고침 실패" value={o.refresh_failed ?? 0} Icon={RefreshCw} tone="red" />
+          <StatCard label="메일 성공" value={o.mail_success ?? 0} Icon={Mail} tone="green" />
+          <StatCard label="실패 Job" value={o.failed_job_count ?? 0} Icon={AlertTriangle} tone="red" />
         </div>
+      )}
+      {o?.scoped && (
+        <p className="mb-4 -mt-2 text-xs text-slate-400">권한이 부여된 레포트의 사용 통계만 표시됩니다.</p>
       )}
 
       {/* 사용 통계 */}
@@ -105,16 +112,20 @@ export default function StatsDashboardPage() {
           </ListCard>
 
           <ListCard title="잡 현황">
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between"><dt className="text-slate-500">메일 발송(성공/실패)</dt>
-                <dd className="font-medium text-slate-700">{u.mail_jobs.succeeded} / {u.mail_jobs.failed}</dd></div>
-              <div className="flex justify-between"><dt className="text-slate-500">Export(성공/실패)</dt>
-                <dd className="font-medium text-slate-700">{u.export_jobs.succeeded} / {u.export_jobs.failed}</dd></div>
-              <div className="flex justify-between"><dt className="text-slate-500">Refresh 실패</dt>
-                <dd className="font-medium text-red-600">{u.refresh_failed}</dd></div>
-              <div className="flex justify-between"><dt className="text-slate-500">미사용 레포트</dt>
-                <dd className="font-medium text-slate-700">{u.unused_reports.length}</dd></div>
-            </dl>
+            {u.scoped || !u.mail_jobs || !u.export_jobs ? (
+              <p className="text-sm text-slate-400">권한 범위에서는 표시되지 않습니다.</p>
+            ) : (
+              <dl className="space-y-2 text-sm">
+                <div className="flex justify-between"><dt className="text-slate-500">메일 발송(성공/실패)</dt>
+                  <dd className="font-medium text-slate-700">{u.mail_jobs.succeeded} / {u.mail_jobs.failed}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">Export(성공/실패)</dt>
+                  <dd className="font-medium text-slate-700">{u.export_jobs.succeeded} / {u.export_jobs.failed}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">Refresh 실패</dt>
+                  <dd className="font-medium text-red-600">{u.refresh_failed ?? 0}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-500">미사용 레포트</dt>
+                  <dd className="font-medium text-slate-700">{u.unused_reports.length}</dd></div>
+              </dl>
+            )}
           </ListCard>
         </div>
       )}

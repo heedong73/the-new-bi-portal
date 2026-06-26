@@ -6,15 +6,23 @@ import { MemoryRouter } from 'react-router-dom'
 import UsersPage from './UsersPage'
 import RolesPage from './RolesPage'
 import GroupsPage from './GroupsPage'
-import { usersApi, rolesApi, groupsApi } from '@/api/adminApi'
-import type { GroupResponse, RoleResponse, UserListItem, GroupMemberItem } from '@/types/admin'
+import { usersApi, rolesApi, groupsApi, orgApi } from '@/api/adminApi'
+import type {
+  GroupResponse, RoleResponse, UserListItem, GroupMemberItem, OrgCompany, OrgNode, OrgMember,
+} from '@/types/admin'
 
 vi.mock('@/api/adminApi', () => ({
-  usersApi: { list: vi.fn(), setStatus: vi.fn(), assignRole: vi.fn(), revokeRole: vi.fn() },
-  rolesApi: { list: vi.fn() },
+  usersApi: {
+    list: vi.fn(), setStatus: vi.fn(), assignRole: vi.fn(), revokeRole: vi.fn(),
+  },
+  rolesApi: { list: vi.fn(), getMenus: vi.fn(), setMenus: vi.fn() },
   groupsApi: {
     list: vi.fn(), members: vi.fn(), create: vi.fn(), remove: vi.fn(),
     addMember: vi.fn(), removeMember: vi.fn(),
+  },
+  orgApi: {
+    companies: vi.fn(), tree: vi.fn(), members: vi.fn(),
+    addGroup: vi.fn(), removeGroup: vi.fn(), setRoleLevel: vi.fn(),
   },
 }))
 
@@ -29,6 +37,27 @@ const ROLES: RoleResponse[] = [
 ]
 const GROUPS: GroupResponse[] = [{ id: 5, name: '영업팀', description: null }]
 const MEMBERS: GroupMemberItem[] = [{ id: 1, emp_no: '1001', name: '홍길동' }]
+
+const ORG_COMPANIES: OrgCompany[] = [{ cmp_id: 'C1', dept_id: 'C1', dept_name: '회사A' }]
+const ORG_TREE: OrgNode[] = [
+  { dept_id: 'C1', dept_name: '회사A', depth: 1, children: [
+    { dept_id: 'D1', dept_name: '영업팀', depth: 2, children: [] },
+  ] },
+]
+const ORG_MEMBERS: OrgMember[] = [
+  { emp_no: '1001', name: '홍길동', email: 'h@x.com', dept_name: '영업팀', ofc_name: '팀장',
+    registered: true, user_id: 1, is_active: true, role_level: 'General_User', groups: [{ id: 5, name: '영업팀' }] },
+  { emp_no: '1002', name: '김영희', dept_name: '영업팀', ofc_name: '팀원', registered: false, groups: [] },
+]
+
+const ROLE_MENUS = {
+  catalog: [{ key: 'home', label: '홈' }, { key: 'stats', label: '통계' }],
+  roles: [
+    { id: 1, code: 'General_User', name: '일반 사용자', menus: ['home'] },
+    { id: 2, code: 'Super_User', name: '슈퍼 유저', menus: ['home', 'stats'] },
+    { id: 3, code: 'System_Operator', name: '시스템 운영자', menus: ['home', 'stats'] },
+  ],
+}
 
 function wrap(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -46,31 +75,56 @@ beforeEach(() => {
   vi.mocked(usersApi.assignRole).mockResolvedValue(undefined as never)
   vi.mocked(usersApi.revokeRole).mockResolvedValue(undefined as never)
   vi.mocked(rolesApi.list).mockResolvedValue(ROLES)
+  vi.mocked(rolesApi.getMenus).mockResolvedValue(ROLE_MENUS)
+  vi.mocked(rolesApi.setMenus).mockResolvedValue(undefined as never)
   vi.mocked(groupsApi.list).mockResolvedValue(GROUPS)
   vi.mocked(groupsApi.members).mockResolvedValue(MEMBERS)
   vi.mocked(groupsApi.create).mockResolvedValue({ id: 6, name: '신규', description: null })
   vi.mocked(groupsApi.addMember).mockResolvedValue(undefined as never)
   vi.mocked(groupsApi.removeMember).mockResolvedValue(undefined as never)
+  vi.mocked(orgApi.companies).mockResolvedValue(ORG_COMPANIES)
+  vi.mocked(orgApi.tree).mockResolvedValue(ORG_TREE)
+  vi.mocked(orgApi.members).mockResolvedValue(ORG_MEMBERS)
+  vi.mocked(orgApi.addGroup).mockResolvedValue(undefined as never)
+  vi.mocked(orgApi.removeGroup).mockResolvedValue(undefined as never)
+  vi.mocked(orgApi.setRoleLevel).mockResolvedValue(undefined as never)
 })
 
 describe('UsersPage', () => {
-  it('사용자 목록을 렌더링하고 비활성화 버튼으로 상태를 전환한다', async () => {
+  it('조직도에서 부서를 선택하면 구성원을 보여주고 미등록자에 그룹을 부여(자동등록)한다', async () => {
     wrap(<UsersPage />)
+    fireEvent.click(await screen.findByRole('button', { name: '회사A' }))
     expect(await screen.findByText('홍길동')).toBeInTheDocument()
-    fireEvent.click(screen.getAllByRole('button', { name: '비활성화' })[0])
-    await waitFor(() => expect(usersApi.setStatus).toHaveBeenCalledWith(1, false))
+    expect(screen.getByText('김영희')).toBeInTheDocument()
+    // 미등록자(김영희)에게 그룹 추가 → emp_no 기준 자동등록+부여
+    fireEvent.change(screen.getByLabelText('1002 권한 그룹 추가'), { target: { value: '5' } })
+    await waitFor(() => expect(orgApi.addGroup).toHaveBeenCalledWith('1002', 5))
+  })
+
+  it('등록된 구성원의 그룹 제거와 역할 변경(일괄 저장)을 호출한다', async () => {
+    wrap(<UsersPage />)
+    fireEvent.click(await screen.findByRole('button', { name: '회사A' }))
+    await screen.findByText('홍길동')
+    // 그룹 칩 제거
+    fireEvent.click(screen.getByRole('button', { name: '1001 영업팀 그룹 제거' }))
+    await waitFor(() => expect(orgApi.removeGroup).toHaveBeenCalledWith('1001', 5))
+    // 역할 변경(스테이징) 후 일괄 저장
+    fireEvent.change(screen.getByLabelText('1001 역할'), { target: { value: 'System_Operator' } })
+    fireEvent.click(screen.getByRole('button', { name: '역할 변경 저장' }))
+    await waitFor(() => expect(orgApi.setRoleLevel).toHaveBeenCalledWith('1001', 'System_Operator'))
   })
 })
 
 describe('RolesPage', () => {
-  it('역할 체크 시 부여, General_User는 비활성화', async () => {
+  it('메뉴 체크박스 토글 후 저장하면 setMenus를 호출하고 System_Operator는 잠김', async () => {
     wrap(<RolesPage />)
-    // 홍길동 Super_User 체크박스(미보유) → 부여
-    const cb = await screen.findByLabelText('홍길동 슈퍼 유저')
+    // 일반 사용자 '통계' 메뉴 체크(미보유) → draft
+    const cb = await screen.findByLabelText('일반 사용자 통계')
     fireEvent.click(cb)
-    await waitFor(() => expect(usersApi.assignRole).toHaveBeenCalledWith(1, 'Super_User'))
-    // General_User는 잠김
-    expect((screen.getByLabelText('홍길동 일반 사용자') as HTMLInputElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: /변경사항 저장/ }))
+    await waitFor(() => expect(rolesApi.setMenus).toHaveBeenCalledWith(1, expect.arrayContaining(['home', 'stats'])))
+    // System_Operator 컬럼은 잠김(disabled)
+    expect((screen.getByLabelText('시스템 운영자 통계') as HTMLInputElement).disabled).toBe(true)
   })
 })
 

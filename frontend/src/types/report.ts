@@ -12,6 +12,10 @@ export interface ReportSummary {
   category?: string | null
   folder_id?: number | null
   is_published: boolean
+  can_manage?: boolean
+  author_label?: string | null
+  updated_at?: string | null
+  is_favorite?: boolean
 }
 
 /** 폴더 트리 노드 (자식 폴더 + 권한 필터된 레포트 ID 포함). */

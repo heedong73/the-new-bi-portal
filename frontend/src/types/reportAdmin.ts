@@ -21,8 +21,10 @@ export interface ReportAdmin {
   category?: string | null
   folder_id?: number | null
   is_published: boolean
+  sort_order?: number
   created_by_user_id?: number | null
   created_by_label?: string | null
+  author_label?: string | null
   created_at?: string | null
 }
 
@@ -33,6 +35,7 @@ export interface ReportCreate {
   report_name?: string | null
   display_name?: string | null
   description?: string | null
+  author_label?: string | null
   folder_id?: number | null
 }
 

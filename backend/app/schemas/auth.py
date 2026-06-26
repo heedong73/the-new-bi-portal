@@ -21,6 +21,7 @@ class UserSummary(BaseModel):
     email: str | None = None
     department_id: int | None = None
     roles: list[str] = Field(default_factory=list)
+    allowed_menus: list[str] = Field(default_factory=list)
 
 class LoginResponse(BaseModel):
     """로그인 성공 응답."""

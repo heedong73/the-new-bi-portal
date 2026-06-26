@@ -31,7 +31,7 @@ async def trigger_refresh(
         raise NotFoundError("해당 데이터셋과 연결된 레포트를 찾을 수 없습니다.")
 
     allowed = await permission_service.has_permission(
-        db, current["user_id"], report.id, PermissionAction.REFRESH
+        db, current["user_id"], report.id, PermissionAction.REFRESH, roles=current.get("roles")
     )
     if not allowed:
         await append_audit(db, action=AuditAction.PERMISSION_DENIED, result="failure",

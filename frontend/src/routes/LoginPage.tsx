@@ -65,13 +65,20 @@ export default function LoginPage() {
   }
 
   return (
-    <div
-      className="relative min-h-screen w-full bg-slate-100 bg-cover bg-center"
-      style={{ backgroundImage: "url('/login-bg.png')" }}
-    >
-      {/* 카드: 우측 흰 영역에 배치 (모바일은 중앙) */}
-      <div className="relative flex min-h-screen items-center justify-center px-4 lg:justify-end lg:pr-[9%]">
-        <div className="w-full max-w-sm rounded-2xl border border-slate-300 bg-slate-100/95 p-8 shadow-2xl ring-1 ring-slate-900/5 backdrop-blur-sm">
+    <div className="relative min-h-screen w-full overflow-hidden bg-slate-950">
+      {/* 레터박스 여백을 흐린 이미지로 메움(보조 배경, 잘려도 무방) */}
+      <div
+        className="absolute inset-0 scale-110 bg-cover bg-center blur-2xl"
+        style={{ backgroundImage: "url('/login-bg.png')" }}
+        aria-hidden="true"
+      />
+      {/* 비율 유지 전체 이미지(절대 잘리지 않음) + 우측 유리창 위 카드 */}
+      <div className="relative flex min-h-screen items-center justify-center">
+        <div className="relative max-h-screen">
+          <img src="/login-bg.png" alt="" className="block max-h-screen w-auto max-w-full select-none" />
+          {/* 카드: 우측 파란 유리창 중앙 (이미지 비율에 맞춰 같이 축소) */}
+          <div className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: '82.5%', top: '50%', width: 'clamp(240px, 30%, 380px)' }}>
+            <div className="w-full rounded-2xl border border-white/60 bg-white p-6 shadow-2xl shadow-blue-950/40 ring-1 ring-black/5">
           {/* 헤더 */}
           <div className="mb-7 text-center">
             <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 shadow-lg shadow-blue-600/30">
@@ -79,7 +86,7 @@ export default function LoginPage() {
             </div>
             <h1 className="text-2xl font-bold tracking-wide text-slate-800">SCL BI PORTAL</h1>
             <p className="mt-1 text-sm text-slate-500">
-              삼천리 BI Portal에서 레포트를 공유하고 인사이트를 얻어보세요
+              삼천리 BI Portal에서 레포트를<br />공유하고 인사이트를 얻어보세요
             </p>
           </div>
 
@@ -168,6 +175,8 @@ export default function LoginPage() {
                 사번 로그인으로 돌아가기
               </button>
             )}
+          </div>
+            </div>
           </div>
         </div>
       </div>

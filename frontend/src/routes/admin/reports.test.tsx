@@ -11,18 +11,19 @@ import type { ReportAdmin, WorkspaceReportItem } from '@/types/reportAdmin'
 
 vi.mock('@/api/reportAdminApi', () => ({
   reportAdminApi: {
-    workspaceReports: vi.fn(), list: vi.fn(), create: vi.fn(), update: vi.fn(),
-    setVisibility: vi.fn(), setFolder: vi.fn(),
+    workspaceReports: vi.fn(), list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(),
+    setVisibility: vi.fn(), setFolder: vi.fn(), setSortOrder: vi.fn(),
     permissions: vi.fn(), grant: vi.fn(), revoke: vi.fn(),
     importPbix: vi.fn(), importStatus: vi.fn(),
   },
   foldersAdminApi: {
-    list: vi.fn(), create: vi.fn(), rename: vi.fn(), remove: vi.fn(),
+    list: vi.fn(), create: vi.fn(), rename: vi.fn(), remove: vi.fn(), setSortOrder: vi.fn(),
   },
 }))
 vi.mock('@/api/portalApi', () => ({ foldersApi: { tree: vi.fn() } }))
 vi.mock('@/api/adminApi', () => ({
   usersApi: { list: vi.fn() }, groupsApi: { list: vi.fn() },
+  orgApi: { members: vi.fn() },
 }))
 
 const REPORTS: ReportAdmin[] = [
@@ -47,6 +48,7 @@ beforeEach(() => {
   vi.mocked(reportAdminApi.list).mockResolvedValue(REPORTS)
   vi.mocked(reportAdminApi.workspaceReports).mockResolvedValue(WS)
   vi.mocked(reportAdminApi.create).mockResolvedValue(REPORTS[0])
+  vi.mocked(reportAdminApi.remove).mockResolvedValue(undefined as never)
   vi.mocked(reportAdminApi.setVisibility).mockResolvedValue({ ...REPORTS[0], is_published: true })
   vi.mocked(reportAdminApi.permissions).mockResolvedValue([])
   vi.mocked(foldersAdminApi.list).mockResolvedValue(FOLDERS as never)
@@ -57,11 +59,11 @@ beforeEach(() => {
 })
 
 describe('ReportsPage', () => {
-  it('등록 레포트 목록과 메타(등록일·생성자)를 렌더링한다', async () => {
+  it('등록 레포트 목록과 메타(등록일·생성자 컬럼)를 렌더링한다', async () => {
     wrap(<ReportsPage />)
     expect(await screen.findByText('월간 매출')).toBeInTheDocument()
-    expect(screen.getByText(/등록 2026-06-24/)).toBeInTheDocument()
-    expect(screen.getByText(/생성자 홍길동/)).toBeInTheDocument()
+    expect(screen.getByText('2026-06-24')).toBeInTheDocument()
+    expect(screen.getByText('홍길동')).toBeInTheDocument()
   })
 
   it('공개 버튼은 더 이상 노출되지 않는다 (권한 기반 가시성)', async () => {
@@ -106,5 +108,14 @@ describe('ReportsPage', () => {
     fireEvent.change(await screen.findByLabelText('새 폴더 이름'), { target: { value: '신규부서' } })
     fireEvent.click(screen.getByRole('button', { name: '추가' }))
     await waitFor(() => expect(foldersAdminApi.create).toHaveBeenCalledWith('신규부서', null))
+  })
+
+  it('삭제 버튼 → 확인 모달 → remove 호출', async () => {
+    wrap(<ReportsPage />)
+    fireEvent.click(await screen.findByLabelText('월간 매출 삭제'))
+    expect(await screen.findByText(/삭제하시겠습니까/)).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog', { name: '레포트 삭제 확인' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '삭제' }))
+    await waitFor(() => expect(reportAdminApi.remove).toHaveBeenCalledWith(1))
   })
 })

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 
 from app.core.constants import AuditAction, RoleCode, PermissionAction
-from app.core.deps import SessionDep, require_role, get_current_user
+from app.core.deps import SessionDep, require_menu, get_current_user
 from app.core.errors import NotFoundError, ConflictError
 from app.models.report import ReportFolder, Report
 from app.schemas.folder import FolderCreate, FolderUpdate, FolderResponse, FolderTreeNode
@@ -18,7 +18,7 @@ from app.services import permission_service
 
 router = APIRouter(prefix="/api/report-folders", tags=["folders"])
 
-_require_operator = require_role(RoleCode.SYSTEM_OPERATOR)
+_require_operator = require_menu("admin_reports")
 
 @router.get("", response_model=list[FolderResponse])
 async def list_folders(db: SessionDep, _op=Depends(_require_operator)):
@@ -96,7 +96,7 @@ async def folder_tree(db: SessionDep, current=Depends(get_current_user)):
     reports = (await db.execute(select(Report))).scalars().all()
 
     accessible = await permission_service.accessible_report_ids(
-        db, current["user_id"], PermissionAction.VIEW
+        db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
     )
 
     # folder_id -> [report_id] (VIEW 권한 보유 레포트만; 가시성은 권한 기반)

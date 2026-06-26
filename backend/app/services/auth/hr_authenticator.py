@@ -59,6 +59,19 @@ async def authenticate(db: AsyncSession, emp_no: str, password: str) -> HRProfil
     if row is None or not verify_password(password, row.login_pwd):
         raise AuthenticationError("사번 또는 비밀번호가 올바르지 않습니다.")
 
+    # 재직(emp_status='W') 직원만 로그인 허용 (R: 사내 임직원 전용 포털)
+    active = (
+        await db.execute(
+            text(
+                "SELECT 1 FROM public.scl_v_insa_user "
+                "WHERE emp_no = :emp_no AND emp_status = 'W' LIMIT 1"
+            ),
+            {"emp_no": emp_no},
+        )
+    ).first()
+    if active is None:
+        raise AuthenticationError("재직 중인 임직원만 로그인할 수 있습니다.")
+
     # 조직/직급 조회 (기본 부서: bass_dept_yn='Y' 우선, 없으면 emp_sort_ordr 최상위)
     job = (
         await db.execute(

@@ -8,6 +8,7 @@ export interface UserSummary {
   email?: string | null
   department_id?: number | null
   roles: string[]
+  allowed_menus?: string[]
 }
 
 /** 로그인 성공 응답. */
