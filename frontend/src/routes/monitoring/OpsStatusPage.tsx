@@ -35,7 +35,7 @@ export default function OpsStatusPage() {
   const s = statusQuery.data
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
+    <div>
       <h1 className="mb-5 text-xl font-bold text-slate-800">운영 상태</h1>
 
       {statusQuery.isLoading || !s ? (

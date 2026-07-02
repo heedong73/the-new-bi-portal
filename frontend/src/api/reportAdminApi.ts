@@ -2,11 +2,11 @@
 import apiClient, { request } from '@/api/client'
 import type {
   FolderItem,
+  PermissionAction,
   PermissionGrant,
   ReportAdmin,
-  ReportCreate,
   ReportPermission,
-  WorkspaceReportItem,
+  SubjectType,
 } from '@/types/reportAdmin'
 
 export const foldersAdminApi = {
@@ -28,16 +28,9 @@ export const foldersAdminApi = {
 }
 
 export const reportAdminApi = {
-  /** 라이브 PBI 워크스페이스 레포트 목록 (등록 선택용). */
-  workspaceReports: (signal?: AbortSignal) =>
-    apiClient.get<WorkspaceReportItem[]>('/api/powerbi/workspace-reports', { signal }),
-
   /** BIP 등록 레포트 목록 (관리자: 미공개 포함 전체). */
   list: (signal?: AbortSignal) =>
     apiClient.get<ReportAdmin[]>('/api/reports/all', { signal }),
-
-  /** 레포트 등록 (ID 수동 + workspace auto-upsert). */
-  create: (body: ReportCreate) => apiClient.post<ReportAdmin>('/api/reports', body),
 
   /** 레포트 메타 수정 (표시명/설명/카테고리/작성자). */
   update: (id: number, body: { display_name?: string; description?: string; category?: string; author_label?: string | null }) =>
@@ -71,6 +64,10 @@ export const reportAdminApi = {
   /** 권한 부여. */
   grant: (id: number, body: PermissionGrant) =>
     apiClient.post<ReportPermission>(`/api/reports/${id}/permissions`, body),
+
+  /** 권한 다중 부여(멱등). 한 주체에 여러 권한 동시 부여 후 전체 목록 반환. */
+  grantBulk: (id: number, body: { subject_type: SubjectType; subject_id: number; permissions: PermissionAction[] }) =>
+    apiClient.post<ReportPermission[]>(`/api/reports/${id}/permissions/bulk`, body),
 
   /** 권한 회수. */
   revoke: (id: number, permissionId: number) =>

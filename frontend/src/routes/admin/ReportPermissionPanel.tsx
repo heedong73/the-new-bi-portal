@@ -17,14 +17,15 @@ const PERMISSIONS: { value: PermissionAction; label: string }[] = [
   { value: 'VIEW', label: '조회' },
   { value: 'DOWNLOAD', label: '다운로드' },
   { value: 'REFRESH', label: '새로고침' },
-  { value: 'MANAGE_REPORT', label: '관리' },
+  { value: 'MANAGE_REPORT', label: '교체' },
+  { value: 'VIEW_STATS', label: '통계 조회' },
 ]
 
 export default function ReportPermissionPanel({ reportId }: { reportId: number }) {
   const queryClient = useQueryClient()
   const [subjectType, setSubjectType] = useState<SubjectType>('user')
   const [subjectId, setSubjectId] = useState('')
-  const [permission, setPermission] = useState<PermissionAction>('VIEW')
+  const [selectedPerms, setSelectedPerms] = useState<PermissionAction[]>(['VIEW'])
 
   const permsQuery = useQuery({
     queryKey: ['report-perms', reportId],
@@ -36,10 +37,18 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['report-perms', reportId] })
 
+  function togglePerm(p: PermissionAction, checked: boolean) {
+    setSelectedPerms((prev) => (checked ? [...new Set([...prev, p])] : prev.filter((x) => x !== p)))
+  }
+
   const grantMutation = useMutation({
     mutationFn: () =>
-      reportAdminApi.grant(reportId, { subject_type: subjectType, subject_id: Number(subjectId), permission }),
-    onSuccess: () => { setSubjectId(''); invalidate() },
+      reportAdminApi.grantBulk(reportId, {
+        subject_type: subjectType,
+        subject_id: Number(subjectId),
+        permissions: selectedPerms,
+      }),
+    onSuccess: () => { setSubjectId(''); setSelectedPerms(['VIEW']); invalidate() },
   })
   const revokeMutation = useMutation({
     mutationFn: (permId: number) => reportAdminApi.revoke(reportId, permId),
@@ -63,7 +72,7 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
   }
 
   const permLabel = (code: string) => PERMISSIONS.find((p) => p.value === code)?.label ?? code
-  const canGrant = subjectId.trim() !== '' && !grantMutation.isPending
+  const canGrant = subjectId.trim() !== '' && selectedPerms.length > 0 && !grantMutation.isPending
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -94,10 +103,17 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
             className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm w-32" />
         )}
 
-        <select value={permission} onChange={(e) => setPermission(e.target.value as PermissionAction)}
-          aria-label="권한" className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
-          {PERMISSIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-slate-200 px-2 py-1.5">
+          <span className="text-xs text-slate-400">권한(복수 선택)</span>
+          {PERMISSIONS.map((p) => (
+            <label key={p.value} className="inline-flex items-center gap-1 text-sm text-slate-600">
+              <input type="checkbox" checked={selectedPerms.includes(p.value)}
+                onChange={(e) => togglePerm(p.value, e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300" />
+              {p.label}
+            </label>
+          ))}
+        </div>
 
         <button type="button" disabled={!canGrant} onClick={() => grantMutation.mutate()}
           className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">

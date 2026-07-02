@@ -2,7 +2,9 @@
 
 ## Introduction
 
-사내 BI Portal(이하 BIP)은 현재 외부 업체 솔루션으로 운영 중인 "사내 Power BI 레포트 공유 웹 포털"을 자체 개발 시스템으로 대체하기 위한 내부 운영 포털이다. 단순 레포트 게시판이 아니라, Power BI Embedded 기반 레포트 조회, 사용자/그룹/권한 관리, 인사정보 DB 기반 사번/비밀번호 로그인, 데이터셋 새로고침 상태 표시, Power BI Export 기반 정기 메일 발송, 운영 로그/모니터링/통계 대시보드를 포함하는 운영 등급(production-grade) 시스템이다. (요청센터는 v1.1+ 범위)
+> **문서 최신 상태(2026-07)**: v1.0 요구사항은 R1~R41이며, 2026-06~07 운영 피드백으로 변경/추가된 요구사항은 본 문서 하단 **"8. 2026-06~07 운영 피드백 반영"**에 정리되어 있다(해당 내용이 최신 기준). 전체 산출물의 작업 분해(WBS)는 `tasks.md` 상단 "작업 분해 구조(WBS)", 설계는 `design.md`, 결정 로그는 `risk & decision_log.md`(D-01~D-25) 참조.
+
+사내 BI Portal(이하 BIP)은 현재 외부 업체 솔루션으로 운영 중인 "사내 Power BI 레포트 공유 웹 포털"을 자체 개발 시스템으로 대체하기 위한 내부 운영 포털이다. 단순 레포트 게시판이 아니라, Power BI Embedded 기반 레포트 조회, 사용자/그룹/권한 관리, 인사정보 DB 기반 사번/비밀번호 로그인, 데이터셋 새로고침 상태 표시, Power BI Export 기반 정기 메일 발송, 서비스 센터(문의/에러 수정 요청), 운영 로그/모니터링/통계 대시보드를 포함하는 운영 등급(production-grade) 시스템이다.
 
 본 시스템은 회사 표준 기술 스택(FastAPI, PostgreSQL 16+, Redis 7, React 19 + Vite 6 + TypeScript, Tailwind CSS v4, Node.js 20 LTS, Docker Compose)으로 내부망 전용으로 구축된다. 운영 원장(ledger)은 PostgreSQL의 별도 DB `bi_portal`(AWS RDS, 서울 리전)에 저장하며, Redis는 cache / queue / lock 용도로만 사용한다. 모든 Power BI API 호출, Embed Token 발급, Export, Refresh는 Backend 또는 Worker에서만 수행하고 secret을 Frontend에 노출하지 않는다.
 
@@ -75,7 +77,7 @@
 ### 운영 용어
 
 - **Audit_Log**: 로그인/조회/권한/그룹/새로고침/메일/Export 등 운영 행위를 추적하는 감사 로그.
-- **Request_Center**: 사용자가 문의사항, 에러 수정 요청 등을 등록하는 요청센터.
+- **Request_Center (서비스 센터)**: 사용자가 문의사항, 에러 수정 요청 등을 등록하는 서비스 센터.
 - **Local_Time**: `APP_TIMEZONE`(기본 `Asia/Seoul`) 기준 변환된 시각.
 - **UTC_Time**: Power BI API가 반환하는 UTC 기준 시각.
 - **bi_portal**: 기존 데이터플랫폼 AWS RDS PostgreSQL(서울 리전) 내 BIP 전용 데이터베이스. BIP 운영 원장과 인사정보 뷰(`scl_v_insa_*`)가 함께 존재한다.
@@ -187,7 +189,7 @@
 
 1. WHERE 요청자가 System_Operator인 경우, THE Backend_API SHALL 특정 Report에 대한 Report_Permission을 Permission_Subject(사용자/역할/부서/그룹) 단위로 부여하는 기능을 제공한다.
 2. WHERE 요청자가 System_Operator인 경우, THE Backend_API SHALL 부여된 Report_Permission을 회수하는 기능을 제공한다.
-3. THE Backend_API SHALL Report_Permission의 권한 종류로 v1.0에서 `VIEW`(조회/임베드), `DOWNLOAD`(Export/다운로드), `REFRESH`(수동 새로고침), `MANAGE_REPORT`(레포트 메타/공개 관리)를 정의하고, `SCHEDULE_REFRESH`(예약 새로고침 변경)·`MANAGE_PERMISSION`(권한 위임)은 v1.1+ 범위로 둔다.
+3. THE Backend_API SHALL Report_Permission의 권한 종류로 v1.0에서 `VIEW`(조회/임베드), `DOWNLOAD`(Export/다운로드), `REFRESH`(수동 새로고침), `MANAGE_REPORT`(레포트 메타/공개 관리), `VIEW_STATS`(레포트별 통계 조회)를 정의하고, `SCHEDULE_REFRESH`(예약 새로고침 변경)·`MANAGE_PERMISSION`(권한 위임)은 v1.1+ 범위로 둔다.
 4. WHEN 사용자의 특정 Report에 대한 특정 액션 수행 가능 여부를 판정하는 경우, THE Backend_API SHALL 해당 사용자에게 직접 부여된 권한과 사용자의 역할/부서/소속 그룹에 부여된 권한을 합집합으로 계산하고, 요청 액션에 대응하는 권한(예: 조회=`VIEW`, 새로고침=`REFRESH`) 보유 여부로 판정한다.
 5. THE Backend_API SHALL `VIEW` 권한을 보유한 Report 목록만 해당 사용자에게 노출한다.
 6. THE Backend_API SHALL Report_Permission을 Report 단위로 저장·판정하며, 레포트의 폴더(Report_Folder) 소속과 무관하게 동작한다(같은 폴더 내 레포트들도 서로 다른 권한 가능).
@@ -235,16 +237,15 @@
 4. WHILE Report가 비공개 상태인 동안, THE Backend_API SHALL 권한 보유 여부와 무관하게 해당 Report를 일반 조회 목록에서 제외한다.
 5. THE Backend_API SHALL Report 등록/수정/공개 상태 변경 행위를 Audit_Log에 기록한다.
 
-### Requirement 12: 관리자 레포트 등록 (ID 수동 등록 + PBIX Import 업로드) [v1.0] (기능 #12, #29)
+### Requirement 12: 관리자 레포트 등록 (PBIX Import 업로드) [v1.0] (기능 #12, #29)
 
-**User Story:** 시스템 운영자로서 이미 Power BI에 게시된 레포트를 ID로 카탈로그에 등록하거나, PBIX 파일을 Power BI Import API로 직접 업로드하여 게시하고 싶다, 그래야 기존 업체 솔루션을 거치지 않고도 포털의 레포트 카탈로그를 갱신·갱신본 반영할 수 있기 때문이다.
+**User Story:** 시스템 운영자로서 PBIX 파일을 Power BI Import API로 직접 업로드하여 게시하고 싶다, 그래야 기존 업체 솔루션을 거치지 않고도 포털의 레포트 카탈로그를 갱신·갱신본 반영할 수 있기 때문이다.
 
 #### Acceptance Criteria
 
-**ID 수동 등록**
+**ID 수동 등록 (제거됨 — D-15 갱신)**
 
-1. WHERE 요청자가 System_Operator인 경우, THE Backend_API SHALL 이미 Power BI에 게시된 Report의 Power BI Report ID와 Dataset ID를 수동으로 입력받아 BIP 카탈로그에 등록하는 기능을 제공한다.
-2. WHEN System_Operator가 Power BI Report ID / Dataset ID / Workspace ID를 입력하여 등록을 요청한 경우, THE Backend_API SHALL 입력된 식별자의 형식을 검증하고, `workspace_id`를 `workspaces` 테이블에 자동으로 upsert한 후 BIP 카탈로그에 Report 레코드를 생성한다.
+> 기존 임베디드 서버에 이미 있는 레포트를 Report ID/Dataset ID로 가져와 등록하던 경로(구 AC 1~2, `POST /api/reports`, `GET /api/powerbi/workspace-reports`, 관리자 UI "기존 레포트 게시")는 v1.0에서 **제거**했다. 헷갈림 방지 + 향후 신규 Embedded 서버 전면 마이그레이션 예정이므로, 레포트 게시는 **PBIX 업로드 게시**로 일원화한다.
 
 **PBIX Import API 업로드**
 
@@ -254,7 +255,7 @@
 6. IF 업로드된 파일이 PBIX 형식이 아니거나 허용 크기/확장자를 위반한 경우, THEN THE Backend_API SHALL 업로드를 거부하고 한국어 오류 메시지를 반환한다.
 7. WHEN PBIX Import가 성공한 경우, THE Backend_API SHALL 해당 레포트가 새로고침을 요구하는 경우 "데이터셋 자격증명/게이트웨이 설정이 별도로 필요함"을 결과에 안내한다.
 8. THE Backend_API SHALL 레포트 등록 시 BIP 폴더(Report_Folder, Requirement 41)를 지정받아 카탈로그 분류에 저장한다.
-9. THE Backend_API SHALL ID 기반 수동 등록 및 PBIX Import 업로드 행위를 Audit_Log에 기록한다.
+9. THE Backend_API SHALL PBIX Import 업로드 행위를 Audit_Log에 기록한다.
 
 > 비고: 레포트 신규 등록(신규 PBIX 게시)은 **관리자(System_Operator)**만 수행한다. 수퍼 사용자의 레포트 등록 "요청" 기능은 사내 그룹웨어 IT 요청서로 처리되므로 BIP 범위에서 **제외**한다. 수퍼 사용자의 완전 셀프 업로드 및 업로드본 자동 검수는 v1.1+ 범위로 분리한다.
 >
@@ -327,18 +328,22 @@
 
 > 구현 메모: Export 형식(PNG/PDF/PPTX), polling 간격·타임아웃·재시도 정책, ZIP 저장/이미지 정적 서빙 위치, 메일 본문 템플릿, SMTP 인증, 락 키 설계·TTL은 design 및 risk-and-decision-log 문서에서 결정한다. 기존 업체 솔루션의 메일 발송 흐름(schedule working → Export NotStarted/Running/Succeeded → exports/{exportId} → result.zip → extracted 압축해제 → /reportimage 경로 저장 → Lock 중복방지 → Sending/Email sent)을 본 파이프라인의 기준 흐름으로 삼는다.
 
-### Requirement 17: 요청센터 [v1.1+] (기능 #22)
+### Requirement 17: 서비스 센터 [v1.0] (기능 #22)
 
 **User Story:** 일반 사용자로서 문의사항이나 에러 수정 요청을 포털에서 등록하고 처리 현황을 확인하고 싶다, 그래야 별도 채널 없이 포털 안에서 요청을 관리할 수 있기 때문이다.
 
 #### Acceptance Criteria
 
-1. THE Backend_API SHALL 인증된 사용자가 문의/에러 수정 요청을 생성하는 기능을 제공한다.
-2. THE Backend_API SHALL 요청자가 자신이 생성한 요청의 처리 상태를 조회하는 기능을 제공한다.
-3. WHERE 요청자가 System_Operator인 경우, THE Backend_API SHALL 등록된 요청의 상태를 변경하고 응답을 등록하는 기능을 제공한다.
-4. THE Backend_API SHALL 요청 생성/상태 변경 행위를 Audit_Log에 기록한다.
+1. THE Backend_API SHALL 인증된 사용자가 서비스 요청을 생성하는 기능을 제공하며, 요청 유형은 `inquiry`(문의)/`error`(에러)/`improvement`(개선요청) 중 하나이고 제목·내용(사유)을 입력받는다.
+2. THE Backend_API SHALL 요청자가 자신이 생성한 요청의 처리 상태를 조회하는 기능을 제공한다(일반 사용자는 본인 요청만, System_Operator는 전체).
+3. WHERE 요청자가 System_Operator인 경우, THE Backend_API SHALL 등록된 요청의 상태(`pending`(대기)/`received`(접수)/`rejected`(반려)/`done`(완료))를 변경하고 응답 및 완료예정일(`expected_completion_date`)을 설정하는 기능을 제공한다. 요청 생성 시 초기 상태는 `pending`이다.
+4. WHEN System_Operator가 요청을 `rejected`(반려)로 변경하는 경우, THE Backend_API SHALL 반려 사유 입력을 받아 함께 저장한다.
+5. THE Backend_API SHALL 인증된 사용자(요청 작성자) 또는 System_Operator가 요청에 파일(에러 화면 캡처, 문서 등)을 첨부/조회/삭제하는 기능을 제공하고, 허용 형식·크기를 검증하며 파일 본체는 권한 검증 후에만 다운로드되게 한다.
+6. THE Backend_API SHALL 요청 작성자와 System_Operator가 해당 요청에 대해 대화(댓글 스레드)를 작성/조회하는 기능을 제공한다.
+7. WHEN 새 요청이 등록된 경우, THE Backend_API SHALL 지정된 관리자 이메일(`REQUEST_ADMIN_EMAIL`)로 알림 메일을 발송한다(best-effort). WHEN 운영자의 상태 변경/응답 또는 대화가 작성된 경우, THE Backend_API SHALL 관련자(요청자/운영자)에게 알림 메일을 발송한다(설정으로 비활성화 가능).
+8. THE Backend_API SHALL 요청 생성/상태 변경/대화 작성 행위를 Audit_Log에 기록한다.
 
-> 비고: 요청센터는 v1.1+ 고도화 범위로 분리한다. v1.0 기간에는 문의/에러 수정 요청을 사내 그룹웨어 IT 요청서 등 기존 채널로 처리한다.
+> 비고: 서비스 센터는 v1.0 범위에 포함한다(2026-06 범위 조정). v1.0에서는 요청 생성(유형 문의/에러/개선요청), 본인/전체 요청 조회, System_Operator의 상태 변경(대기→접수/반려/완료)·응답·반려 사유·완료예정일 설정, 파일 첨부(이미지/문서), 대화(댓글 스레드), 관리자 알림 메일을 제공한다. 요청자는 우선순위/공개범위/대상 화면을 별도로 지정하지 않으며(대상은 내용에 기술), 우선순위는 관리자 판단 영역으로 화면에 노출하지 않는다. 카테고리 세분화, 알림 채널 확장(사내 메신저 등), 영업시간 기반 SLA, 첨부 바이러스 스캔은 v1.1+ 고도화 범위로 둔다.
 
 ### Requirement 18: 통계 대시보드 [v1.0] (기능 #25)
 
@@ -357,7 +362,7 @@
    - Refresh 실패 현황
    - 미사용 리포트 목록 (설정 가능한 기간 동안 조회 이력이 없는 공개 Report)
 3. THE Frontend_App SHALL 통계 대시보드 화면에 v1.0 기본 운영 통계 및 사용 통계 지표를 카드, 차트, 목록으로 표시한다.
-4. WHERE 요청자가 통계 대시보드 접근 권한을 보유한 경우에 한해, THE Backend_API SHALL 통계 데이터를 제공한다.
+4. WHERE 요청자가 통계 대시보드 접근 권한을 보유한 경우에 한해, THE Backend_API SHALL 통계 데이터를 제공한다. THE Backend_API SHALL System_Operator에게는 전체 레포트 기준 통계를, Super_User에게는 관리자가 `VIEW_STATS` 권한을 부여한 레포트에 한해 레포트별로 통계를 제공한다(레포트 선택 드롭다운은 부여된 레포트만 노출). 레포트 등록 시 작성자에게 `VIEW_STATS`를 자동 부여하며 관리자가 이후 회수/수정할 수 있다.
 5. THE Backend_API SHALL 통계 집계 시 기간(예: 일/주/월) 필터를 지원한다.
 6. THE BIP SHALL 고급 분석, AI 기반 분석, 복잡한 대시보드를 v1.1+ 범위로 분리한다(AI 분석은 Requirement 21 참조).
 
@@ -453,8 +458,8 @@
 #### Acceptance Criteria
 
 1. THE BIP SHALL 기능을 v1.0 필수 범위와 v1.1+ 고도화 범위로 구분하여 인도한다.
-2. THE BIP SHALL 기존 업체 솔루션 대체에 필수적인 기능(인사정보 DB 기반 로그인, 권한 관리, 레포트 조회, 새로고침 상태, 관리자 ID 수동 등록 및 PBIX Import 업로드, Export 메일 발송, 기본 운영 통계 대시보드, 운영 로그)을 v1.0 범위에 포함한다.
-3. THE BIP SHALL 요청센터(기능 #22), 기존 대시보드 전체 통합(기능 #27), AI 분석(기능 #28), PBIX 완전 셀프 업로드 및 자동 검수(기능 #12/#29 고도화)를 v1.1+ 범위로, Embedded 용량 자동 스케일링을 v1.2 범위로 분리한다.
+2. THE BIP SHALL 기존 업체 솔루션 대체에 필수적인 기능(인사정보 DB 기반 로그인, 권한 관리, 레포트 조회, 새로고침 상태, 관리자 ID 수동 등록 및 PBIX Import 업로드, Export 메일 발송, 서비스 센터, 기본 운영 통계 대시보드, 운영 로그)을 v1.0 범위에 포함한다.
+3. THE BIP SHALL 기존 대시보드 전체 통합(기능 #27), AI 분석(기능 #28), PBIX 완전 셀프 업로드 및 자동 검수(기능 #12/#29 고도화)를 v1.1+ 범위로, Embedded 용량 자동 스케일링을 v1.2 범위로 분리한다.
 4. THE BIP SHALL 관리자의 PBIX Import API 기반 업로드(기능 #12/#29)를 v1.0 필수 범위에 포함한다(기존 업체 솔루션에서 운영 중인 기능).
 5. THE BIP SHALL `powerbi-refresh-monitor`의 기존 자산(Backend 라우트, Celery Collector, React Gantt/타임테이블, PowerBI client/token service)을 재활용 가능한 경우 우선 사용하여 개발량을 절감하되, PRM 의존성이 핵심 기능 인도를 지연시키는 경우 Refresh History 수집(R14)·Refresh 실행 현황 화면(R15)을 v1.0 optional 또는 v1.1+로 분리하는 것을 검토한다.
 
@@ -486,7 +491,7 @@
 
 #### Acceptance Criteria
 
-1. THE Backend_API SHALL 사용자, 역할, 그룹, 그룹원, 부서, 레포트, 레포트 권한, Refresh_Run, Refresh_Schedule, Mail_Schedule, Mail_Job, Export_Job, Report_Image_Path, Request_Center 요청, Audit_Log를 `bi_portal`의 정규화된 테이블로 영속화한다.
+1. THE Backend_API SHALL 사용자, 역할, 그룹, 그룹원, 부서, 레포트, 레포트 권한, Refresh_Run, Refresh_Schedule, Mail_Schedule, Mail_Job, Export_Job, Report_Image_Path, 서비스 센터 요청(Request_Center), Audit_Log를 `bi_portal`의 정규화된 테이블로 영속화한다.
 2. THE Backend_API SHALL Alembic을 사용하여 모든 스키마 변경을 마이그레이션 파일로 관리한다.
 3. THE Backend_API SHALL 동일 Refresh_Run 식별자(`workspace_id`, `dataset_id`, `request_id` 조합)에 UNIQUE 제약을 적용한다.
 4. THE Backend_API SHALL Redis에 저장되는 데이터(토큰 캐시, 작업 큐, 분산 락)를 휘발성으로 취급하고, 손실 시 원장(`bi_portal`)으로부터 복구 가능하도록 설계한다.
@@ -649,7 +654,7 @@
 1. WHERE 요청자가 System_Operator인 경우, THE Backend_API SHALL 레포트 폴더(Report_Folder)를 생성/수정/삭제하는 기능을 제공한다.
 2. THE Backend_API SHALL Report_Folder가 부모 폴더를 가질 수 있는 자유 계층(트리) 구조를 지원하여 계열사 > 팀 > 업무 영역 등 임의 깊이의 분류를 허용한다.
 3. WHEN 레포트가 등록되거나 PBIX가 업로드되는 경우, THE Backend_API SHALL 해당 레포트를 하나의 Report_Folder에 배치하고, 이후 다른 폴더로 이동하는 기능을 제공한다.
-4. THE Frontend_App SHALL 폴더 트리를 사이드바/탐색 영역에 표시하고, 사용자가 폴더를 선택하면 해당 폴더(및 하위 폴더)에 속한, 사용자가 조회 권한을 보유한 레포트만 노출한다.
+4. THE Frontend_App SHALL 폴더 트리를 사이드바/탐색 영역에 표시하고, 폴더를 펼치면 하위 폴더와 해당 폴더의 직속 레포트(사용자가 조회 권한을 보유한 것만)를 트리에 나열하며, 사용자가 레포트를 선택하면 해당 레포트를 단일 화면으로 표시한다. (폴더는 계열사/구분자 성격이 강해 상위 폴더는 펼침만 하고, 레포트는 말단에서 선택해 단건 조회한다.)
 5. WHEN Report_Folder가 삭제되는 경우, IF 해당 폴더에 하위 폴더 또는 소속 레포트가 존재하는 경우, THEN THE Backend_API SHALL 삭제를 거부하고 HTTP 409 CONFLICT 응답을 반환한다. 레포트 자체(Power BI 원본)는 어떠한 경우에도 삭제하지 않는다.
 6. THE Backend_API SHALL Report_Folder 생성/수정/삭제 및 레포트의 폴더 이동 행위를 Audit_Log에 기록한다.
 7. THE Backend_API SHALL 레포트 접근 권한을 **폴더와 독립적으로 레포트 단위(Requirement 8)로** 판정하여, 동일 Report_Folder에 속한 레포트들이라도 서로 다른 권한을 가질 수 있도록 한다. 폴더 소속은 권한에 영향을 주지 않는다(분류/탐색 용도).
@@ -664,3 +669,40 @@
 - **design.md**: 시스템 아키텍처, 모듈 구조, 데이터 모델(ERD), API 명세, `powerbi-refresh-monitor` 자산 재활용 통합 설계, 핵심 기술 결정 대안 비교표(인사정보 DB 인증, Embed Token 발급 방식, Export 파이프라인 구조, 메일 발송 방식, 락 설계 등), Correctness Properties, 테스트 전략.
 - **risk-and-decision-log.md**: 보안/권한/Token/인증/메일/Job 중복실행/로그·감사 관련 리스크 식별, 결정 로그(확정 / 추후 비교 / PoC 후 결정 구분), v1.0/v1.1+ 범위 결정 근거.
 - **tasks.md**: task 단위 구현 계획. v1.0 필수 범위 우선, 기존 자산 재활용 task 포함, 1인 12주 일정 제약 반영.
+
+
+## 8. 2026-06~07 운영 피드백 반영 (요구사항 변경/추가 요약)
+
+파일럿 사용 중 사용자 요청·버그로 확정된 v1.0 범위 내 변경/추가. 상세 구현은 design·risk-and-decision-log·tasks(Phase 13, task 53~62) 참조.
+
+### R5/R6/R8 확장 — 조직도 기반 팀 권한 그룹 (D-25)
+- THE Backend_API SHALL 조직도(인사 뷰)를 기반으로 부서(팀)별 권한 그룹을 자동 생성하고, 선택한 조직 하위의 '직속 구성원이 있는 팀'에 대해 그룹 멤버를 현재 로스터와 **완전 동기화**(추가+제거)하는 기능을 제공한다. 완전 동기화는 자동 관리 그룹(`user_groups.source_dept_id` 보유)만 대상으로 하며 수동 그룹은 변경하지 않는다.
+- THE Backend_API SHALL 동기화 실행 전 추가/제거/신규 대상을 반환하는 미리보기를 제공하고, 팀 구성원이 BIP 미등록이면 자동 등록(+General_User)한다.
+- THE Frontend_App SHALL 그룹 관리 화면에서 회사·본부·담당·팀 전체 조직도를 트리로 표시하고, 노드 단위로 동기화를 실행할 수 있게 한다. 그룹명은 팀명으로 하되 충돌 시 상위조직/회사명으로 점진적으로 구분한다.
+
+### R7/R23 변경 — 역할→메뉴 고정 매핑 (D-24)
+- THE Backend_API SHALL 메뉴(페이지) 접근 권한을 역할→메뉴 코드 고정 매핑(일반=홈, 파워=홈+통계, 운영자=전체)으로 강제하며, 역할별 메뉴를 런타임 편집하는 매트릭스 기능은 제공하지 않는다(제거). 서비스 센터는 로그인 사용자 전원에게 노출한다.
+
+### R8 확장 — 다중 권한 부여 · 표기
+- THE Backend_API SHALL 한 주체(user/role/dept/group)에 여러 레포트 권한을 한 번에 부여(멱등)하는 기능을 제공한다.
+- THE Frontend_App SHALL `MANAGE_REPORT` 권한을 "교체"로 표기한다(PBIX 재업로드로 콘텐츠 교체 의미).
+
+### R12 변경 — 레포트 카탈로그 큐레이션 (D-15)
+- THE Backend_API SHALL 레포트 게시를 **PBIX Import 업로드 단일 경로**로 제공하며, 기존 임베디드 서버 레포트를 ID로 가져와 등록하던 경로(구 ID 수동 등록, `GET /api/powerbi/workspace-reports`)는 제공하지 않는다(제거).
+- THE Worker SHALL 워크스페이스 수집(collect) 시 카탈로그에 신규 레포트를 자동 등록하지 않는다(이미 등록된 레포트 메타 갱신만).
+
+### R16 확장 — 메일 스케줄 고도화
+- THE Backend_API SHALL 스케줄별 페이지 다중 선택과 발송 순서, 친화적 주기 입력(주기/시간/요일/일자/기간), 스케줄별 보내는 사람 주소(`sender_email`, 미지정 시 기본 발신 주소)를 지원한다.
+- THE Worker SHALL 각 페이지를 개별 export(`powerBIReportConfiguration.pages`)하여 선택한 페이지만 정확히 발송하고, 발송 겹침 시 후속 회차가 누락되지 않도록 catch-up + 멱등(run_key) 처리한다.
+- THE Mail_Service SHALL 본문에 정렬/굵기/글꼴 등 서식(인라인 style 화이트리스트)을 허용하고 줄바꿈을 보존하며, text/plain 대체본을 실제 본문/제목으로 채워 모바일 클라이언트 알림에 노출되게 한다. 이미지 위 페이지명 라벨은 표시하지 않는다.
+- THE Frontend_App SHALL 수신자를 이름으로 선택해 리스트로 관리(순서 변경 포함)하고, 본문 리치 에디터와 가로 2단 폼 레이아웃을 제공한다.
+
+### R17 개편 — 서비스 센터
+- THE Backend_API SHALL 요청 유형을 문의/에러/개선요청, 상태를 대기(기본)/접수/반려/완료로 관리하고, 관리자가 완료예정일(`expected_completion_date`)을 설정하며, 신규 요청 시 고정 관리자 메일로 알림한다. 우선순위/공개범위/대상화면은 화면에서 다루지 않는다(대상은 본문에 기술).
+
+### R18 확장 — 레포트별 통계 권한
+- THE Backend_API SHALL 레포트별 통계 조회 권한(`VIEW_STATS`)을 정의하여, Super_User는 부여받은 레포트의 통계만 조회하게 하고, 레포트 등록/업로드 시 작성자에게 자동 부여한다.
+
+### R2/R33 보완 — 부서 한글명, R30 보완 — 시각 표기
+- THE Backend_API SHALL 인사 뷰에서 부서 한글명(`dept_name`)을 매핑하여 사용자 부서를 코드가 아닌 한글명으로 저장/표시한다(기존 코드 저장분은 재로그인 또는 백필로 정리).
+- THE Backend_API SHALL 서비스 센터 등 응답 시각을 `APP_TIMEZONE`(Asia/Seoul) 기준으로 제공하여 화면에 한국 시간으로 표시되게 한다.

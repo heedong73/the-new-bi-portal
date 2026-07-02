@@ -2,11 +2,13 @@
 
 ## Overview
 
-BI Portal(이하 BIP)은 현재 외부 업체 솔루션으로 운영 중인 "사내 Power BI 레포트 공유 웹 포털"을 자체 개발 시스템으로 대체하는 운영 등급 내부 포털이다. 단순 게시판이 아니라 Power BI Embedded 레포트 조회, 사용자/그룹/권한 관리, 인사정보 DB 기반 사번/비밀번호 로그인, 데이터셋 새로고침 상태 표시, Power BI Export 기반 정기 메일 발송, 요청센터, 운영 로그/모니터링/통계를 포함한다.
+> **문서 최신 상태(2026-07)**: 2026-06~07 운영 피드백 반영 설계(엔드포인트 추가/제거, 마이그레이션, 권한/그룹/메일/레포트 변경)는 본 문서 하단 **"2026-06~07 운영 피드백 반영 설계 요약"**에 정리되어 있다. 요구사항은 `requirements.md`, 결정 로그는 RDL(D-01~D-25), 전체 작업 분해(WBS)는 `tasks.md` 상단 "작업 분해 구조(WBS)" 참조.
+
+BI Portal(이하 BIP)은 현재 외부 업체 솔루션으로 운영 중인 "사내 Power BI 레포트 공유 웹 포털"을 자체 개발 시스템으로 대체하는 운영 등급 내부 포털이다. 단순 게시판이 아니라 Power BI Embedded 레포트 조회, 사용자/그룹/권한 관리, 인사정보 DB 기반 사번/비밀번호 로그인, 데이터셋 새로고침 상태 표시, Power BI Export 기반 정기 메일 발송, 서비스 센터, 운영 로그/모니터링/통계를 포함한다.
 
 본 설계는 다음 핵심 결정에 기반한다. 각 결정의 대안 비교와 되돌리기 난이도는 `risk-and-decision-log.md`(이하 RDL)에 결정 ID(D-XX)로 정리하며, 본 문서의 대안 비교표와 동일 ID로 상호 참조한다.
 
-1. **기존 `powerbi-refresh-monitor`(이하 PRM) 자산 재활용** — FastAPI 라우트 구조, Celery Collector/Worker/Beat, React Gantt/타임테이블, PowerBI client/token service, Redis 분산 락, Alembic, 이중 시간 컬럼(UTC/Local) 패턴을 그대로 계승한다. BIP는 PRM을 확장하여 인증/권한/레포트/메일/요청센터/감사 도메인을 추가한다. **재활용 가능한 경우 PRM 자산을 우선 사용**하되, **PRM 코드 의존성으로 BIP 핵심 기능(인증·권한·Embed 조회·Export 메일) 구현이 지연되면, Refresh History 수집(R14)과 Refresh 실행 현황 Gantt 화면(R15)을 v1.0 optional 또는 v1.1+로 분리하는 것을 비상 옵션으로 둔다**(RK-18). (충족: R14, R15, R26, R32)
+1. **기존 `powerbi-refresh-monitor`(이하 PRM) 자산 재활용** — FastAPI 라우트 구조, Celery Collector/Worker/Beat, React Gantt/타임테이블, PowerBI client/token service, Redis 분산 락, Alembic, 이중 시간 컬럼(UTC/Local) 패턴을 그대로 계승한다. BIP는 PRM을 확장하여 인증/권한/레포트/메일/서비스 센터/감사 도메인을 추가한다. **재활용 가능한 경우 PRM 자산을 우선 사용**하되, **PRM 코드 의존성으로 BIP 핵심 기능(인증·권한·Embed 조회·Export 메일) 구현이 지연되면, Refresh History 수집(R14)과 Refresh 실행 현황 Gantt 화면(R15)을 v1.0 optional 또는 v1.1+로 분리하는 것을 비상 옵션으로 둔다**(RK-18). (충족: R14, R15, R26, R32)
 2. **운영 원장은 PostgreSQL `bi_portal`(AWS RDS, 서울), Redis는 cache/queue/lock/token cache 전용** — Job 원장(Mail_Job, Export_Job, Refresh_Run 등)은 모두 PostgreSQL에 저장하고 Redis는 휘발성으로만 사용한다. 인사정보 뷰(`scl_v_insa_*`)도 동일 DB에 있으나 읽기 전용으로만 참조한다. (충족: R25.5, R29.4, R37)
 3. **모든 권한 검증은 Backend에서 수행** — Frontend의 메뉴/버튼 숨김은 UX 보조일 뿐 통제 수단이 아니다. 권한은 사용자 직접 + 역할 + 부서 + 그룹 권한의 합집합으로 Backend가 계산·강제한다. (충족: R8, R22, R23, R24)
 4. **Power BI secret/master token은 Backend/Worker에만 존재** — Embed Token, Export, Refresh, Import 호출은 전부 서버 측에서만 수행하고 Frontend에는 단기 Embed Token과 임베드 메타데이터만 전달한다. (충족: R9.4, R32.5, R38)
@@ -17,11 +19,11 @@ BI Portal(이하 BIP)은 현재 외부 업체 솔루션으로 운영 중인 "사
 
 ### v1.0 범위 요약
 
-SSO 부재로 인사정보 DB 기반 사번/비밀번호 로그인, 비상 로컬 관리자 로그인, 사용자 자동 매핑, 사용자/그룹/역할/권한 관리, Power BI Embedded 조회, 새로고침 상태 표시, 레포트 등록(ID 수동 + PBIX Import API 업로드), 수동 새로고침, Refresh History 동기화, Refresh 실행 현황 화면 편입, Export 기반 정기 메일 발송, 기본 통계 대시보드, 자동 리렌더링, 감사 로그, 운영 모니터링, Job 중복 방지, 보안.
+SSO 부재로 인사정보 DB 기반 사번/비밀번호 로그인, 비상 로컬 관리자 로그인, 사용자 자동 매핑, 사용자/그룹/역할/권한 관리, Power BI Embedded 조회, 새로고침 상태 표시, 레포트 등록(ID 수동 + PBIX Import API 업로드), 수동 새로고침, Refresh History 동기화, Refresh 실행 현황 화면 편입, Export 기반 정기 메일 발송, 서비스 센터(문의/에러 수정 요청), 기본 통계 대시보드, 자동 리렌더링, 감사 로그, 운영 모니터링, Job 중복 방지, 보안.
 
 ### v1.1+ 확장 포인트
 
-요청센터(R17), 전체 PRM 대시보드 통합(R20), AI 분석(R21), PBIX 완전 셀프 업로드/자동 검수(R12 고도화). Embedded 용량 자동 스케일은 v1.2(D-21). 요청센터·전체 대시보드·AI 분석은 데이터 모델/라우트가 본 문서에 설계돼 있으나 v1.0 구현 범위에서는 제외한다.
+전체 PRM 대시보드 통합(R20), AI 분석(R21), PBIX 완전 셀프 업로드/자동 검수(R12 고도화). Embedded 용량 자동 스케일은 v1.2(D-21). 전체 대시보드·AI 분석은 데이터 모델/라우트가 본 문서에 설계돼 있으나 v1.0 구현 범위에서는 제외한다. 서비스 센터의 v1.1+ 고도화(카테고리 세분화, 알림 채널 확장(사내 메신저 등), 영업시간 기반 SLA, 첨부 바이러스 스캔)는 별도 분리한다.
 
 ## Architecture
 
@@ -206,7 +208,7 @@ backend/app/
 | POST/DELETE | `/api/groups/{id}/members` | 그룹원 추가/제거(멱등) | O | R6 |
 | GET | `/api/roles` | 역할 목록 | O | R7.1 |
 | POST/DELETE | `/api/users/{id}/roles` | 역할 부여/회수(최소 General 보장) | O | R7.2~7.4 |
-| POST/DELETE | `/api/reports/{id}/permissions` | 레포트 권한 부여/회수(주체=user/role/dept/group, 권한=VIEW/DOWNLOAD/REFRESH/MANAGE_REPORT) | O | R8.1~8.3 |
+| POST/DELETE | `/api/reports/{id}/permissions` | 레포트 권한 부여/회수(주체=user/role/dept/group, 권한=VIEW/DOWNLOAD/REFRESH/MANAGE_REPORT/VIEW_STATS) | O | R8.1~8.3 |
 | GET | `/api/reports/{id}/permissions` | 레포트 권한 목록 | O | R8 |
 
 #### 레포트/임베드/새로고침
@@ -217,7 +219,6 @@ backend/app/
 | GET/POST/PATCH/DELETE | `/api/report-folders` | 레포트 폴더(트리) CRUD | O | R41.1, R41.2, R41.5 |
 | GET | `/api/report-folders/tree` | 폴더 트리 + 권한 필터된 레포트 노출 | G+ | R41.4 |
 | PATCH | `/api/reports/{id}/folder` | 레포트의 소속 폴더 이동 | O | R41.3 |
-| POST | `/api/reports` | ID 기반 수동 등록(reportId/datasetId 형식 검증) | O | R12.2, R12.3 |
 | PATCH | `/api/reports/{id}` | 메타데이터 수정 | O | R11.2 |
 | PATCH | `/api/reports/{id}/visibility` | 공개/비공개 전환 | O | R11.3 |
 | POST | `/api/reports/{id}/pbix` | PBIX Import API 업로드(신규/갱신, Worker 위임) | O | R12.3~12.6 |
@@ -227,23 +228,32 @@ backend/app/
 | GET | `/api/exports/{id}` | Export 상태/결과 조회 + 다운로드 수단 | 요청자 본인 또는 O | R9.7 |
 | GET | `/api/reports/{id}/refresh-status` | 마지막 Refresh_Run + 다음 예약(Local_Time) | 해당 Report 조회권 | R10.1, R10.2 |
 | POST | `/api/datasets/{id}/refresh` | 수동 새로고침 트리거(Worker 위임, 진행중이면 차단) | 해당 Dataset refresh권 | R13 |
-| GET | `/api/refresh-history`, `/api/refresh-timetable`, `/api/refresh-schedules`, `/api/summary` | PRM 편입 화면 데이터 | 모니터링 접근권 | R15.3 |
-| POST | `/api/collect-now` | 즉시 동기화(중복 시 already-running) | O | R14 |
+| GET | `/api/refresh-history`, `/api/refresh-timetable`, `/api/refresh-schedules`, `/api/summary`, `/api/refresh-latest-date` | PRM 편입 화면 데이터(단일 일자 조회, latest-date=기본 선택 일자) | 모니터링 접근권 | R15.3 |
+| POST | `/api/collect-now` | 즉시 동기화(HTTP 202, 분산락 점유 시 already-running) — 감사로그 `collect_now` | 모니터링 접근권(monitoring_refresh) | R14 |
+| GET | `/api/collect-status` | 현재 수집 진행 여부(분산락 점유) — Refresh 화면 진행 배너 폴링 | 모니터링 접근권(monitoring_refresh) | R14 |
 
 #### 메일/요청센터/감사/통계/모니터링
 
 | 메서드 | 경로 | 설명 | 권한 | 충족 |
 |---|---|---|---|---|
-| GET/POST/PATCH/DELETE | `/api/mail-schedules` | 메일 스케줄 CRUD(페이지 다중 선택·순서, 수신자 USER/GROUP/DEPARTMENT/EMAIL, 제목·안내문구·이미지 폭 커스터마이징) | O | R16.1, R16.2, R16.14, R16.15 |
+| GET/POST/PATCH/DELETE | `/api/mail-schedules` | 메일 스케줄 CRUD(페이지명 다중 선택·순서, 수신자 USER/GROUP/DEPARTMENT/EMAIL, 제목·안내문구·이미지 폭 커스터마이징, 주기/시간/기간) | O | R16.1, R16.2, R16.14, R16.15 |
+| GET | `/api/reports/{id}/pages` | 레포트 Power BI 페이지 목록(메일 스케줄 페이지명 선택용) | O | R16.2 |
 | GET | `/api/mail-jobs` | 메일 발송 성공/실패 이력 조회 | O | R16.13 |
 | GET | `/api/report-images/{id}` | 저장 이미지 권한 검증 다운로드(스트리밍) | 해당 Mail_Job/Report 열람권 | R16.9, R38 |
 | POST | `/api/mail-jobs/{id}/retry` | 실패 Mail_Job 재시도 | O | R16.12, R34.3 |
-| POST | `/api/requests` | 문의/에러 요청 생성 **[v1.1+]** | 인증됨 | R17.1 |
-| GET | `/api/requests` | 본인 요청 조회 / (O는 전체) **[v1.1+]** | 인증됨/O | R17.2, R17.3 |
-| PATCH | `/api/requests/{id}` | 상태 변경/응답 등록 **[v1.1+]** | O | R17.3 |
+| POST | `/api/requests` | 문의/에러 요청 생성 | 인증됨 | R17.1 |
+| GET | `/api/requests` | 본인 요청 조회 / (O는 전체) | 인증됨/O | R17.2, R17.3 |
+| GET | `/api/requests/{id}` | 요청 상세(본인 또는 O) | 인증됨/O | R17.2, R17.3 |
+| PATCH | `/api/requests/{id}` | 상태 변경/응답 등록 | O | R17.3 |
+| POST | `/api/requests/{id}/attachments` | 첨부 업로드(이미지/문서) | 소유자/O | R17.5 |
+| GET | `/api/requests/{id}/attachments` | 첨부 목록 | 소유자/O | R17.5 |
+| GET | `/api/request-attachments/{id}` | 첨부 다운로드(권한 검증 스트리밍) | 소유자/O | R17.5 |
+| DELETE | `/api/request-attachments/{id}` | 첨부 삭제 | 소유자/O | R17.5 |
+| POST | `/api/requests/{id}/comments` | 댓글 작성(요청자/운영자) | 소유자/O | R17.7 |
 | GET | `/api/audit-logs` | 기간/주체/행위 종류 필터 조회 | O | R35.3 |
-| GET | `/api/stats/overview` | 접속/조회/새로고침/메일/실패Job 집계(기간 필터) | 통계 접근권(O) | R18.1, R18.5 |
-| GET | `/api/stats/usage` | 인기 리포트 TOP10·부서별/월별 리포트 수·사용자별 조회·Export/Refresh 실패·미사용 리포트(기간 필터) | 통계 접근권(O) | R18.2, R18.3, R18.5 |
+| GET | `/api/stats/reports` | 통계 조회 가능 레포트 목록(드롭다운): O=전체, Super_User=VIEW_STATS 부여분 | 통계 접근권 | R18.4 |
+| GET | `/api/stats/overview` | 접속/조회/새로고침/메일/실패Job 집계(기간 필터, report_id 지정 시 해당 레포트만) | 통계 접근권(O) | R18.1, R18.5 |
+| GET | `/api/stats/usage` | 인기 리포트 TOP10·부서별/월별 리포트 수·사용자별 조회·Export/Refresh 실패·미사용 리포트(기간 필터, report_id 지정 가능) | 통계 접근권(O) | R18.2, R18.3, R18.5 |
 | GET | `/api/health` | 시스템 가용 상태 | 익명 | R36.1 |
 | GET | `/api/monitoring/status` | DB/Redis/Worker/최근 작업 결과 지표 | O | R36.2, R36.3 |
 
@@ -436,12 +446,7 @@ sequenceDiagram
     participant PBI as Power BI Import API
     participant DB as bi_portal
 
-    alt ID 수동 등록
-        O->>BE: POST /api/reports (reportId, datasetId)
-        BE->>BE: 형식 검증 + 권한(O)
-        BE->>DB: reports/datasets 카탈로그 생성
-        BE-->>O: 201 + audit(report_create)
-    else PBIX Import 업로드
+    alt PBIX Import 업로드
         O->>BE: POST /api/reports/{id}/pbix (multipart PBIX)
         BE->>BE: 형식/크기/확장자 검증(R12.6, R40.2)
         BE->>Q: enqueue pbix_import(file, nameConflict)
@@ -456,8 +461,8 @@ sequenceDiagram
     end
 ```
 
-- ID 수동 등록: reportId/datasetId 형식 검증 후 카탈로그 생성. (충족: R12.1, R12.2)
 - PBIX Import: 업로드 검증 → Worker 비동기 `POST imports`(`nameConflict`로 신규/갱신 제어) → Import 상태 polling → 성공 시 카탈로그 반영. (충족: R12.3~12.5)
+- **ID 수동 등록/기존 레포트 게시 제거(D-15 갱신)**: 기존 임베디드 서버의 레포트를 ID로 가져와 등록하던 경로(`POST /api/reports`, `GET /api/powerbi/workspace-reports`, 관리자 UI "기존 레포트 게시")는 v1.0에서 제거했다. 헷갈림 방지 + 향후 신규 Embedded 서버로 전면 마이그레이션 예정이기 때문이며, 레포트 게시는 **PBIX 업로드 게시**로 일원화한다.
 - **중요(데이터셋 자격증명/게이트웨이는 별도 수동)**: PBIX 업로드 = 워크스페이스 게시 = **임베드는 자동 가능**(워크스페이스가 A1 용량에 연결돼 있으므로). 그러나 **데이터셋의 데이터 원본 자격증명/온프레미스 게이트웨이 연결은 Import API가 자동 설정하지 않으며**, 새로고침이 필요한 레포트는 업로드 후 운영자가 **Power BI 포털에서 직접 설정**해야 한다(기존 운영 방식 동일). BIP는 이 단계를 자동화하지 않고, 업로드 결과 화면에 "데이터셋 자격증명/게이트웨이 설정 필요" 안내를 표시한다.
 - 업로드 시 BIP **폴더(분류)** 지정: 업로드 화면에서 대상 폴더(계열사/팀/업무영역 등 자유 계층)를 선택하여 카탈로그에 분류 저장(Requirement 41). Power BI 워크스페이스 구조와는 독립이며 BIP 내부 분류이다.
 - 업로드 검증 실패(형식/크기/확장자) 시 400 한국어 오류. 격리/스캔 정책은 보안 설계 참조. (충족: R12.6)
@@ -517,7 +522,7 @@ sequenceDiagram
     end
 ```
 
-- 다중 페이지: `mail_schedule_pages`에 페이지별 행 저장, 각 페이지마다 Export_Job 생성. (충족: R16.2, R16.4)
+- 다중 페이지: `mail_schedule_pages`에 페이지별 행 저장, 각 페이지마다 Export_Job 생성. 각 Export_Job의 ExportTo 호출은 `powerBIReportConfiguration.pages:[{pageName}]`로 **해당 페이지만** 내보낸다(미지정 시 리포트 전체가 나와 모든 페이지가 같은 내용으로 채워지는 문제 방지). (충족: R16.2, R16.4)
 - **수신자(mail_recipients) 해석**: 스케줄에는 수신 대상을 `recipient_type`(USER/GROUP/DEPARTMENT/EMAIL) + (recipient_id 또는 email)로 **참조만 저장**한다. Mail_Job 발송 시점에 각 행을 실제 이메일로 펼친다 — USER→`scl_v_insa_user.cmp_email`, GROUP→그룹원 사용자들의 cmp_email, DEPARTMENT→해당 부서 사용자들의 cmp_email, EMAIL→입력값 그대로. 펼친 결과를 정규화(소문자)·**중복 제거** 후 발송. 발송 시점 해석이므로 **그룹원/부서원이 바뀌면 다음 발송에 자동 반영**(R16 수신자 자동 반영). 메일이 없는 사용자는 스킵하고 로그에 기록.
 - EMAIL 타입은 형식 검증(R40.1), recipient_id 타입은 존재/활성 검증. CHECK 제약으로 타입별 컬럼 정합성 보장.
 - 상태 전이 NotStarted→Running→Succeeded polling + 로그. (충족: R16.5, R16.6)
@@ -531,13 +536,14 @@ sequenceDiagram
 | 항목 | 저장 위치 | 비고 |
 |---|---|---|
 | 메일 제목 | `mail_schedules.subject_template` | `{date}`/`{report_name}` 등 치환 변수 지원 |
+| 보내는 사람 | `mail_schedules.sender_email` (선택) | From 주소. 비우면 서버 기본값(SMTP_FROM). 메일 서버 정책상 허용되는 주소만 발송 가능 |
 | 상단 안내 문구 | `mail_schedules.body_header` | HTML 허용(서버측 sanitize), 예: "안녕하십니까. … 첨부드립니다." |
 | 하단 안내 문구 | `mail_schedules.body_footer` | 선택 |
 | 이미지 표시 폭 | `mail_schedules.image_width` (+ 페이지별 `image_width_override`) | `100%`/`800px` 등. 메일 HTML의 `<img width=...>`/style에 적용 |
 | 페이지 순서 | `mail_schedule_pages.sort_order` | 오름차순으로 본문에 세로 나열 |
-| 페이지 캡션 | `mail_schedule_pages.caption` (선택) | 각 이미지 위/아래 라벨 |
+| 페이지 캡션 | `mail_schedule_pages.caption` (선택) | 이미지 alt 텍스트로만 사용(본문에 페이지명 라벨로 표시하지 않음) |
 
-- 메일 본문은 `mail/template.py`가 조립: 헤더 문구 → (각 페이지: 캡션 + CID inline `<img>` width 적용, `sort_order` 순) → 푸터 문구. 모든 사용자 입력 HTML은 화이트리스트 sanitize(XSS 방지, R40).
+- 메일 본문은 `mail/template.py`가 조립: 헤더 문구 → (각 페이지: CID inline `<img>` width 적용, `sort_order` 순, 페이지명 라벨 없음) → 푸터 문구. 모든 사용자 입력 HTML은 화이트리스트 sanitize(XSS 방지, R40).
 - 치환 변수(`{date}` 등)는 발송 시점 값으로 렌더링. 미리보기(관리 화면에서 샘플 렌더) 제공은 선택(여유 시).
 - **이미지 크기 조정(v1.0 — 실제 픽셀 리사이즈 + 표시 폭 둘 다)**:
   - **실제 리사이즈**: `image_service`(Pillow)가 추출 원본 이미지를 `mail_schedules.image_resize_px`(목표 폭 px)로 **재인코딩(다운스케일)**하여 메일 첨부 크기를 줄인다. 비율 유지, 업스케일 금지(원본보다 크면 원본 유지), `image_resize_px`가 null이면 리사이즈 생략. 메일 용량·렌더 성능 개선.
@@ -554,6 +560,24 @@ sequenceDiagram
 
 - (v1.1+ 범위) `requests` 테이블(요청자, 유형=문의/에러수정, 제목/본문, 상태=접수/처리중/완료, 운영자 응답). 인증 사용자는 생성 + 본인 요청 조회, System_Operator는 상태 변경/응답. 생성/상태 변경 Audit_Log 기록. v1.0에서는 구현하지 않고 사내 그룹웨어 IT 요청서 등 기존 채널로 대체한다. (충족: R17)
 
+### 서비스 센터 설계
+
+서비스 센터(내부 식별자/엔드포인트는 `requests`/`/api/requests` 유지, 화면 표기는 "서비스 요청/서비스 센터")는 사용자가 문의/에러/개선요청을 등록하고 운영자가 처리하는 경량 워크플로우다. 별도 외부 의존 없이 `bip.requests` 단일 테이블로 구현한다. (충족: R17)
+
+- **요청 유형(`request_type`)**: `inquiry`(문의) / `error`(에러) / `improvement`(개선요청). 대상 화면/레포트는 별도 필드 없이 내용(사유)에 기술한다.
+- **상태(`status`) 워크플로우**: `pending`(대기, 생성 시 기본값) → 운영자가 `received`(접수) / `rejected`(반려) / `done`(완료)로 변경. 운영자는 필요 시 상태를 자유롭게 전이할 수 있다.
+- **완료예정일(`expected_completion_date`)**: 운영자가 상세의 "관리자 처리"에서 설정하는 날짜. (우선순위 기반 자동 SLA는 사용하지 않음 — 우선순위는 화면에 노출하지 않는 관리자 판단 영역이며 `priority` 컬럼은 미사용으로 잔존.)
+- **반려 사유(`reject_reason`)**: `rejected`로 전환 시 **필수 입력**. `operator_response`(일반 처리 응답)와 별도 컬럼.
+- **권한**:
+  - 생성(`POST /api/requests`): 인증된 모든 사용자. `requester_id`는 서버가 세션 사용자로 강제. 제목/내용(사유)/유형만 입력(우선순위·공개범위·대상 화면 없음).
+  - 조회(`GET /api/requests`): 일반 사용자는 **본인 요청만**, System_Operator는 전체. 상태/유형/검색(제목·요청자) 필터 지원. 응답에 요청자 부서(`requester_department`, users→departments 조인) 포함.
+  - 변경(`PATCH /api/requests/{id}`): **System_Operator만** `status`/`operator_response`/`reject_reason`/`expected_completion_date` 설정 가능.
+- **첨부 파일(R17.5)**: `bip.request_attachments`(request_id FK CASCADE, file_name, storage_path, mime_type, file_size, uploaded_by_user_id) + StorageService(`request-attachments/{request_id}/{uuid}{ext}`, D-09 재사용). 업로드/조회/삭제는 소유자 또는 운영자만, 다운로드는 권한 검증 후 스트리밍(이미지 inline). 허용 확장자·최대 크기(`REQUEST_ATTACHMENT_MAX_MB`, 기본 10MB) 검증.
+- **대화(R17.6)**: `bip.request_comments`(request_id FK CASCADE, author_user_id, author_label, is_operator, body)로 요청자↔담당자가 소통. 작성/조회는 소유자 또는 운영자만(추가 전용).
+- **알림 메일(R17.7)**: 새 요청 등록 → 관리자 이메일(`REQUEST_ADMIN_EMAIL`, 기본 `220042@samchully.co.kr`). 운영자 상태변경/응답 → 요청자, 대화 작성 → 상대방. 기존 SMTP(`mail_service`) 재사용, **FastAPI BackgroundTasks**로 비차단 best-effort 발송. `REQUEST_NOTIFY_ENABLED`(기본 true) 토글, `APP_MODE=mock`은 로그만.
+- **감사(R17.8)**: 생성 시 `request_create`, 운영자 상태변경/응답/반려 시 `request_update`, 대화 작성 시 `request_comment`.
+- **입력 검증**: 제목 ≤200자, 내용 ≤5000자, `rejected` 전환 시 `reject_reason` 누락하면 HTTP 400. 표시 시 XSS 방지(프론트 escape, 알림 메일 HTML escape 후 조립).
+
 ### 감사 로그 설계
 
 - `audit_logs`(주체, 행위 종류, 대상 리소스, 발생 시각 `occurred_at_utc`(정규 UTC), 결과 성공/실패, 부가 메타 jsonb). API 응답 시 `occurred_at_local` string으로 변환하여 노출(R35.2). `audit_service.append()`는 시크릿(토큰/비밀번호/secret) 미기록을 보장(허용 키 화이트리스트). (충족: R23.5, R35)
@@ -568,9 +592,12 @@ sequenceDiagram
 | `export_run` | mail_job/export_poll | Export_Job 실행 |
 | `mail_send` | mail_service | Mail_Job 발송 결과 |
 | `mail_schedule_create` / `mail_schedule_update` / `mail_schedule_delete` | mail_schedules 라우트 | 메일 스케줄 변경 |
+| `request_create` / `request_update` | requests 라우트 | 서비스 센터 요청 생성 / 상태 변경·응답·반려 사유 등록 (충족: R17.9) |
+| `request_comment` | requests 라우트 | 서비스 센터 요청 댓글 작성 (충족: R17.9) |
 | `permission_change` | permissions/roles 라우트 | Report_Permission, User_Role 부여/회수 |
 | `group_change` | groups 라우트 | 그룹/그룹원 변경 |
 | `refresh_trigger` | refresh 라우트 | 수동 새로고침 |
+| `collect_now` | monitoring 라우트 | 즉시 수집(Refresh 이력 동기화) 트리거 — `meta`에 Celery task_id |
 | `admin_setting_change` | 관리/설정 라우트 | 시스템 설정, 사용자 상태, 보존 정책 등 운영 구성 변경 — `meta`에 변경 전/후 요약(시크릿 제외) (충족: R35.6) |
 | `powerbi_api_failure` | PowerBI_Client | 4xx/5xx/네트워크 오류 — `meta`에 endpoint·status·오류 유형(시크릿 제외) (충족: R35.5) |
 | `permission_denied` | require_* 의존성 | 권한 거부 (충족: R23.5) |
@@ -581,6 +608,8 @@ sequenceDiagram
 ### 통계 대시보드 설계
 
 통계는 **별도 원장(집계 테이블)을 신설하지 않고** 기존 운영 테이블에 대한 집계 쿼리/뷰로만 산출한다. 레포트 조회 수·인기 리포트·사용자별 조회·미사용 리포트의 원천은 `audit_logs`의 `action='report_view'`(Embed 발급 시 1건 기록)이며, 새로고침/메일/Export 지표는 각 원장 테이블의 `status`를 집계한다. 모든 집계는 기간 필터(일/주/월, `from`/`to`)를 받는다. (충족: R18.6, R18.2 비고)
+
+**접근 스코프(R18.4)**: System_Operator는 전체 레포트 기준 전역 통계를 본다. Super_User는 관리자가 `VIEW_STATS` 권한을 부여한 레포트에 한해, 화면의 레포트 드롭다운(부여분만 노출)에서 하나를 선택해 그 레포트의 통계만 조회한다(`report_id` 파라미터로 스코프, 전역 지표는 숨김). 레포트 등록(수동/PBIX) 시 작성자(`created_by_user_id`)에게 `VIEW_STATS`를 자동 부여하며, 관리자가 레포트 권한 화면에서 이후 회수/추가할 수 있다.
 
 | 지표 | 분류 | 원천(집계식) | 충족 |
 |---|---|---|---|
@@ -724,7 +753,7 @@ frontend/src/
 │   ├── requests/RequestCenterPage.tsx   # [v1.1+]
 │   ├── stats/StatsDashboardPage.tsx
 │   └── admin/
-│       ├── UsersPage.tsx GroupsPage.tsx RolesPage.tsx
+│       ├── UsersPage.tsx GroupsPage.tsx
 │       ├── ReportAdminPage.tsx ReportPermissionPage.tsx
 │       └── AuditLogPage.tsx
 ├── components/
@@ -802,6 +831,8 @@ erDiagram
     mail_jobs ||--o{ report_image_paths : produces
     export_jobs ||--o| report_image_paths : "page image"
     users ||--o{ requests : creates
+    requests ||--o{ request_attachments : has
+    requests ||--o{ request_comments : has
     users ||--o{ audit_logs : acts
 
     users {
@@ -916,7 +947,13 @@ erDiagram
         text body_footer "하단 안내 문구(선택)"
         string image_width "이미지 표시 폭(예: 100%, 800px)"
         int image_resize_px "실제 리사이즈 목표 폭(px, null이면 리사이즈 안 함)"
-        string cron_expr
+        string cron_expr "주기/시간/기간으로부터 서버가 생성(파생)"
+        string schedule_freq "daily/weekly/monthly"
+        string schedule_time "HH:MM"
+        string schedule_days "weekly: cron 요일 CSV"
+        int schedule_day_of_month "monthly: 1~31"
+        date start_date "발송 시작일(선택)"
+        date end_date "발송 종료일(선택)"
         string export_format "PNG/PDF/PPTX"
         boolean enabled
         timestamptz created_at
@@ -976,10 +1013,32 @@ erDiagram
         string request_type "inquiry/error_fix"
         string title
         text body
-        string status "received/in_progress/done"
+        string status "pending/received/rejected/done"
+        string priority "미사용(잔존)"
         text operator_response
+        text reject_reason "rejected일 때 필수"
+        date expected_completion_date "관리자 완료예정일"
         timestamptz created_at
         timestamptz updated_at
+    }
+    request_attachments {
+        bigint id PK
+        bigint request_id FK
+        string file_name
+        string storage_path "StorageService 상대경로"
+        string mime_type
+        bigint file_size
+        bigint uploaded_by_user_id
+        timestamptz created_at
+    }
+    request_comments {
+        bigint id PK
+        bigint request_id FK
+        bigint author_user_id
+        string author_label
+        boolean is_operator
+        text body
+        timestamptz created_at
     }
     audit_logs {
         bigint id PK
@@ -1018,6 +1077,8 @@ erDiagram
 | export_jobs | id | (mail_job_id, page_name) | mail_job_id→mail_jobs(CASCADE) | idx(status) |
 | report_image_paths | id | — | mail_job_id→mail_jobs(CASCADE), export_job_id→export_jobs | idx(mail_job_id), idx(created_at) |
 | requests | id | — | requester_id→users | idx(requester_id), idx(status) |
+| request_attachments | id | — | request_id→requests(CASCADE) | idx(request_id) |
+| request_comments | id | — | request_id→requests(CASCADE) | idx(request_id) |
 | audit_logs | id | — | — | idx(occurred_at_utc), idx(actor_user_id), idx(action), idx(action, occurred_at_utc), idx(resource_type, resource_id) |
 
 핵심 제약:
@@ -1265,7 +1326,7 @@ PBIX 업로드 격리/스캔은 D-15(PoC) 하위에서 결정.
 | D-09 | 파일 저장 | ① Docker volume ② NAS 마운트 ③ object storage | **StorageService 추상화**: 개발 ① → 운영 ②(NAS, 경로 TBD), DB는 메타만 | ③ object storage | R16, R31 |
 | D-12 | 메일 발송 | ① 동기 SMTP ② Worker 비동기+재시도 큐 | **② 비동기+재시도**(파이프라인 일부) | 발송 우선순위/스로틀 | R16, R34 |
 | D-13 | Export 형식 | ① PNG ② PDF ③ PPTX | **① PNG**(인라인 이미지 메일 적합) | 형식 선택 옵션 | R16 |
-| D-15 | PBIX 업로드 | ① ID 수동 등록 ② Import API ③ 완전 셀프 업로드 | **① ID 등록 + ② Import API(둘 다 v1.0)**, 관리자 전용 | ③ 셀프 업로드+검수 | R12 |
+| D-15 | PBIX 업로드 | ① ID 수동 등록 ② Import API ③ 완전 셀프 업로드 | **② Import API(PBIX 업로드 게시)로 일원화**, 관리자 전용 (① ID 수동 등록/기존 레포트 게시는 v1.0에서 제거) | ③ 셀프 업로드+검수 | R12 |
 | D-16 | 운영 모니터링 | ① 자체 health/지표 ② Flower ③ Prometheus/Grafana | **① 자체 지표**(v1.0 충분) | ②/③ 도입 | R36 |
 | D-17 | DB 스키마 배치 | ① public 혼재 ② BIP 전용 `bip` 스키마 ③ 도메인별 schema | **② `bip` 전용 스키마**(인사 뷰와 분리, 이관 용이) | ③ 도메인 schema 세분화 | R29 |
 
@@ -1312,3 +1373,36 @@ PBIX 업로드 격리/스캔은 D-15(PoC) 하위에서 결정.
 | R39 인증/세션 | 세션 설계, D-02 |
 | R40 입력/업로드 | 보안 설계, D-15 |
 | R41 레포트 폴더 | 레포트 폴더 설계, report_folders, API(/report-folders) |
+
+
+## 2026-06~07 운영 피드백 반영 설계 요약
+
+파일럿 사용 중 요청·버그 반영(v1.0 범위 내). 상세 결정은 RDL D-15/D-24/D-25, 구현 항목은 tasks Phase 13(task 53~62). 위 R17 추적표의 "[v1.1+]/(v1.0 제외)" 표기는 구범위이며, **서비스 센터(R17)는 v1.0로 승격**되어 Phase 12(46/47/47-A/47-B) + Phase 13(task 53)로 구현됨.
+
+### 추가/변경 API
+- **추가**: `POST /api/reports/{id}/permissions/bulk`(다중 권한 부여, 멱등), `GET /api/reports/{id}/pages`(Power BI 페이지 목록), `GET /api/mail-schedules`(친화 스케줄 CRUD 확장), `GET /api/org/sync-team-groups`·`POST /api/org/sync-team-groups`(팀 그룹 미리보기/동기화), `GET /api/groups/tree`(전체 조직 트리+그룹 상태), `GET /api/stats/reports`(통계 대상 레포트).
+- **제거**: `POST /api/reports`(ID 수동 등록), `GET /api/powerbi/workspace-reports`(powerbi 라우터 전체), `GET/PUT /api/roles/menus`(역할-메뉴 매트릭스).
+
+### 데이터 모델 변경 (마이그레이션)
+- `mail_schedules.sender_email` 추가 — `a4d9e1c6b820`
+- `requests.expected_completion_date` 추가 — `f3b1c8d47a20`
+- `role_menu_permissions` 테이블 **드롭** — `b7f2a3d9c410` (역할→메뉴 고정 매핑 전환, D-24)
+- `user_groups.source_dept_id` 추가(+index) — `c1a8e5b2f930` (자동 팀 그룹 식별/재동기화, D-25)
+- 서비스 센터 R17 개편 관련(첨부/우선순위·댓글 등)은 Phase 12 마이그레이션 계승
+
+### 권한/메뉴 설계
+- **역할→메뉴**: `role_menu_permissions` 테이블 대신 `core/constants.ROLE_MENUS` 코드 고정 매핑에서 `allowed_menus` 계산. 백엔드 `require_menu`로 강제(프런트 숨김은 UX 보조). System_Operator/로컬관리자는 전체. (D-24)
+- **레포트 권한 표기**: `MANAGE_REPORT`=화면 표기 "교체", `VIEW_STATS`=레포트별 통계 조회(작성자 자동 부여). 다중 권한은 bulk 엔드포인트로 멱등 부여.
+
+### 그룹/조직 설계 (D-25)
+- 자동 팀 그룹은 `user_groups.source_dept_id`로 식별. `team_group_sync.sync_team_groups(dept_id, apply)`가 재귀 하위 팀(직속 구성원 보유)별로 완전 동기화(추가+제거, 자동 그룹만), 미등록자 자동 등록, 이름 충돌 시 점진적 구분(상위조직·회사명).
+- `GET /api/groups/tree`(cmp_id 옵션)는 전체 조직도(회사·본부·담당·팀)를 그룹 상태(`group_id`/`member_count`/`has_members`)와 함께 반환. 그룹 관리 화면은 조직 트리 + 노드별 동기화, 수동/미배치 그룹은 "기타 그룹".
+
+### 메일 파이프라인 보강 (R16/R34)
+- 페이지별 export(`powerBIReportConfiguration.pages`)로 선택 페이지만 정확히 발송, 이미지 위 페이지명 라벨 미표시. text/plain 대체본을 본문/제목으로 채워 모바일 알림 노출. 본문 sanitize(nh3)는 정렬/폰트/굵기 등 인라인 style 화이트리스트(`attribute_filter`) 허용. 발송 겹침 시 catch-up + run_key 멱등으로 누락 방지. 스케줄별 `sender_email`(미지정 시 `SMTP_FROM`).
+
+### Worker/개발 인프라
+- `workers/async_runner.run_async`(지속 이벤트 루프)로 'Event loop is closed' 해소, Windows Celery `--pool=solo` + Beat 상시. 로컬 실행은 `dev-up.cmd`(Redis 컨테이너 + Worker/Beat/Backend/Frontend), `run_worker.cmd`/`run_beat.cmd`/`redis-up.cmd`(모두 ASCII). Backend는 `uvicorn --reload`.
+
+### 유틸 스크립트 (개발/운영)
+- `backend/backfill_department_names.py`(부서 코드→한글명 일괄), `backend/cleanup_autocollected_reports.py`(수집기 자동 등록 레포트 정리, created_by_user_id IS NULL 대상, 미리보기/적용).

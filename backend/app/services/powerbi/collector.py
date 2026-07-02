@@ -38,13 +38,31 @@ async def upsert_workspace(session: AsyncSession, workspace_id: str, name: str) 
 async def upsert_reports(
     session: AsyncSession, workspace_id: str, reports: list[ReportDTO]
 ) -> None:
+    """카탈로그에 **이미 등록된** 레포트의 메타(report_name/dataset_id)만 갱신한다.
+
+    주의: 과거에는 워크스페이스의 모든 레포트를 카탈로그에 자동 삽입했으나,
+    BIP 레포트 카탈로그는 관리자가 PBIX 업로드로 큐레이션하는 대상이므로
+    **수집기는 신규 레포트를 자동 등록하지 않는다**(D-15). 새로고침 모니터링은
+    datasets/refresh_runs 기준으로 동작하므로 이 변경의 영향을 받지 않는다.
+    """
     if not reports:
         return
+    # 워크스페이스 내 이미 등록된 report_id만 대상으로 (신규 자동 등록 금지)
+    existing = set(
+        (
+            await session.execute(
+                select(Report.report_id).where(Report.workspace_id == workspace_id)
+            )
+        ).scalars().all()
+    )
     rows = [
         {"workspace_id": workspace_id, "report_id": r.report_id,
          "report_name": r.report_name, "dataset_id": r.dataset_id}
         for r in reports
+        if r.report_id in existing
     ]
+    if not rows:
+        return
     stmt = pg_insert(Report).values(rows)
     stmt = stmt.on_conflict_do_update(
         index_elements=["workspace_id", "report_id"],

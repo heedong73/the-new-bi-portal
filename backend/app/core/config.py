@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     AUDIT_RETENTION_DAYS: int = 365
     UNUSED_REPORT_DAYS: int = 90
 
+    # 서비스 센터 첨부 (R17) — 파일당 최대 크기(MB)
+    REQUEST_ATTACHMENT_MAX_MB: int = 10
+    # 서비스 센터 알림 메일 (R17 고도화) — 상태 변경/댓글 시 관련자에게 메일 발송
+    REQUEST_NOTIFY_ENABLED: bool = True
+    # 신규 요청 등록 시 알림 받을 관리자 이메일
+    REQUEST_ADMIN_EMAIL: str = "220042@samchully.co.kr"
+
     # Frontend
     AUTO_REFRESH_INTERVAL_SEC: int = 60
     CORS_ALLOWED_ORIGINS: str = "http://localhost:80,http://localhost:5173"

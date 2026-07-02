@@ -24,8 +24,25 @@ from app.schemas.mail_schedule import (
     RecipientResponse,
 )
 from app.services.audit_service import append_audit
+from app.services.mail.schedule import build_cron_expr
 
 router = APIRouter(tags=["mail-schedules"])
+
+
+def _days_to_csv(days: list[int] | None) -> str | None:
+    valid = sorted({d for d in (days or []) if 0 <= d <= 6})
+    return ",".join(str(d) for d in valid) if valid else None
+
+
+def _csv_to_days(csv: str | None) -> list[int]:
+    if not csv:
+        return []
+    out: list[int] = []
+    for part in csv.split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.append(int(part))
+    return out
 
 # ---------------------------------------------------------------------------
 # 헬퍼
@@ -60,6 +77,7 @@ async def _build_response(db: SessionDep, schedule: MailSchedule) -> MailSchedul
         report_id=schedule.report_id,
         title=schedule.title,
         subject_template=schedule.subject_template,
+        sender_email=schedule.sender_email,
         body_header=schedule.body_header,
         body_footer=schedule.body_footer,
         image_width=schedule.image_width,
@@ -67,6 +85,12 @@ async def _build_response(db: SessionDep, schedule: MailSchedule) -> MailSchedul
         cron_expr=schedule.cron_expr,
         export_format=schedule.export_format,
         enabled=schedule.enabled,
+        schedule_freq=schedule.schedule_freq,
+        schedule_time=schedule.schedule_time,
+        schedule_days=_csv_to_days(schedule.schedule_days),
+        schedule_day_of_month=schedule.schedule_day_of_month,
+        start_date=schedule.start_date,
+        end_date=schedule.end_date,
         skip_weekends=schedule.skip_weekends,
         skip_holidays=schedule.skip_holidays,
         created_at=schedule.created_at,
@@ -136,13 +160,22 @@ async def create_mail_schedule(
         report_id=body.report_id,
         title=body.title,
         subject_template=body.subject_template,
+        sender_email=str(body.sender_email) if body.sender_email else None,
         body_header=body.body_header,
         body_footer=body.body_footer,
         image_width=body.image_width,
         image_resize_px=body.image_resize_px,
-        cron_expr=body.cron_expr,
+        cron_expr=build_cron_expr(
+            body.schedule_freq, body.schedule_time, body.schedule_days, body.schedule_day_of_month
+        ) or body.cron_expr,
         export_format=body.export_format,
         enabled=body.enabled,
+        schedule_freq=body.schedule_freq,
+        schedule_time=body.schedule_time,
+        schedule_days=_days_to_csv(body.schedule_days),
+        schedule_day_of_month=body.schedule_day_of_month,
+        start_date=body.start_date,
+        end_date=body.end_date,
         skip_weekends=body.skip_weekends,
         skip_holidays=body.skip_holidays,
     )
@@ -221,12 +254,29 @@ async def update_mail_schedule(
     """
     schedule = await _get_schedule_or_404(db, schedule_id)
 
-    # 스칼라 필드 업데이트
+    # 스칼라 필드 업데이트 (schedule_days 는 리스트→CSV 변환 필요하므로 제외)
+    provided = body.model_dump(exclude_unset=True)
     update_data = body.model_dump(
-        exclude_unset=True, exclude={"recipients", "pages"}
+        exclude_unset=True, exclude={"recipients", "pages", "schedule_days"}
     )
     for field, value in update_data.items():
         setattr(schedule, field, value)
+
+    # 주기 요일(list[int]) → CSV
+    if "schedule_days" in provided:
+        schedule.schedule_days = _days_to_csv(body.schedule_days)
+
+    # 주기/시간/요일/일자 중 하나라도 변경되면 cron_expr 재생성
+    schedule_keys = {"schedule_freq", "schedule_time", "schedule_days", "schedule_day_of_month"}
+    if schedule_keys & provided.keys():
+        regenerated = build_cron_expr(
+            schedule.schedule_freq,
+            schedule.schedule_time,
+            _csv_to_days(schedule.schedule_days),
+            schedule.schedule_day_of_month,
+        )
+        if regenerated is not None:
+            schedule.cron_expr = regenerated
 
     # recipients 교체
     if body.recipients is not None:

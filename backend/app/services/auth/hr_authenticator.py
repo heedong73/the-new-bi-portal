@@ -23,6 +23,7 @@ class HRProfile:
     cmp_id: str | None
     dept_id: str | None
     ofc_id: str | None
+    dept_name: str | None = None
 
 class AuthenticationError(Exception):
     """사번 없음 또는 비밀번호 불일치."""
@@ -43,6 +44,7 @@ async def authenticate(db: AsyncSession, emp_no: str, password: str) -> HRProfil
             cmp_id="MOCK",
             dept_id="D001",
             ofc_id="O001",
+            dept_name="테스트부서",
         )
 
     # hr-db 모드: 인사 뷰 읽기 전용 조회
@@ -84,6 +86,25 @@ async def authenticate(db: AsyncSession, emp_no: str, password: str) -> HRProfil
         )
     ).first()
 
+    # 부서 한글명 조회 (scl_v_insa_dept_add_depth). 실패해도 로그인은 계속되도록 방어.
+    dept_name: str | None = None
+    if job and job.dept_id:
+        try:
+            dept_row = (
+                await db.execute(
+                    text(
+                        "SELECT dept_name FROM public.scl_v_insa_dept_add_depth "
+                        "WHERE dept_id = :dept_id "
+                        "AND (:cmp_id IS NULL OR cmp_id = :cmp_id) LIMIT 1"
+                    ),
+                    {"dept_id": job.dept_id, "cmp_id": job.cmp_id},
+                )
+            ).first()
+            if dept_row is not None:
+                dept_name = dept_row.dept_name
+        except Exception:  # noqa: BLE001 - 부서명 조회 실패가 로그인을 막지 않도록
+            dept_name = None
+
     return HRProfile(
         emp_no=row.emp_no,
         user_name=row.user_name,
@@ -91,4 +112,5 @@ async def authenticate(db: AsyncSession, emp_no: str, password: str) -> HRProfil
         cmp_id=job.cmp_id if job else None,
         dept_id=job.dept_id if job else None,
         ofc_id=job.ofc_id if job else None,
+        dept_name=dept_name,
     )

@@ -21,6 +21,12 @@ class PermissionGrantRequest(BaseModel):
     subject_id: int
     permission: PermissionAction
 
+class PermissionBulkGrantRequest(BaseModel):
+    """레포트 권한 다중 부여 요청 (한 주체에 여러 권한 동시 부여, 멱등)."""
+    subject_type: SubjectType
+    subject_id: int
+    permissions: list[PermissionAction] = Field(default_factory=list, min_length=1)
+
 class PermissionResponse(BaseModel):
     """레포트 권한 항목 응답."""
     id: int
@@ -28,25 +34,3 @@ class PermissionResponse(BaseModel):
     subject_type: str
     subject_id: int
     permission: str
-
-
-class MenuCatalogItem(BaseModel):
-    """메뉴 카탈로그 항목."""
-    key: str
-    label: str
-
-class RoleMenusItem(BaseModel):
-    """역할별 메뉴 권한."""
-    id: int
-    code: str
-    name: str
-    menus: list[str] = Field(default_factory=list)
-
-class RoleMenusResponse(BaseModel):
-    """역할-메뉴 매트릭스 응답."""
-    catalog: list[MenuCatalogItem]
-    roles: list[RoleMenusItem]
-
-class RoleMenusUpdate(BaseModel):
-    """역할 메뉴 권한 일괄 설정."""
-    menus: list[str]

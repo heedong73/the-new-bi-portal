@@ -18,8 +18,10 @@ from app.models.auth import Role, User, UserRole
 from app.models.portal import UserGroup, UserGroupMember
 from app.schemas.org import (
     CompanyItem, GroupAddRequest, GroupRef, OrgMember, OrgNode, RoleLevelRequest,
+    TeamGroupSyncRequest, TeamGroupSyncResponse,
 )
 from app.services import user_admin
+from app.services import team_group_sync
 from app.services.audit_service import append_audit
 
 router = APIRouter(prefix="/api/org", tags=["org"])
@@ -232,3 +234,30 @@ async def set_member_role_level(
                        resource_type="user_role", resource_id=str(user.id),
                        meta={"target": "set_role_level", "role_code": body.role_code})
     await db.commit()
+
+
+@router.post("/sync-team-groups", response_model=TeamGroupSyncResponse)
+async def sync_team_groups(
+    body: TeamGroupSyncRequest, db: SessionDep, op=Depends(_require_operator),
+):
+    """조직도 기반 팀 권한 그룹 생성/완전 동기화.
+
+    body.apply=False → 미리보기(추가/제거 대상만 계산, 변경 없음).
+    body.apply=True  → 실제 반영(자동 관리 팀 그룹만 로스터와 완전 동기화). 감사 로그 기록.
+    """
+    result = await team_group_sync.sync_team_groups(db, body.dept_id, apply=body.apply)
+    if body.apply:
+        await append_audit(
+            db, action=AuditAction.GROUP_CHANGE, result="success",
+            actor_user_id=op["user_id"], actor_label=op["emp_no"],
+            resource_type="dept", resource_id=body.dept_id,
+            meta={
+                "target": "sync_team_groups",
+                "groups_total": result["groups_total"],
+                "groups_created": result["groups_to_create"],
+                "members_added": result["members_to_add"],
+                "members_removed": result["members_to_remove"],
+            },
+        )
+        await db.commit()
+    return result

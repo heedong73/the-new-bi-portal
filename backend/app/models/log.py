@@ -1,5 +1,5 @@
-from datetime import datetime
-from sqlalchemy import String, BigInteger, Text, Index, func
+from datetime import datetime, date
+from sqlalchemy import String, BigInteger, Text, Index, ForeignKey, Boolean, Date, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.session import Base
@@ -40,9 +40,52 @@ class Request(Base):
     request_type: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="received", nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    priority: Mapped[str] = mapped_column(String(16), default="normal", nullable=False)
     operator_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected_completion_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class RequestAttachment(Base):
+    """서비스 센터 요청 첨부 파일 (에러 캡처/문서 등). 파일 본체는 StorageService에,
+    DB에는 상대 경로/메타만 저장한다(R31.2)."""
+    __tablename__ = "request_attachments"
+    __table_args__ = (
+        Index("idx_request_attachments_request", "request_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    request_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.requests.id", ondelete="CASCADE"), nullable=False
+    )
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class RequestComment(Base):
+    """서비스 센터 요청 댓글 스레드 1건. 요청자/운영자가 메시지를 주고받는다."""
+    __tablename__ = "request_comments"
+    __table_args__ = (
+        Index("idx_request_comments_request", "request_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    request_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.requests.id", ondelete="CASCADE"), nullable=False
+    )
+    author_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    author_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_operator: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

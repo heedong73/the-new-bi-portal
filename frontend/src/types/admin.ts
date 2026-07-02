@@ -82,22 +82,51 @@ export interface OrgMember {
   groups: { id: number; name: string }[]
 }
 
-/** 메뉴 카탈로그 항목. */
-export interface MenuCatalogItem {
-  key: string
-  label: string
-}
 
-/** 역할별 메뉴 권한. */
-export interface RoleMenus {
-  id: number
-  code: string
+/** 팀 그룹 동기화 — 구성원 참조. */
+export interface TeamGroupMemberRef {
+  emp_no: string
   name: string
-  menus: string[]
 }
 
-/** 역할-메뉴 매트릭스 응답. */
-export interface RoleMenusResponse {
-  catalog: MenuCatalogItem[]
-  roles: RoleMenus[]
+/** 팀 그룹 동기화 — 팀별 계획/결과. */
+export interface TeamGroupPlanItem {
+  dept_id: string
+  dept_name: string
+  group_name: string
+  group_id: number | null
+  created: boolean
+  renamed_from: string | null
+  add: TeamGroupMemberRef[]
+  remove: TeamGroupMemberRef[]
+  keep: number
+}
+
+/** 팀 그룹 동기화 응답(미리보기/적용). */
+export interface TeamGroupSyncResult {
+  dept_id: string
+  applied: boolean
+  teams: TeamGroupPlanItem[]
+  groups_total: number
+  groups_to_create: number
+  members_to_add: number
+  members_to_remove: number
+  to_register: number
+}
+
+/** 그룹 트리 노드(조직 계층). group_id가 있으면 그 부서의 팀 그룹, 없으면 구조용 폴더. */
+export interface GroupTreeNode {
+  dept_id: string
+  dept_name: string
+  group_id: number | null
+  group_name: string | null
+  member_count: number | null
+  has_members: boolean
+  children: GroupTreeNode[]
+}
+
+/** 그룹 트리 응답. tree=자동 팀 그룹(조직 계층), ungrouped=수동/미배치 그룹. */
+export interface GroupTreeResponse {
+  tree: GroupTreeNode[]
+  ungrouped: GroupResponse[]
 }

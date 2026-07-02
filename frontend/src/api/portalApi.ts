@@ -24,9 +24,22 @@ export const reportsApi = {
   refreshStatus: (reportDbId: number, signal?: AbortSignal) =>
     apiClient.get<RefreshStatus>(`/api/reports/${reportDbId}/refresh-status`, { signal }),
 
-  /** GET /api/reports/{id}/live-refresh-status — Power BI 직접 최신 새로고침 상태(실시간). */
+  /** GET /api/reports/{id}/live-refresh-status — Power BI 직접 최신 새로고침 상태(실시간) + 예약 정보. */
   liveRefreshStatus: (reportDbId: number, signal?: AbortSignal) =>
-    apiClient.get<{ has_history: boolean; status: string | null; in_progress: boolean; start_time?: string | null; end_time?: string | null }>(
+    apiClient.get<{
+      has_history: boolean
+      status: string | null
+      in_progress: boolean
+      start_time?: string | null
+      end_time?: string | null
+      schedule?: {
+        enabled: boolean
+        days: string[]
+        times: string[]
+        timezone: string | null
+        next_scheduled_local: string | null
+      } | null
+    }>(
       `/api/reports/${reportDbId}/live-refresh-status`, { signal },
     ),
 

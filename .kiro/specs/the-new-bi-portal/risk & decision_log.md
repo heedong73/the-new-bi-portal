@@ -44,6 +44,7 @@
 | D-21 | Embedded 용량 자동 스케일링 | Deferred(v1.2) | v1.0 수동 운영, 자동 스케일은 v1.2 | 낮음 | v1.2 | R16, R36 |
 | D-22 | Embedded 서버 이전(업체 교체) | Decided | Power BI 연결 전부 env 기반 + 테스트→cutover | 낮음 | v1.0 | R25, R32 |
 | D-23 | 환경 분리/이관(개발↔운영) | Decided | Alembic 단일 소스 + env 분리, 현재 RDS=개발계 | 낮음 | v1.0 | R25, R29 |
+| D-24 | 서비스 센터 범위 | Decided | v1.1+ → **v1.0 승격**(2026-06). 화면명 "서비스 센터"(내부 `requests`). 상태 received→in_progress→done/rejected(반려 사유 필수). **첨부(request_attachments+StorageService), 우선순위/SLA(경과시간 기준), 댓글 스레드(request_comments), 알림 메일(BackgroundTasks best-effort)** 포함. 카테고리 세분화·메신저 알림·영업시간 SLA·바이러스 스캔은 v1.1+ | 낮음 | v1.0 | R17 |
 
 ---
 
@@ -158,17 +159,44 @@
 - 관련 요구: R19. 범위: v1.0.
 - 결정: PRM 패턴 계승. TanStack Query `refetchInterval`(기본 60s, env). 필터/스크롤 상태는 Zustand 분리로 보존.
 
-### D-15 PBIX 업로드 방식 — Decided (되돌리기: 중간)
+### D-15 PBIX 업로드 방식 — Decided (되돌리기: 중간) · 2026-06 갱신
 - 관련 요구: R12. 범위: v1.0.
-- **결정**: v1.0에 **두 가지 관리자 등록 경로를 모두 포함**한다(기존 업체 솔루션에서 운영 중인 기능).
-  1. **ID 수동 등록**: System_Operator가 reportId/datasetId 입력 → 카탈로그 등록.
-  2. **PBIX Import API 업로드**: System_Operator가 PBIX 파일 업로드 → Power BI `POST imports`(Worker 비동기 + Import 상태 polling) → 성공 시 생성/갱신된 reportId/datasetId를 카탈로그에 반영.
+- **결정(갱신)**: 레포트 게시를 **PBIX Import API 업로드 단일 경로**로 일원화한다. 초기에는 ID 수동 등록도 포함했으나, "기존 레포트 게시"(기존 임베디드 서버 레포트를 ID로 가져와 등록)는 v1.0에서 **제거**했다.
+  - 사유: (1) 관리자에게 혼동을 유발, (2) 향후 신규 Embedded 서버 구축 시 전면 마이그레이션 예정이라 기존 서버 레포트를 끌어오는 경로가 불필요.
+  - 제거 범위: `POST /api/reports`(create_report), `GET /api/powerbi/workspace-reports`(powerbi 라우터), 관리자 UI "기존 레포트 게시" 버튼/모달 및 프런트 API(`reportAdminApi.create`/`workspaceReports`)·타입(`ReportCreate`/`WorkspaceReportItem`).
+  - **수집기 부작용 정리**: 과거 `collect_workspace`(수집기)가 워크스페이스의 모든 레포트를 카탈로그(bip.reports)에 자동 upsert하여, 업로드하지 않은 레포트가 '레포트 관리 > (미분류)'에 나타나는 문제가 있었다. 수집기의 `upsert_reports`를 **이미 등록된 레포트 메타 갱신만** 하도록 변경(신규 자동 등록 금지). 새로고침 모니터링은 datasets/refresh_runs 기준이라 영향 없음. 기존에 자동 등록된 레포트는 `cleanup_autocollected_reports.py`(created_by_user_id IS NULL 대상, 메일 스케줄 참조분 스킵)로 일괄 정리.
+  - **PBIX Import API 업로드**(유지): System_Operator가 PBIX 파일 업로드 → Power BI `POST imports`(Worker 비동기 + Import 상태 polling) → 성공 시 생성/갱신된 reportId/datasetId를 카탈로그에 반영.
 - **권한 경계**: 신규 등록·업로드는 **관리자(System_Operator) 전용**. 수퍼 사용자의 "레포트 등록 요청" 기능은 사내 그룹웨어 IT 요청서로 처리하므로 **BIP에서 제외**(요구 R12에서 삭제됨).
 - 신규 vs 갱신: Import 시 `nameConflict`(`CreateOrOverwrite`/`Overwrite`/`Abort`)로 신규 게시·기존 갱신 제어. 갱신 시 기존 카탈로그 레코드의 ID 매핑 유지.
 - 검증: 업로드 파일 PBIX 형식/크기/확장자 검증(R12.6, R40.2). 격리/스캔 정책은 design에서 정의.
-- 대안: ① ID 등록만(기능 축소 → 제외) ② ID 등록 + Import(채택) ③ 완전 셀프 업로드+자동 검수(v1.1+).
+- 대안: ① ID 등록만(제외) ② ID 등록 + Import ③ PBIX Import만(채택) ④ 완전 셀프 업로드+자동 검수(v1.1+).
 - v1.1+: 수퍼 사용자 완전 셀프 업로드 및 자동 검수.
 - 되돌리기 중간: Import 파이프라인 추가/제거 시 Worker 작업·권한 변경.
+
+
+### D-24 역할 → 메뉴 접근: 편집형 매트릭스 → 코드 고정 매핑 — Decided · 2026-07
+- 관련 요구: R7, R23. 범위: v1.0.
+- **결정**: 역할별 메뉴 접근을 런타임 편집(role_menu_permissions 테이블 + `/api/roles/menus` + 관리자 "역할" 페이지)하던 방식을 없애고, **역할 → 메뉴 매핑을 코드로 고정**(`constants.ROLE_MENUS`)한다.
+  - 일반 사용자 = 홈(레포트 조회) [+ 서비스 센터는 전원 노출], 파워 사용자 = 홈 + 통계, 시스템 운영자 = 전체.
+  - 사유: 역할이 3개로 고정이고 메뉴 구성이 자연스러워 편집 유연성이 사실상 불필요. 관리자 화면 축소 + 드리프트(예: enum에 없는 `admin_requests` 키) 제거.
+- **제거 범위**: `role_menu_permissions` 테이블(드롭 마이그레이션 `b7f2a3d9c410`), `GET/PUT /api/roles/menus` + 관련 스키마, `RoleMenuPermission` 모델, `seed_role_menus`, 프런트 `RolesPage`/`admin_roles` 네비/`rolesApi.getMenus/setMenus`. `require_menu`/`allowed_menus`는 유지하되 고정 매핑에서 계산.
+- **권한 통제 불변**: 백엔드가 여전히 `require_menu`로 강제(프런트 숨김은 UX 보조).
+- 되돌리기 쉬움~중간: 다시 편집형이 필요하면 테이블/엔드포인트/페이지 복원(마이그레이션 downgrade 포함).
+
+
+### D-25 조직도 기반 팀 권한 그룹 자동 생성/동기화 — Decided · 2026-07
+- 관련 요구: R5, R6, R8. 범위: v1.0.
+- **배경**: 팀 단위 권한 부여가 대부분인데, 관리자가 팀마다 그룹을 만들고 인원을 수동 추가하는 부담이 큼. 인사이동이 분기/연 단위로 발생.
+- **결정**: 조직도(인사 뷰)를 기반으로 **팀별 권한 그룹을 자동 생성하고 완전 동기화**하는 기능을 추가한다.
+  - `user_groups.source_dept_id`(마이그레이션 `c1a8e5b2f930`)로 "자동 관리 팀 그룹"을 식별. `POST /api/org/sync-team-groups {dept_id, apply}`.
+  - **범위 지정 실행**: 선택한 dept_id 하위(재귀)에서 **직속 구성원(bass_dept_yn=Y, 재직 W)이 있는 팀**만 대상. 본부/팀 등 원하는 노드를 골라 나눠 실행(블라스트 반경·실행시간 통제).
+  - **완전 동기화(mirror)**: 자동 관리 그룹의 멤버 = 팀 현재 로스터(추가 + 제거). **자동 관리 그룹만** 대상 — 수동 생성 그룹(`source_dept_id` NULL)은 절대 건드리지 않음. 자동 그룹에 수동 추가한 인원은 재동기화 시 제거됨(팀 외 인원은 별도 수동 그룹/개인 권한 사용).
+  - **미리보기 후 적용**: `apply=false`면 팀별 추가/제거/신규 계획만 반환(변경 없음), `apply=true`면 반영 + 감사 로그. 제거가 일어나므로 관리자가 먼저 확인.
+  - **자동 등록**: 팀 구성원이 BIP 미등록이면 자동 등록(+General_User). 가시성은 권한 부여 후에만.
+  - **명명**: 그룹명 = 팀명. `user_groups.name` UNIQUE 충돌 시 점진적 구분 — `상위조직 · 팀명` → `회사명 · 상위조직 · 팀명` → `팀명 (dept_id)`. 식별/재동기화는 이름과 무관하게 `source_dept_id` 기준. 재동기화 시 부서명 변경도 그룹명에 반영.
+- **인사 뷰 읽기 전용**(R33.3): 조직/구성원 조회만, INSERT/UPDATE 없음.
+- **그룹 관리 트리 뷰**: `GET /api/groups/tree`(cmp_id 옵션)가 **전체 조직도(회사·본부·담당·팀)**를 반환하고 각 부서에 그룹 유무/인원수/직속구성원 여부를 표시. 그룹 관리 화면은 사용자 관리처럼 회사 선택 + 조직 트리로 보이며, **각 노드의 동기화 버튼**으로 그 하위 팀 그룹을 미리보기→적용으로 한 번에 생성/동기화한다(팀을 하나씩 수동 추가할 필요 없음). 수동/미배치 그룹은 "기타 그룹" 평면 목록. 레포트 권한 부여 드롭다운은 v1.0에서는 평면 유지.
+- 되돌리기 중간: 기능 제거 시 엔드포인트/서비스/프런트 제거 + `source_dept_id` 컬럼 드롭(마이그레이션 downgrade). 생성된 그룹 자체는 일반 그룹으로 남길 수 있음.
 
 ### D-16 운영 모니터링 — Decided (되돌리기: 낮음)
 - 관련 요구: R36. 범위: v1.0.

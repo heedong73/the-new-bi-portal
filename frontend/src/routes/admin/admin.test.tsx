@@ -4,7 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 
 import UsersPage from './UsersPage'
-import RolesPage from './RolesPage'
 import GroupsPage from './GroupsPage'
 import { usersApi, rolesApi, groupsApi, orgApi } from '@/api/adminApi'
 import type {
@@ -15,9 +14,9 @@ vi.mock('@/api/adminApi', () => ({
   usersApi: {
     list: vi.fn(), setStatus: vi.fn(), assignRole: vi.fn(), revokeRole: vi.fn(),
   },
-  rolesApi: { list: vi.fn(), getMenus: vi.fn(), setMenus: vi.fn() },
+  rolesApi: { list: vi.fn() },
   groupsApi: {
-    list: vi.fn(), members: vi.fn(), create: vi.fn(), remove: vi.fn(),
+    list: vi.fn(), tree: vi.fn(), members: vi.fn(), create: vi.fn(), remove: vi.fn(),
     addMember: vi.fn(), removeMember: vi.fn(),
   },
   orgApi: {
@@ -50,15 +49,6 @@ const ORG_MEMBERS: OrgMember[] = [
   { emp_no: '1002', name: '김영희', dept_name: '영업팀', ofc_name: '팀원', registered: false, groups: [] },
 ]
 
-const ROLE_MENUS = {
-  catalog: [{ key: 'home', label: '홈' }, { key: 'stats', label: '통계' }],
-  roles: [
-    { id: 1, code: 'General_User', name: '일반 사용자', menus: ['home'] },
-    { id: 2, code: 'Super_User', name: '슈퍼 유저', menus: ['home', 'stats'] },
-    { id: 3, code: 'System_Operator', name: '시스템 운영자', menus: ['home', 'stats'] },
-  ],
-}
-
 function wrap(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return render(
@@ -75,9 +65,8 @@ beforeEach(() => {
   vi.mocked(usersApi.assignRole).mockResolvedValue(undefined as never)
   vi.mocked(usersApi.revokeRole).mockResolvedValue(undefined as never)
   vi.mocked(rolesApi.list).mockResolvedValue(ROLES)
-  vi.mocked(rolesApi.getMenus).mockResolvedValue(ROLE_MENUS)
-  vi.mocked(rolesApi.setMenus).mockResolvedValue(undefined as never)
   vi.mocked(groupsApi.list).mockResolvedValue(GROUPS)
+  vi.mocked(groupsApi.tree).mockResolvedValue({ tree: [], ungrouped: GROUPS })
   vi.mocked(groupsApi.members).mockResolvedValue(MEMBERS)
   vi.mocked(groupsApi.create).mockResolvedValue({ id: 6, name: '신규', description: null })
   vi.mocked(groupsApi.addMember).mockResolvedValue(undefined as never)
@@ -112,19 +101,6 @@ describe('UsersPage', () => {
     fireEvent.change(screen.getByLabelText('1001 역할'), { target: { value: 'System_Operator' } })
     fireEvent.click(screen.getByRole('button', { name: '역할 변경 저장' }))
     await waitFor(() => expect(orgApi.setRoleLevel).toHaveBeenCalledWith('1001', 'System_Operator'))
-  })
-})
-
-describe('RolesPage', () => {
-  it('메뉴 체크박스 토글 후 저장하면 setMenus를 호출하고 System_Operator는 잠김', async () => {
-    wrap(<RolesPage />)
-    // 일반 사용자 '통계' 메뉴 체크(미보유) → draft
-    const cb = await screen.findByLabelText('일반 사용자 통계')
-    fireEvent.click(cb)
-    fireEvent.click(screen.getByRole('button', { name: /변경사항 저장/ }))
-    await waitFor(() => expect(rolesApi.setMenus).toHaveBeenCalledWith(1, expect.arrayContaining(['home', 'stats'])))
-    // System_Operator 컬럼은 잠김(disabled)
-    expect((screen.getByLabelText('시스템 운영자 통계') as HTMLInputElement).disabled).toBe(true)
   })
 })
 

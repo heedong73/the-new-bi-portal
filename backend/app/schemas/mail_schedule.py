@@ -1,10 +1,12 @@
 """메일 스케줄 I/O 스키마 (T-27)."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+
+ScheduleFreqStr = Literal["daily", "weekly", "monthly"]
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +86,17 @@ class MailScheduleCreate(BaseModel):
 
     # 메일 내용 커스터마이징
     subject_template: str | None = Field(default=None, max_length=500)
+    # 보내는 사람(From) 주소. 비우면 서버 기본값(SMTP_FROM) 사용.
+    sender_email: EmailStr | None = None
     body_header: str | None = None
     body_footer: str | None = None
+
+    @field_validator("sender_email", mode="before")
+    @classmethod
+    def _blank_sender_to_none(cls, v: object) -> object:
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
     # 이미지 옵션
     image_width: str | None = Field(default=None, max_length=32)
@@ -95,6 +106,14 @@ class MailScheduleCreate(BaseModel):
     cron_expr: str | None = Field(default=None, max_length=128)
     export_format: str = Field(default="PNG", max_length=16)
     enabled: bool = True
+
+    # 사용자 친화 스케줄(주기/시간/기간) — cron_expr 는 서버가 이로부터 생성
+    schedule_freq: ScheduleFreqStr | None = None
+    schedule_time: str | None = Field(default=None, max_length=8)  # 'HH:MM'
+    schedule_days: list[int] = Field(default_factory=list)         # weekly: 0=일~6=토
+    schedule_day_of_month: int | None = Field(default=None, ge=1, le=31)
+    start_date: date | None = None
+    end_date: date | None = None
 
     # 발송 제외 정책 (주말/공휴일)
     skip_weekends: bool = True
@@ -114,6 +133,7 @@ class MailScheduleUpdate(BaseModel):
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
     subject_template: str | None = None
+    sender_email: EmailStr | None = None
     body_header: str | None = None
     body_footer: str | None = None
     image_width: str | None = Field(default=None, max_length=32)
@@ -121,12 +141,25 @@ class MailScheduleUpdate(BaseModel):
     cron_expr: str | None = Field(default=None, max_length=128)
     export_format: str | None = Field(default=None, max_length=16)
     enabled: bool | None = None
+    schedule_freq: ScheduleFreqStr | None = None
+    schedule_time: str | None = Field(default=None, max_length=8)
+    schedule_days: list[int] | None = None
+    schedule_day_of_month: int | None = Field(default=None, ge=1, le=31)
+    start_date: date | None = None
+    end_date: date | None = None
     skip_weekends: bool | None = None
     skip_holidays: bool | None = None
 
     # 리스트가 None 이면 "변경 없음"으로 처리
     recipients: list[RecipientCreate] | None = None
     pages: list[PageCreate] | None = None
+
+    @field_validator("sender_email", mode="before")
+    @classmethod
+    def _blank_sender_to_none(cls, v: object) -> object:
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
 
 class MailScheduleResponse(BaseModel):
@@ -136,6 +169,7 @@ class MailScheduleResponse(BaseModel):
     report_id: int
     title: str
     subject_template: str | None = None
+    sender_email: str | None = None
     body_header: str | None = None
     body_footer: str | None = None
     image_width: str | None = None
@@ -143,6 +177,12 @@ class MailScheduleResponse(BaseModel):
     cron_expr: str | None = None
     export_format: str
     enabled: bool
+    schedule_freq: str | None = None
+    schedule_time: str | None = None
+    schedule_days: list[int] = []
+    schedule_day_of_month: int | None = None
+    start_date: date | None = None
+    end_date: date | None = None
     skip_weekends: bool = True
     skip_holidays: bool = True
     created_at: datetime

@@ -21,6 +21,7 @@ import {
 } from "@tanstack/react-query";
 import refreshApi, {
   type CollectNowResult,
+  type LatestDateResult,
   type TimetableFilterInput,
 } from "@/api/refreshApi";
 import { useRefreshFilterStore } from "@/stores/useRefreshFilterStore";
@@ -61,12 +62,14 @@ function useRefetchInterval(): number | false {
  * Gantt / 하단 차트 / 상세 테이블의 데이터 소스.
  */
 export function useRefreshTimetable(
-  filters: TimetableFilterInput
+  filters: TimetableFilterInput,
+  enabled = true
 ): UseQueryResult<RefreshRunOut[]> {
   const refetchInterval = useRefetchInterval();
   return useQuery({
     queryKey: ["refresh-timetable", serializeFilters(filters)],
     queryFn: ({ signal }) => refreshApi.getTimetable(filters, signal),
+    enabled,
     refetchInterval,
     staleTime: 10_000,
   });
@@ -123,6 +126,15 @@ export function useSchedules(): UseQueryResult<ScheduleOut[]> {
     queryKey: ["refresh-schedules"],
     queryFn: ({ signal }) => refreshApi.getSchedules(signal),
     staleTime: META_STALE_TIME,
+  });
+}
+
+/** `GET /api/refresh-latest-date` — 데이터가 있는 가장 최근 일자(기본 선택 일자용). */
+export function useLatestRefreshDate(): UseQueryResult<LatestDateResult> {
+  return useQuery({
+    queryKey: ["refresh-latest-date"],
+    queryFn: ({ signal }) => refreshApi.getLatestDate(signal),
+    staleTime: 60_000,
   });
 }
 

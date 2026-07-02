@@ -54,6 +54,7 @@ from app.services.powerbi.client import (
     RefreshRunDTO,
     RefreshScheduleDTO,
     ReportDTO,
+    ReportPageDTO,
 )
 from app.services.powerbi.token_service import TokenServiceProtocol
 
@@ -241,6 +242,34 @@ class LivePowerBIClient:
             timezone=data.get("localTimeZoneId") or "UTC",
             enabled=bool(data.get("enabled", True)),
         )
+
+    async def get_report_pages(
+        self, workspace_id: str, report_id: str
+    ) -> list[ReportPageDTO]:
+        """Return the report's pages (``GET .../reports/{id}/pages``).
+
+        Maps each ``value[]`` item ``{name, displayName, order}`` to a raw
+        :class:`ReportPageDTO`. ``name`` is the section name used by Export to
+        File; ``displayName`` is the human-facing tab title. Paginated reports
+        have no pages → empty list (treated gracefully).
+        """
+        data = await self._get(
+            f"/groups/{workspace_id}/reports/{report_id}/pages",
+            allow_404=True,
+            allow_statuses=(415,),
+        )
+        items = data.get("value", []) if data else []
+        pages = [
+            ReportPageDTO(
+                name=str(item["name"]),
+                display_name=str(item.get("displayName") or item["name"]),
+                order=item.get("order"),
+            )
+            for item in items
+            if item.get("name")
+        ]
+        pages.sort(key=lambda p: (p.order is None, p.order or 0))
+        return pages
 
     # ------------------------------------------------------------------
     # Internals

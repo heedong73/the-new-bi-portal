@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Plus, Shield, X, Upload, Folder, FolderPlus,
+  Shield, X, Upload, Folder, FolderPlus,
   ChevronRight, ChevronDown, Pencil, Trash2, FileBarChart, FolderInput,
   ArrowUp, ArrowDown,
 } from 'lucide-react'
@@ -10,18 +10,13 @@ import {
 import { reportAdminApi, foldersAdminApi } from '@/api/reportAdminApi'
 import type { FolderItem, ReportAdmin } from '@/types/reportAdmin'
 import { useTaskStore } from '@/stores/useTaskStore'
+import { useBeforeUnload } from '@/hooks/useBeforeUnload'
 import ReportPermissionPanel from './ReportPermissionPanel'
 import FolderTreePicker from './FolderTreePicker'
 import AuthorPicker from './AuthorPicker'
 
 export default function ReportsPage() {
   const queryClient = useQueryClient()
-  const [registerOpen, setRegisterOpen] = useState(false)
-  const [selectedPbi, setSelectedPbi] = useState('')
-  const [displayName, setDisplayName] = useState('')
-  const [registerFolderId, setRegisterFolderId] = useState('')
-  const [registerDescription, setRegisterDescription] = useState('')
-  const [registerAuthor, setRegisterAuthor] = useState('')
   const [permsReportId, setPermsReportId] = useState<number | null>(null)
   // PBIX 업로드
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -56,12 +51,6 @@ export default function ReportsPage() {
     queryFn: ({ signal }) => foldersAdminApi.list(signal),
     staleTime: 30_000,
   })
-  const wsQuery = useQuery({
-    queryKey: ['ws-reports'],
-    queryFn: ({ signal }) => reportAdminApi.workspaceReports(signal),
-    enabled: registerOpen,
-    staleTime: 5 * 60_000,
-  })
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['admin-reports'] })
@@ -69,24 +58,6 @@ export default function ReportsPage() {
   }
 
   // ---- mutations ----
-  const createReportMutation = useMutation({
-    mutationFn: () => {
-      const r = (wsQuery.data ?? []).find((x) => x.report_id === selectedPbi)
-      if (!r) throw new Error('레포트를 선택하세요.')
-      return reportAdminApi.create({
-        workspace_id: r.workspace_id, report_id: r.report_id,
-        dataset_id: r.dataset_id ?? null, report_name: r.report_name,
-        display_name: displayName.trim() || r.report_name,
-        folder_id: registerFolderId ? Number(registerFolderId) : null,
-        description: registerDescription.trim() || null,
-        author_label: registerAuthor.trim() || null,
-      })
-    },
-    onSuccess: () => {
-      setRegisterOpen(false); setSelectedPbi(''); setDisplayName('')
-      setRegisterFolderId(''); setRegisterDescription(''); setRegisterAuthor(''); invalidate()
-    },
-  })
   const editReportMutation = useMutation({
     mutationFn: async () => {
       if (!editReport) return
@@ -168,6 +139,9 @@ export default function ReportsPage() {
       closeUpload()
     },
   })
+
+  // 업로드(파일 전송) 진행 중에는 새로고침/창 닫기 시 경고 — 전송 취소 방지.
+  useBeforeUnload(uploadMutation.isPending)
   function closeUpload() {
     setUploadOpen(false); setPbixFile(null); setPbixName(''); setPbixFolderId(''); setPbixDescription(''); setPbixAuthor(''); invalidate()
   }
@@ -210,9 +184,6 @@ export default function ReportsPage() {
       return next
     })
   }
-
-  const registeredPbiIds = new Set(reports.map((r) => r.report_id))
-  const wsCandidates = (wsQuery.data ?? []).filter((r) => !registeredPbiIds.has(r.report_id))
 
   // ---- 렌더: 레포트 행 (컴포넌트가 아닌 렌더 함수 — 부모 리렌더 시 재마운트로 인한 한글 IME 끊김 방지) ----
   const renderReportRow = (r: ReportAdmin, depth: number) => {
@@ -334,6 +305,10 @@ export default function ReportsPage() {
 
   const rootFolders = childFolders.get(null) ?? []
   const rootReports = reportsByFolder.get(null) ?? []
+  const permsReport = permsReportId !== null ? reports.find((r) => r.id === permsReportId) ?? null : null
+  const permsReportName = permsReport
+    ? (permsReport.display_name || permsReport.report_name || permsReport.report_id)
+    : ''
 
   return (
     <section>
@@ -345,12 +320,8 @@ export default function ReportsPage() {
             <FolderPlus className="h-4 w-4" /> 폴더 추가
           </button>
           <button type="button" onClick={() => setUploadOpen(true)}
-            className="inline-flex items-center gap-1 rounded-lg border border-blue-600 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50">
-            <Upload className="h-4 w-4" /> PBIX 업로드 게시
-          </button>
-          <button type="button" onClick={() => setRegisterOpen(true)}
             className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500">
-            <Plus className="h-4 w-4" /> 기존 레포트 게시
+            <Upload className="h-4 w-4" /> PBIX 업로드 게시
           </button>
         </div>
       </div>
@@ -392,60 +363,26 @@ export default function ReportsPage() {
               </div>
             )}
             {folders.length === 0 && reports.length === 0 && (
-              <p className="px-2 py-10 text-center text-sm text-slate-400">폴더나 레포트가 없습니다. "폴더 추가" 또는 "레포트 게시"로 시작하세요.</p>
+              <p className="px-2 py-10 text-center text-sm text-slate-400">폴더나 레포트가 없습니다. "폴더 추가" 또는 "PBIX 업로드 게시"로 시작하세요.</p>
             )}
           </>
         )}
       </div>
 
-      {/* 선택 레포트 권한 패널 */}
+      {/* 선택 레포트 권한 관리 모달 */}
       {permsReportId !== null && (
-        <div className="mt-4"><ReportPermissionPanel reportId={permsReportId} /></div>
-      )}
-
-      {/* 기존 레포트 게시 모달 */}
-      {registerOpen && (
         <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
-          <div role="dialog" aria-modal="true" aria-label="기존 레포트 게시" className="my-12 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+          <div role="dialog" aria-modal="true" aria-label="레포트 권한 관리" className="my-12 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-800">기존 레포트 게시 (PBI에서 선택)</h3>
-              <button type="button" aria-label="닫기" onClick={() => setRegisterOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+              <h3 className="text-lg font-semibold text-slate-800">
+                권한 관리{permsReportName ? <span className="text-slate-500"> — {permsReportName}</span> : null}
+              </h3>
+              <button type="button" aria-label="닫기" onClick={() => setPermsReportId(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); if (selectedPbi) createReportMutation.mutate() }} className="space-y-4">
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-600">워크스페이스 레포트 *</span>
-                <select value={selectedPbi} onChange={(e) => setSelectedPbi(e.target.value)} aria-label="워크스페이스 레포트"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
-                  <option value="">{wsQuery.isLoading ? '불러오는 중…' : '레포트 선택…'}</option>
-                  {wsCandidates.map((r) => <option key={r.report_id} value={r.report_id}>{r.report_name}</option>)}
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-600">표시명 (비우면 원래 이름)</span>
-                <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} aria-label="표시명"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-600">설명</span>
-                <textarea value={registerDescription} onChange={(e) => setRegisterDescription(e.target.value)} aria-label="레포트 설명"
-                  rows={2} placeholder="레포트 용도/내용 간단 설명 (선택)"
-                  className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-              </label>
-              <div>
-                <span className="mb-1 block text-xs font-medium text-slate-600">작성자 (현업 화면에 표시)</span>
-                <AuthorPicker value={registerAuthor} onChange={setRegisterAuthor} />
-              </div>
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-slate-600">폴더 * (트리에서 선택)</span>
-                <FolderTreePicker folders={folders} value={registerFolderId} onChange={setRegisterFolderId} />
-              </label>
-              {createReportMutation.isError && <p role="alert" className="text-sm text-red-600">등록 실패 (이미 등록됐거나 입력값 확인).</p>}
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setRegisterOpen(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">취소</button>
-                <button type="submit" disabled={!selectedPbi || !registerFolderId || createReportMutation.isPending} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">게시</button>
-              </div>
-            </form>
-            <p className="mt-3 text-xs text-slate-400">게시 후 기본 비공개예요. 트리에서 "공개"로 바꾸고 권한을 부여하세요.</p>
+            <ReportPermissionPanel reportId={permsReportId} />
+            <div className="mt-4 flex justify-end">
+              <button type="button" onClick={() => setPermsReportId(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">닫기</button>
+            </div>
           </div>
         </div>
       )}

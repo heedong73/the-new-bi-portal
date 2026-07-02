@@ -4,51 +4,46 @@
  * 메뉴는 역할에 따라 노출되며(통제는 백엔드가 강제), 로그아웃은 세션을 무효화하고
  * 로그인 화면으로 보낸다.
  */
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import {
-  LayoutGrid, BarChart3, Mail, CalendarClock, Activity, RefreshCw,
-  Users, LogOut,
-} from 'lucide-react'
+import { LayoutGrid, BarChart3, Settings, LogOut, PanelLeftClose, Menu, MessagesSquare } from 'lucide-react'
 
 import { authApi } from '@/api/authApi'
 import { useAuthStore } from '@/stores/useAuthStore'
+import { useSidebarStore } from '@/stores/useSidebarStore'
+import SidebarFolderTree from '@/components/SidebarFolderTree'
 import BackgroundTaskDock from '@/components/BackgroundTaskDock'
-
-interface NavItem {
-  to: string
-  label: string
-  Icon: typeof LayoutGrid
-  menu: string // 접근 메뉴 키 (allowed_menus 기준 노출)
-}
-
-const NAV: NavItem[] = [
-  { to: '/', label: '레포트', Icon: LayoutGrid, menu: 'home' },
-  { to: '/mail/schedules', label: '메일 스케줄', Icon: CalendarClock, menu: 'mail_schedules' },
-  { to: '/mail/jobs', label: '메일 이력', Icon: Mail, menu: 'mail_jobs' },
-  { to: '/stats', label: '통계', Icon: BarChart3, menu: 'stats' },
-  { to: '/monitoring/refresh', label: 'Refresh 현황', Icon: RefreshCw, menu: 'monitoring_refresh' },
-  { to: '/monitoring/ops', label: '운영 상태', Icon: Activity, menu: 'monitoring_ops' },
-  { to: '/admin', label: '관리자', Icon: Users, menu: 'admin_users' },
-]
-
-const ADMIN_MENUS = ['admin_reports', 'admin_users', 'admin_groups', 'admin_roles', 'admin_holidays']
+import { ADMIN_GROUP_MENUS } from '@/routes/admin/adminNav'
 
 export default function AppLayout() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const user = useAuthStore((s) => s.user)
   const clear = useAuthStore((s) => s.clear)
+  const collapsed = useSidebarStore((s) => s.collapsed)
+  const toggleSidebar = useSidebarStore((s) => s.toggle)
 
   const roles = user?.roles ?? []
   const allowedMenus = user?.allowed_menus ?? []
   const isOperator = roles.includes('System_Operator')
-  const visibleNav = NAV.filter((n) => {
-    if (n.to === '/') return true // 홈(레포트 조회)은 모든 로그인 사용자
-    if (isOperator) return true
-    if (n.to === '/admin') return ADMIN_MENUS.some((m) => allowedMenus.includes(m))
-    return allowedMenus.includes(n.menu)
-  })
+  const canStats = isOperator || allowedMenus.includes('stats')
+  const canAdmin = isOperator || ADMIN_GROUP_MENUS.some((m) => allowedMenus.includes(m))
+
+  // 최상위 메뉴 활성 판정(쿼리/하위경로 포함)
+  const path = location.pathname
+  // '레포트'는 전체 레포트 진입점 겸 헤더 — 전체 보기(폴더/즐겨찾기 미선택)일 때만 강조
+  const folderSel = searchParams.get('folder')
+  const favSel = searchParams.get('fav')
+  const reportActive = path === '/' && !folderSel && !favSel
+  const statsActive = path.startsWith('/stats')
+  const serviceActive = path.startsWith('/service-center')
+  const adminActive = path.startsWith('/admin') || path.startsWith('/mail') || path.startsWith('/monitoring')
+  const itemCls = (active: boolean) =>
+    `flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
+      active ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+    }`
 
   const logoutMutation = useMutation({
     mutationFn: authApi.logout,
@@ -60,36 +55,79 @@ export default function AppLayout() {
   })
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      {/* 사이드바 */}
-      <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
-        <div className="border-b border-slate-100 px-5 py-4">
-          <div className="text-xl font-bold text-slate-800">SCL BI PORTAL</div>
-          <div className="text-xs text-slate-400">삼천리 BI PORTAL</div>
-        </div>
-        <nav className="flex-1 space-y-0.5 p-3">
-          {visibleNav.map(({ to, label, Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) =>
-                `flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  isActive ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
-                }`
-              }
+    <div className="flex h-screen overflow-hidden bg-slate-50">
+      {/* 사이드바 (접힘 시 왼쪽으로 사라짐) */}
+      <aside
+        className={`shrink-0 overflow-hidden border-slate-200 bg-white transition-[width] duration-300 ease-in-out ${
+          collapsed ? 'w-0 border-r-0' : 'w-56 border-r'
+        }`}
+      >
+        <div className="flex h-full w-56 flex-col">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-4">
+            <img src="/logo.png" alt="삼천리 로고" className="h-9 w-9 shrink-0 object-contain" />
+            <div className="min-w-0 flex-1">
+              <div className="whitespace-nowrap text-base font-bold tracking-tight text-slate-800">SCL BI PORTAL</div>
+              <div className="text-xs text-slate-400">삼천리 BI PORTAL</div>
+            </div>
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              aria-label="메뉴 접기"
+              title="메뉴 접기"
+              className="shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             >
-              <Icon className="h-4 w-4" />
-              {label}
+              <PanelLeftClose className="h-5 w-5" />
+            </button>
+          </div>
+          <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
+            {/* 레포트 + 폴더 트리 (모든 사용자) */}
+            <NavLink to="/" end className={() => itemCls(reportActive)}>
+              <LayoutGrid className="h-4 w-4" />
+              레포트
             </NavLink>
-          ))}
-        </nav>
+            <SidebarFolderTree />
+
+            {/* 통계 (Super_User·운영자) */}
+            {canStats && (
+              <NavLink to="/stats" className={() => itemCls(statsActive)}>
+                <BarChart3 className="h-4 w-4" />
+                통계
+              </NavLink>
+            )}
+
+            {/* 서비스 센터 (모든 사용자) */}
+            <NavLink to="/service-center" className={() => itemCls(serviceActive)}>
+              <MessagesSquare className="h-4 w-4" />
+              서비스 센터
+            </NavLink>
+
+            {/* 관리자 콘솔 (운영자) — 전용 콘솔 화면으로 이동 */}
+            {canAdmin && (
+              <NavLink to="/admin" className={() => itemCls(adminActive)}>
+                <Settings className="h-4 w-4" />
+                관리자 콘솔
+              </NavLink>
+            )}
+          </nav>
+        </div>
       </aside>
 
       {/* 본문 영역 */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-          <div />
+          <div className="flex items-center">
+            {collapsed && (
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                aria-label="메뉴 펼치기"
+                title="메뉴 펼치기"
+                className="-ml-2 inline-flex items-center justify-center rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+            )}
+          </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
               <div className="text-sm font-medium text-slate-700">{user?.name ?? '-'}</div>
@@ -107,7 +145,7 @@ export default function AppLayout() {
           </div>
         </header>
 
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-y-auto">
           <Outlet />
         </div>
       </div>

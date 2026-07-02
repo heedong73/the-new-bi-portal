@@ -17,11 +17,21 @@ export interface PageItem {
   sort_order: number
 }
 
+/** Power BI 레포트 페이지 (GET /api/reports/{id}/pages). */
+export interface ReportPage {
+  name: string
+  display_name: string
+  order?: number | null
+}
+
+export type ScheduleFreq = 'daily' | 'weekly' | 'monthly'
+
 export interface MailSchedule {
   id: number
   report_id: number
   title: string
   subject_template?: string | null
+  sender_email?: string | null
   body_header?: string | null
   body_footer?: string | null
   image_width?: string | null
@@ -29,6 +39,12 @@ export interface MailSchedule {
   cron_expr?: string | null
   export_format: string
   enabled: boolean
+  schedule_freq?: ScheduleFreq | null
+  schedule_time?: string | null
+  schedule_days?: number[]
+  schedule_day_of_month?: number | null
+  start_date?: string | null
+  end_date?: string | null
   skip_weekends: boolean
   skip_holidays: boolean
   created_at: string
@@ -40,6 +56,7 @@ export interface MailScheduleCreate {
   report_id: number
   title: string
   subject_template?: string | null
+  sender_email?: string | null
   body_header?: string | null
   body_footer?: string | null
   image_width?: string | null
@@ -47,6 +64,12 @@ export interface MailScheduleCreate {
   cron_expr?: string | null
   export_format?: string
   enabled?: boolean
+  schedule_freq?: ScheduleFreq | null
+  schedule_time?: string | null
+  schedule_days?: number[]
+  schedule_day_of_month?: number | null
+  start_date?: string | null
+  end_date?: string | null
   skip_weekends?: boolean
   skip_holidays?: boolean
   recipients: RecipientItem[]

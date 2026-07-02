@@ -52,4 +52,47 @@ class RoleLevelRequest(BaseModel):
     role_code: str
 
 
+# ── 팀 권한 그룹 자동 생성/동기화 ─────────────────────────────────────────────
+
+class TeamGroupSyncRequest(BaseModel):
+    """조직도 기반 팀 그룹 동기화 요청.
+
+    dept_id 하위(재귀)의 '직속 구성원이 있는 팀'마다 자동 관리 그룹을 만들어
+    구성원을 현재 로스터와 완전 동기화한다. apply=False면 미리보기(계획만).
+    """
+    dept_id: str
+    apply: bool = False
+
+
+class MemberRef(BaseModel):
+    """구성원 참조 (미리보기/결과 표시용)."""
+    emp_no: str
+    name: str
+
+
+class TeamGroupPlanItem(BaseModel):
+    """팀별 동기화 계획/결과."""
+    dept_id: str
+    dept_name: str
+    group_name: str          # 최종 그룹명(충돌 시 상위조직/회사명으로 구분)
+    group_id: int | None = None
+    created: bool = False    # 신규 생성 여부
+    renamed_from: str | None = None  # 이름이 바뀌면 이전 이름
+    add: list[MemberRef] = []
+    remove: list[MemberRef] = []
+    keep: int = 0
+
+
+class TeamGroupSyncResponse(BaseModel):
+    """팀 그룹 동기화 응답 (미리보기 또는 적용 결과)."""
+    dept_id: str
+    applied: bool
+    teams: list[TeamGroupPlanItem] = []
+    groups_total: int = 0
+    groups_to_create: int = 0
+    members_to_add: int = 0
+    members_to_remove: int = 0
+    to_register: int = 0
+
+
 OrgNode.model_rebuild()

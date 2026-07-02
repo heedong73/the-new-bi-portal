@@ -5,10 +5,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import StatsDashboardPage from './StatsDashboardPage'
 import OpsStatusPage from '@/routes/monitoring/OpsStatusPage'
 import { statsApi, monitoringApi } from '@/api/dashboardApi'
+import { useAuthStore } from '@/stores/useAuthStore'
 import type { MonitoringStatus, StatsOverview, StatsUsage } from '@/types/dashboard'
 
 vi.mock('@/api/dashboardApi', () => ({
-  statsApi: { overview: vi.fn(), usage: vi.fn() },
+  statsApi: { overview: vi.fn(), usage: vi.fn(), reports: vi.fn() },
   monitoringApi: { status: vi.fn() },
 }))
 
@@ -42,8 +43,13 @@ function wrap(ui: React.ReactElement) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 운영자로 로그인된 상태 → 전역 통계 대시보드 렌더링
+  useAuthStore.setState({
+    user: { id: 1, emp_no: '1001', name: '운영자', roles: ['System_Operator'] },
+  })
   vi.mocked(statsApi.overview).mockResolvedValue(OVERVIEW)
   vi.mocked(statsApi.usage).mockResolvedValue(USAGE)
+  vi.mocked(statsApi.reports).mockResolvedValue([])
   vi.mocked(monitoringApi.status).mockResolvedValue(STATUS)
 })
 

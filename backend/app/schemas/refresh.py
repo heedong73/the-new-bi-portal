@@ -57,3 +57,26 @@ class ScheduleOut(BaseModel):
     times: list[str]
     timezone: str | None
     enabled: bool
+
+
+class CollectNowOut(BaseModel):
+    """POST /api/collect-now 응답.
+
+    - enqueued  → taskId 는 Celery task id.
+    - already-running → 이미 수집 진행 중(분산 락 점유), taskId 없음.
+    """
+    status: str  # "enqueued" | "already-running"
+    taskId: str | None = None
+
+
+class CollectStatusOut(BaseModel):
+    """GET /api/collect-status 응답 — 현재 workspace 수집 진행 여부(분산 락 점유)."""
+    running: bool
+
+
+class LatestDateOut(BaseModel):
+    """GET /api/refresh-latest-date 응답 — 데이터가 있는 가장 최근 일자(APP_TZ).
+
+    화면 최초 진입 시 기본 선택 일자로 사용한다. 이력이 없으면 date=None.
+    """
+    date: str | None = None  # "YYYY-MM-DD"

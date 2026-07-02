@@ -15,6 +15,7 @@ from app.db.session import AsyncSessionLocal
 from app.services.powerbi.collector import collect_workspace
 from app.services.powerbi.lock import acquire_collect_lock, release_collect_lock
 from app.services.powerbi.mock_client import MockPowerBIClient
+from app.workers.async_runner import run_async
 from app.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -48,5 +49,5 @@ async def _run_collect(workspace_id: str) -> dict[str, Any]:
 
 @celery_app.task(name="bip.collect_workspace")
 def collect_workspace_task(workspace_id: str) -> dict[str, Any]:
-    """Workspace 수집 Celery task (sync → asyncio.run)."""
-    return asyncio.run(_run_collect(workspace_id))
+    """Workspace 수집 Celery task (sync → 지속 루프 러너)."""
+    return run_async(_run_collect(workspace_id))

@@ -19,8 +19,9 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
-from app.models.report import Report, Workspace
+from app.models.report import Report, Workspace, ReportPermission
 from app.services.powerbi.token_service import MockTokenService, TokenService
+from app.workers.async_runner import run_async
 from app.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -54,7 +55,14 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
                 created_by_user_id=created_by_user_id, created_by_label=created_by_label,
             )
             db.add(report)
+            await db.flush()
             created = True
+            # 작성자에게 통계 조회 권한(VIEW_STATS) 자동 부여 (관리자가 이후 회수/수정 가능)
+            if created_by_user_id:
+                db.add(ReportPermission(
+                    report_id=report.id, subject_type="user",
+                    subject_id=created_by_user_id, permission="VIEW_STATS",
+                ))
         else:
             report.dataset_id = dataset_id
             report.report_name = report_name
@@ -139,7 +147,7 @@ def _powerbi_import(file_path: str, workspace_id: str, dataset_display_name: str
             "dataset_id": f"mock-dataset-{abs(hash(file_path)) % 100000}",
             "report_name": dataset_display_name,
         }
-    return asyncio.run(_powerbi_import_live(file_path, workspace_id, dataset_display_name, name_conflict))
+    return run_async(_powerbi_import_live(file_path, workspace_id, dataset_display_name, name_conflict))
 
 @celery_app.task(name="bip.pbix_import")
 def pbix_import(
@@ -171,7 +179,7 @@ def pbix_import(
     if result.get("status") != "Succeeded":
         return {"status": "Failed", "reason": result.get("reason") or result.get("status")}
 
-    catalog = asyncio.run(_apply_catalog(
+    catalog = run_async(_apply_catalog(
         workspace_id=workspace_id,
         report_id=result["report_id"],
         dataset_id=result.get("dataset_id"),

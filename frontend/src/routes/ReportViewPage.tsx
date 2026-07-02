@@ -13,17 +13,31 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { models, type Report } from 'powerbi-client'
 import {
   ArrowLeft, RefreshCw, Upload, X, AlertTriangle, Star,
-  Maximize2, Monitor, ScanLine, ChevronDown,
+  Maximize2, Monitor, ScanLine, ChevronDown, Clock,
 } from 'lucide-react'
 
 import { datasetsApi, reportsApi } from '@/api/portalApi'
 import { ApiError } from '@/api/client'
 import { reportDisplayName, type RefreshStatus } from '@/types/report'
 import { useTaskStore } from '@/stores/useTaskStore'
+import { useBeforeUnload } from '@/hooks/useBeforeUnload'
 import PowerBIEmbed from '@/components/embed/PowerBIEmbed'
 import RefreshStatusBadge from '@/components/refresh/RefreshStatusBadge'
 
 const REFRESH_TERMINAL_FAIL = ['Failed', 'Cancelled', 'Disabled']
+
+/** 요일(영문) → 한글 축약. */
+const WEEKDAY_KO: Record<string, string> = {
+  Monday: '월', Tuesday: '화', Wednesday: '수', Thursday: '목',
+  Friday: '금', Saturday: '토', Sunday: '일',
+}
+function weekdayKo(d: string): string {
+  return WEEKDAY_KO[d] ?? d
+}
+
+/** 라이브 새로고침 상태 폴링 주기(ms). .env로 조정 가능. */
+const LIVE_POLL_IDLE_MS = (Number(import.meta.env.VITE_LIVE_REFRESH_IDLE_SEC) || 60) * 1000
+const LIVE_POLL_ACTIVE_MS = (Number(import.meta.env.VITE_LIVE_REFRESH_ACTIVE_SEC) || 10) * 1000
 
 function fmtLocal(iso?: string | null): string | undefined {
   if (!iso) return undefined
@@ -60,20 +74,25 @@ export default function ReportViewPage() {
     queryKey: ['live-refresh', reportDbId],
     queryFn: ({ signal }) => reportsApi.liveRefreshStatus(reportDbId, signal),
     enabled: validId,
-    refetchInterval: (q) => ((q.state.data as { in_progress?: boolean } | undefined)?.in_progress ? 5000 : 30000),
+    refetchInterval: (q) => ((q.state.data as { in_progress?: boolean } | undefined)?.in_progress ? LIVE_POLL_ACTIVE_MS : LIVE_POLL_IDLE_MS),
     staleTime: 5_000,
   })
 
-  // 완료 알림: 진행 중(true) → 종료(false) 전환 감지
-  const [refreshDone, setRefreshDone] = useState<{ ok: boolean; msg: string } | null>(null)
+  // 새로고침 실패 알림: 진행 중(true) → 종료(false) 전환 시 실패 상태면 토스트
+  const [refreshFailed, setRefreshFailed] = useState<string | null>(null)
+  // 데이터 반영 안내: 사용자가 이미 반영/닫은 end_time (재노출 방지)
+  const [appliedEndTime, setAppliedEndTime] = useState<string | null>(null)
+  // 임베드가 렌더된 시각(ms). 이 시점 이후 완료된 새로고침만 "새 데이터"로 간주.
+  const renderedAtRef = useRef<number | null>(null)
   const prevInProgress = useRef(false)
   useEffect(() => {
     const ip = !!statusQuery.data?.in_progress
     if (prevInProgress.current && !ip) {
       const st = statusQuery.data?.status ?? ''
-      if (st === 'Completed') setRefreshDone({ ok: true, msg: '새로고침이 완료되었습니다.' })
-      else if (REFRESH_TERMINAL_FAIL.includes(st)) setRefreshDone({ ok: false, msg: `새로고침 실패 (${st})` })
-      window.setTimeout(() => setRefreshDone(null), 8000)
+      if (REFRESH_TERMINAL_FAIL.includes(st)) {
+        setRefreshFailed(`새로고침 실패 (${st})`)
+        window.setTimeout(() => setRefreshFailed(null), 8000)
+      }
     }
     prevInProgress.current = ip
   }, [statusQuery.data])
@@ -84,6 +103,52 @@ export default function ReportViewPage() {
   // 임베드된 Report 인스턴스 (보기 옵션 제어용)
   const reportRef = useRef<Report | null>(null)
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
+  const [schedOpen, setSchedOpen] = useState(false)
+  // 레포트 페이지 목록 + 현재 페이지 (하단 탭 대신 헤더 드롭다운으로 전환)
+  const [pages, setPages] = useState<{ name: string; displayName: string }[]>([])
+  const [activePageName, setActivePageName] = useState('')
+
+  function handleReport(r: Report | null) {
+    reportRef.current = r
+    if (renderedAtRef.current == null) renderedAtRef.current = Date.now()
+    if (!r) return
+    // 기본 보기를 '실제 크기'로 확실히 적용 (초기 embedConfig만으론 미적용되는 경우 대비)
+    const applyFit = () => {
+      r.updateSettings({
+        layoutType: models.LayoutType.Custom,
+        customLayout: { displayOption: models.DisplayOption.ActualSize },
+      }).catch(() => { /* noop */ })
+    }
+    const loadPages = () => {
+      r.getPages()
+        .then((pgs) => {
+          // 레포트에서 숨김 처리한 페이지는 제외 (SectionVisibility: 0=표시, 1=뷰모드 숨김)
+          const isHidden = (p: { visibility?: number }) => (p.visibility as number) === 1
+          const visible = pgs.filter((p) => !isHidden(p))
+          setPages(visible.map((p) => ({ name: p.name, displayName: p.displayName })))
+          const active = pgs.find((p) => p.isActive)
+          const initial = active && !isHidden(active) ? active : visible[0]
+          if (initial) setActivePageName(initial.name)
+        })
+        .catch(() => { /* noop */ })
+    }
+    try {
+      r.off('loaded')
+      r.on('loaded', () => { applyFit(); loadPages() })
+    } catch {
+      /* noop */
+    }
+    loadPages()  // 이미 로드된 경우 대비
+  }
+
+  async function selectPage(name: string) {
+    setActivePageName(name)
+    try {
+      await reportRef.current?.setPage(name)
+    } catch {
+      /* noop */
+    }
+  }
 
   async function applyFullscreen() {
     setViewMenuOpen(false)
@@ -153,6 +218,9 @@ export default function ReportViewPage() {
     },
   })
 
+  // PBIX 교체 업로드(파일 전송) 중에는 새로고침/창 닫기 시 경고.
+  useBeforeUnload(replaceMutation.isPending)
+
   function refreshErrorMessage(error: unknown): string {
     if (error instanceof ApiError) {
       if (error.status === 403) return '새로고침 권한이 없습니다.'
@@ -197,6 +265,30 @@ export default function ReportViewPage() {
 
   const isFavorite = !!report?.is_favorite
 
+  // 새 데이터 반영 안내: 임베드 렌더 이후 "완료"된 새로고침이 감지되면(end_time이 더 최신),
+  // 자동 갱신 대신 배너+버튼으로 사용자가 직접 반영하도록 한다(조작 방해 최소화).
+  const newDataEndTime = live?.status === 'Completed' ? (live.end_time ?? null) : null
+  const newDataAvailable = Boolean(
+    newDataEndTime
+    && !refreshing
+    && renderedAtRef.current != null
+    && new Date(newDataEndTime).getTime() > renderedAtRef.current
+    && newDataEndTime !== appliedEndTime,
+  )
+
+  function applyNewData() {
+    try {
+      reportRef.current?.refresh()
+    } catch {
+      /* noop */
+    }
+    setAppliedEndTime(newDataEndTime)
+  }
+
+  function dismissNewData() {
+    setAppliedEndTime(newDataEndTime)
+  }
+
   if (!validId) {
     return (
       <div className="p-6">
@@ -208,7 +300,7 @@ export default function ReportViewPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-slate-50">
+    <div className="flex h-full flex-col bg-slate-50">
       {/* 헤더 */}
       <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3">
         <button
@@ -243,6 +335,60 @@ export default function ReportViewPage() {
 
         <div className="ml-auto flex items-center gap-3">
           <RefreshStatusBadge status={badgeStatus} isLoading={statusQuery.isLoading} />
+
+          {/* 갱신 예정 (예약 새로고침이 활성일 때) */}
+          {live?.schedule?.enabled && live.schedule.next_scheduled_local && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setSchedOpen((v) => !v)}
+                aria-haspopup="dialog"
+                aria-expanded={schedOpen}
+                title="예약 새로고침 상세 보기"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50"
+              >
+                <Clock className="h-3.5 w-3.5 text-slate-400" />
+                갱신 예정: {fmtLocal(live.schedule.next_scheduled_local)}
+              </button>
+              {schedOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-hidden="true"
+                    tabIndex={-1}
+                    className="fixed inset-0 z-10 cursor-default"
+                    onClick={() => setSchedOpen(false)}
+                  />
+                  <div role="dialog" aria-label="예약 새로고침" className="absolute right-0 z-20 mt-1 w-60 rounded-lg border border-slate-200 bg-white p-3 text-xs shadow-lg">
+                    <p className="mb-1.5 font-semibold text-slate-700">예약 새로고침</p>
+                    <p className="text-slate-500">
+                      요일: <span className="text-slate-700">{live.schedule.days.map(weekdayKo).join(', ') || '-'}</span>
+                    </p>
+                    <p className="text-slate-500">
+                      시간: <span className="text-slate-700">{live.schedule.times.join(', ') || '-'}</span>
+                    </p>
+                    <p className="mt-1.5 border-t border-slate-100 pt-1.5 text-slate-500">
+                      다음 갱신: <span className="font-medium text-blue-700">{fmtLocal(live.schedule.next_scheduled_local)}</span>
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* 페이지 선택 (하단 탭 대신) */}
+          {pages.length > 1 && (
+            <select
+              value={activePageName}
+              onChange={(e) => selectPage(e.target.value)}
+              aria-label="페이지 선택"
+              className="max-w-[14rem] rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              {pages.map((p) => (
+                <option key={p.name} value={p.name}>{p.displayName}</option>
+              ))}
+            </select>
+          )}
 
           {/* 보기 옵션 드롭다운 */}
           <div className="relative">
@@ -319,9 +465,34 @@ export default function ReportViewPage() {
           새로고침을 요청했습니다. 잠시 후 상태가 갱신됩니다.
         </div>
       )}
-      {refreshDone && (
-        <div role="status" className={`px-5 py-2 text-sm ${refreshDone.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-          {refreshDone.msg}
+      {refreshFailed && (
+        <div role="alert" className="bg-red-50 px-5 py-2 text-sm text-red-600">
+          {refreshFailed}
+        </div>
+      )}
+      {newDataAvailable && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-2 bg-blue-50 px-5 py-2 text-sm text-blue-700">
+          <span className="flex items-center gap-1.5">
+            <RefreshCw className="h-4 w-4" />
+            데이터가 새로 갱신되었습니다. 화면에 반영할까요?
+          </span>
+          <span className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={applyNewData}
+              className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-blue-500"
+            >
+              새 데이터 반영
+            </button>
+            <button
+              type="button"
+              aria-label="알림 닫기"
+              onClick={dismissNewData}
+              className="text-blue-400 transition hover:text-blue-600"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </span>
         </div>
       )}
       {replaceMutation.isSuccess && (
@@ -346,15 +517,7 @@ export default function ReportViewPage() {
           </div>
         ) : embedQuery.data ? (
           <div className="relative h-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <PowerBIEmbed embed={embedQuery.data} onReport={(r) => { reportRef.current = r }} />
-            {refreshing && (
-              <div className="absolute inset-0 z-10 flex cursor-wait items-center justify-center bg-white/40 backdrop-blur-[1px]">
-                <span className="inline-flex items-center gap-2 rounded-lg bg-white/95 px-4 py-2.5 text-sm font-medium text-slate-700 shadow-lg">
-                  <RefreshCw className="h-4 w-4 animate-spin text-blue-600" />
-                  새로고침 중… 잠시 후 다시 시도하세요
-                </span>
-              </div>
-            )}
+            <PowerBIEmbed embed={embedQuery.data} onReport={handleReport} />
           </div>
         ) : null}
       </main>

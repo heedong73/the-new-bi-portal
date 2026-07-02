@@ -3,13 +3,14 @@ import apiClient, { request } from '@/api/client'
 import type {
   GroupMemberItem,
   GroupResponse,
+  GroupTreeResponse,
   Holiday,
   HolidayCreate,
   OrgCompany,
   OrgMember,
   OrgNode,
   RoleResponse,
-  RoleMenusResponse,
+  TeamGroupSyncResult,
   UserListItem,
 } from '@/types/admin'
 
@@ -62,10 +63,16 @@ export const orgApi = {
     request<void>(`/api/org/members/${encodeURIComponent(empNo)}/role-level`, {
       method: 'PUT', body: { role_code: roleCode },
     }),
+  /** POST /api/org/sync-team-groups — 조직도 기반 팀 그룹 생성/완전 동기화. apply=false면 미리보기. */
+  syncTeamGroups: (deptId: string, apply: boolean) =>
+    apiClient.post<TeamGroupSyncResult>('/api/org/sync-team-groups', { dept_id: deptId, apply }),
 }
 
 export const groupsApi = {
   list: (signal?: AbortSignal) => apiClient.get<GroupResponse[]>('/api/groups', { signal }),
+  /** GET /api/groups/tree — 전체 조직 트리(팀 그룹 상태 포함, cmp_id 한정 옵션) + 기타(수동) 그룹. */
+  tree: (cmpId?: string, signal?: AbortSignal) =>
+    apiClient.get<GroupTreeResponse>('/api/groups/tree', { query: { cmp_id: cmpId }, signal }),
   members: (groupId: number, signal?: AbortSignal) =>
     apiClient.get<GroupMemberItem[]>(`/api/groups/${groupId}/members`, { signal }),
   create: (name: string, description?: string) =>
@@ -82,11 +89,6 @@ export const groupsApi = {
 
 export const rolesApi = {
   list: (signal?: AbortSignal) => apiClient.get<RoleResponse[]>('/api/roles', { signal }),
-  /** GET /api/roles/menus — 역할-메뉴 권한 매트릭스. */
-  getMenus: (signal?: AbortSignal) => apiClient.get<RoleMenusResponse>('/api/roles/menus', { signal }),
-  /** PUT /api/roles/{id}/menus — 역할 메뉴 권한 일괄 설정. */
-  setMenus: (roleId: number, menus: string[]) =>
-    request<void>(`/api/roles/${roleId}/menus`, { method: 'PUT', body: { menus } }),
 }
 
 export const holidaysApi = {

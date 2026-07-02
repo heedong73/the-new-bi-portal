@@ -103,9 +103,12 @@ async def start_export(
     workspace_id: str,
     report_id: str,
     export_format: str,
+    page_name: str | None = None,
 ) -> ExportStartResult:
     """Power BI ExportTo API 호출 → export_id + 초기 status 반환.
 
+    page_name(레포트 섹션명)이 주어지면 해당 페이지만 export하도록
+    powerBIReportConfiguration.pages 를 포함한다. 미지정 시 리포트 전체.
     mock 모드는 즉시 Succeeded를 반환하며 외부 호출을 하지 않는다.
     """
     fmt = export_format.upper()
@@ -120,6 +123,9 @@ async def start_export(
         f"/reports/{report_id}/ExportTo"
     )
     body: dict[str, Any] = {"format": fmt}
+    if page_name:
+        # 특정 페이지만 내보내기 (pageName = 레포트 섹션명, displayName 아님)
+        body["powerBIReportConfiguration"] = {"pages": [{"pageName": page_name}]}
 
     try:
         async with httpx.AsyncClient(

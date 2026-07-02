@@ -43,6 +43,7 @@ from app.services.powerbi.client import (
     RefreshRunDTO,
     RefreshScheduleDTO,
     ReportDTO,
+    ReportPageDTO,
 )
 
 # --- Static catalogue (seed-stable; mirrors the Frontend fixtures) ----------
@@ -251,6 +252,21 @@ class MockPowerBIClient:
             timezone="Asia/Seoul",
             enabled=bool(variant["enabled"]),
         )
+
+    async def get_report_pages(
+        self, workspace_id: str, report_id: str
+    ) -> list[ReportPageDTO]:
+        """Return mock report pages. 페이지명 선택 UI 개발/시연용 샘플 페이지."""
+        sample = [
+            ("ReportSection1", "개요"),
+            ("ReportSection2", "월별 추이"),
+            ("ReportSection3", "지역별 분석"),
+            ("ReportSection4", "상세 데이터"),
+        ]
+        return [
+            ReportPageDTO(name=name, display_name=display, order=i)
+            for i, (name, display) in enumerate(sample)
+        ]
 
 
 # Structural-typing sanity check: MockPowerBIClient must satisfy the Protocol.

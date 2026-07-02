@@ -1,7 +1,13 @@
-/** 통계 대시보드 (T-39) — 기본 운영 통계 + 사용 통계. 요구사항: R18. */
+/** 통계 대시보드 (T-39) — 기본 운영 통계 + 사용 통계. 요구사항: R18.
+ *
+ * - System_Operator: 전역 통계(전체 레포트).
+ * - Super_User: 관리자가 VIEW_STATS를 부여한 레포트만 드롭다운으로 선택해 조회.
+ */
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { LogIn, Eye, RefreshCw, Mail, AlertTriangle } from 'lucide-react'
 import { statsApi } from '@/api/dashboardApi'
+import { useAuthStore } from '@/stores/useAuthStore'
 
 function StatCard({ label, value, Icon, tone = 'slate' }: {
   label: string; value: number; Icon: typeof LogIn; tone?: 'slate' | 'green' | 'red' | 'blue'
@@ -33,24 +39,75 @@ function ListCard({ title, children }: { title: string; children: React.ReactNod
 }
 
 export default function StatsDashboardPage() {
+  const user = useAuthStore((s) => s.user)
+  const isOperator = (user?.roles ?? []).includes('System_Operator')
+
+  // Super_User는 VIEW_STATS 부여 레포트 목록에서 하나를 선택해 조회
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const reportsQuery = useQuery({
+    queryKey: ['stats-reports'],
+    queryFn: ({ signal }) => statsApi.reports(signal),
+    enabled: !isOperator,
+    staleTime: 60_000,
+  })
+  const statReports = reportsQuery.data ?? []
+
+  // 목록 로드 시 첫 레포트 자동 선택
+  useEffect(() => {
+    if (!isOperator && selectedId === null && statReports.length > 0) {
+      setSelectedId(statReports[0].id)
+    }
+  }, [isOperator, selectedId, statReports])
+
+  const reportId = isOperator ? undefined : (selectedId ?? undefined)
+  const canQuery = isOperator || selectedId !== null
+
   const overviewQuery = useQuery({
-    queryKey: ['stats-overview'],
-    queryFn: ({ signal }) => statsApi.overview(signal),
+    queryKey: ['stats-overview', reportId ?? 'all'],
+    queryFn: ({ signal }) => statsApi.overview(reportId, signal),
+    enabled: canQuery,
     staleTime: 60_000,
   })
   const usageQuery = useQuery({
-    queryKey: ['stats-usage'],
-    queryFn: ({ signal }) => statsApi.usage(signal),
+    queryKey: ['stats-usage', reportId ?? 'all'],
+    queryFn: ({ signal }) => statsApi.usage(reportId, signal),
+    enabled: canQuery,
     staleTime: 60_000,
   })
 
   const o = overviewQuery.data
   const u = usageQuery.data
 
+  // Super_User인데 통계 권한 부여 레포트가 없음
+  const noStatsReports = !isOperator && !reportsQuery.isLoading && statReports.length === 0
+
   return (
     <div className="min-h-screen bg-slate-50 p-6">
-      <h1 className="mb-5 text-xl font-bold text-slate-800">통계 대시보드</h1>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-bold text-slate-800">통계 대시보드</h1>
+        {!isOperator && statReports.length > 0 && (
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            레포트
+            <select
+              value={selectedId ?? ''}
+              onChange={(e) => setSelectedId(e.target.value ? Number(e.target.value) : null)}
+              aria-label="통계 레포트 선택"
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+            >
+              {statReports.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
 
+      {noStatsReports ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-400">
+          통계 조회 권한이 부여된 레포트가 없습니다. 관리자에게 통계 권한을 요청하세요.
+        </div>
+      ) : (
+      <>
       {/* 기본 운영 통계 */}
       {overviewQuery.isLoading || !o ? (
         <p className="text-sm text-slate-400">불러오는 중…</p>
@@ -110,24 +167,9 @@ export default function StatsDashboardPage() {
               ))}
             </ul>
           </ListCard>
-
-          <ListCard title="잡 현황">
-            {u.scoped || !u.mail_jobs || !u.export_jobs ? (
-              <p className="text-sm text-slate-400">권한 범위에서는 표시되지 않습니다.</p>
-            ) : (
-              <dl className="space-y-2 text-sm">
-                <div className="flex justify-between"><dt className="text-slate-500">메일 발송(성공/실패)</dt>
-                  <dd className="font-medium text-slate-700">{u.mail_jobs.succeeded} / {u.mail_jobs.failed}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">Export(성공/실패)</dt>
-                  <dd className="font-medium text-slate-700">{u.export_jobs.succeeded} / {u.export_jobs.failed}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">Refresh 실패</dt>
-                  <dd className="font-medium text-red-600">{u.refresh_failed ?? 0}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">미사용 레포트</dt>
-                  <dd className="font-medium text-slate-700">{u.unused_reports.length}</dd></div>
-              </dl>
-            )}
-          </ListCard>
         </div>
+      )}
+      </>
       )}
     </div>
   )

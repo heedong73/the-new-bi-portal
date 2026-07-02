@@ -5,7 +5,7 @@
  *  - props: runs(RefreshRunOut[]), from(Date), to(Date)
  *  - 리포트명별 그룹핑 → `{ rowIndex, run }` 평면화 (Y축 = 리포트명, 행 높이 28px)
  *  - X축 시간 선형 매핑(px), 1시간 그리드 (GanttXAxis)
- *  - 막대(GanttBar): 상태별 색상, duration 라벨, hover tooltip
+ *  - 막대(GanttBar): 상태별 색상, hover tooltip (소요 시간 등 상세는 tooltip에서)
  *  - NowLine: 현재 시각 세로선(30초 갱신), 진행중 막대 연장과 동일한 nowMs 공유
  *  - 데이터 없으면 ko.gantt.noData 표시
  *

@@ -4,8 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 
 import HomePage from './HomePage'
-import { foldersApi, reportsApi } from '@/api/portalApi'
-import type { FolderTreeNode, ReportSummary } from '@/types/report'
+import { reportsApi } from '@/api/portalApi'
+import type { ReportSummary } from '@/types/report'
 
 const navigateMock = vi.fn()
 vi.mock('react-router-dom', async (orig) => {
@@ -14,29 +14,19 @@ vi.mock('react-router-dom', async (orig) => {
 })
 
 vi.mock('@/api/portalApi', () => ({
-  foldersApi: { tree: vi.fn() },
-  reportsApi: { list: vi.fn(), favorites: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn() },
+  reportsApi: { favorites: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn() },
 }))
 
-const TREE: FolderTreeNode[] = [
-  {
-    id: 1, name: '영업부', folder_type: null, sort_order: 0, report_ids: [10],
-    children: [
-      { id: 2, name: '국내영업', folder_type: null, sort_order: 0, children: [], report_ids: [11] },
-    ],
-  },
-]
-
-const REPORT: ReportSummary = {
-  id: 10, workspace_id: 'ws', report_id: 'rpt', display_name: '월간 매출',
-  description: '월별 매출 현황', category: '영업', folder_id: 1, is_published: true,
+const FAV: ReportSummary = {
+  id: 99, workspace_id: 'ws', report_id: 'rpt', display_name: '즐겨찾기 레포트',
+  description: null, category: null, folder_id: 1, is_published: true, is_favorite: true,
 }
 
-function renderPage() {
+function renderPage(initial = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initial]}>
         <HomePage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -46,51 +36,39 @@ function renderPage() {
 describe('HomePage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(foldersApi.tree).mockResolvedValue(TREE)
-    vi.mocked(reportsApi.list).mockResolvedValue([REPORT])
     vi.mocked(reportsApi.favorites).mockResolvedValue([])
     vi.mocked(reportsApi.addFavorite).mockResolvedValue(undefined as never)
     vi.mocked(reportsApi.removeFavorite).mockResolvedValue(undefined as never)
   })
 
-  it('폴더 트리와 레포트 목록을 렌더링한다', async () => {
+  it('기본 진입 시 레포트 선택 안내 랜딩을 표시한다', async () => {
     renderPage()
-    expect(await screen.findByText('영업부')).toBeInTheDocument()
-    expect(await screen.findByText('국내영업')).toBeInTheDocument()
-    expect(await screen.findByText('월간 매출')).toBeInTheDocument()
-    // 초기엔 전체 레포트 (folder_id 미지정)
-    expect(reportsApi.list).toHaveBeenCalledWith(null, expect.anything())
+    expect(await screen.findByText('레포트를 선택하세요')).toBeInTheDocument()
   })
 
-  it('폴더를 선택하면 해당 folder_id로 레포트를 재조회한다', async () => {
+  it('즐겨찾기가 있으면 기본 화면에 즐겨찾기 섹션을 렌더링한다', async () => {
+    vi.mocked(reportsApi.favorites).mockResolvedValue([FAV])
     renderPage()
-    fireEvent.click(await screen.findByText('영업부'))
-    await waitFor(() => expect(reportsApi.list).toHaveBeenCalledWith(1, expect.anything()))
-  })
-
-  it('레포트 카드 클릭 시 상세로 이동한다', async () => {
-    renderPage()
-    fireEvent.click(await screen.findByText('월간 매출'))
-    expect(navigateMock).toHaveBeenCalledWith('/reports/10')
-  })
-
-  it('레포트가 없으면 안내 문구를 표시한다', async () => {
-    vi.mocked(reportsApi.list).mockResolvedValue([])
-    renderPage()
-    expect(await screen.findByText('조회 가능한 레포트가 없습니다.')).toBeInTheDocument()
-  })
-
-  it('전체 보기에서 즐겨찾기 섹션을 렌더링한다', async () => {
-    vi.mocked(reportsApi.favorites).mockResolvedValue([{ ...REPORT, id: 99, display_name: '즐겨찾기 레포트', is_favorite: true }])
-    renderPage()
-    expect(await screen.findByText('즐겨찾기')).toBeInTheDocument()
     expect(await screen.findByText('즐겨찾기 레포트')).toBeInTheDocument()
   })
 
-  it('별 토글 클릭 시 즐겨찾기 추가를 호출한다', async () => {
-    renderPage()
-    await screen.findByText('월간 매출')
-    fireEvent.click(screen.getByRole('button', { name: '즐겨찾기 추가' }))
-    await waitFor(() => expect(reportsApi.addFavorite).toHaveBeenCalledWith(10))
+  it('즐겨찾기 보기에서 카드 클릭 시 단일 레포트 상세로 이동한다', async () => {
+    vi.mocked(reportsApi.favorites).mockResolvedValue([FAV])
+    renderPage('/?fav=1')
+    fireEvent.click(await screen.findByText('즐겨찾기 레포트'))
+    expect(navigateMock).toHaveBeenCalledWith('/reports/99')
+  })
+
+  it('즐겨찾기 보기에서 즐겨찾기가 없으면 안내 문구를 표시한다', async () => {
+    renderPage('/?fav=1')
+    expect(await screen.findByText(/즐겨찾기한 레포트가 없습니다/)).toBeInTheDocument()
+  })
+
+  it('별 토글 클릭 시 즐겨찾기 해제를 호출한다', async () => {
+    vi.mocked(reportsApi.favorites).mockResolvedValue([FAV])
+    renderPage('/?fav=1')
+    await screen.findByText('즐겨찾기 레포트')
+    fireEvent.click(screen.getByRole('button', { name: '즐겨찾기 해제' }))
+    await waitFor(() => expect(reportsApi.removeFavorite).toHaveBeenCalledWith(99))
   })
 })

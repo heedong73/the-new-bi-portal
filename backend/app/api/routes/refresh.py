@@ -4,13 +4,14 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.core.deps import SessionDep, require_menu
-from app.models.refresh import RefreshSchedule
+from app.core.timezone import get_app_tz
+from app.models.refresh import RefreshSchedule, RefreshRun
 from app.models.report import Dataset
-from app.schemas.refresh import DatasetOut, RefreshRunOut, ScheduleOut, SummaryOut
+from app.schemas.refresh import DatasetOut, LatestDateOut, RefreshRunOut, ScheduleOut, SummaryOut
 from app.services.refresh_query import query_refresh_history, query_refresh_timetable
 from app.services.summary import build_summary
 
@@ -56,6 +57,26 @@ async def summary(
 ):
     runs = await query_refresh_history(db, settings.POWERBI_WORKSPACE_ID, target_date=date)
     return build_summary(runs)
+
+
+@router.get("/api/refresh-latest-date", response_model=LatestDateOut)
+async def refresh_latest_date(
+    db: SessionDep,
+    current=Depends(require_menu("monitoring_refresh")),
+):
+    """데이터가 있는 가장 최근 일자(APP_TZ 기준)를 반환한다.
+
+    화면 최초 진입 시 기본 선택 일자로 사용한다(오늘 갱신이 없어도 최근 실행일이
+    바로 표시되도록). 이력이 없으면 date=None.
+    """
+    max_utc = await db.scalar(
+        select(func.max(RefreshRun.start_time_utc)).where(
+            RefreshRun.workspace_id == settings.POWERBI_WORKSPACE_ID
+        )
+    )
+    if max_utc is None:
+        return LatestDateOut(date=None)
+    return LatestDateOut(date=max_utc.astimezone(get_app_tz()).date().isoformat())
 
 
 @router.get("/api/datasets", response_model=list[DatasetOut])

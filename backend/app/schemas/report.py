@@ -5,17 +5,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-class ReportCreate(BaseModel):
-    """ID 수동 등록 요청."""
-    workspace_id: str = Field(min_length=1, max_length=128)
-    report_id: str = Field(min_length=1, max_length=128)
-    dataset_id: str | None = Field(default=None, max_length=128)
-    report_name: str | None = Field(default=None, max_length=255)
-    display_name: str | None = Field(default=None, max_length=255)
-    description: str | None = Field(default=None, max_length=500)
-    author_label: str | None = Field(default=None, max_length=255)
-    folder_id: int | None = None
-
 class ReportUpdate(BaseModel):
     """레포트 메타데이터 수정 요청 (부분)."""
     display_name: str | None = Field(default=None, max_length=255)
@@ -56,12 +45,3 @@ class ReportResponse(BaseModel):
     created_by_label: str | None = None
     created_at: datetime | None = None
     can_manage: bool = False  # MANAGE_REPORT 권한(레포트 교체 가능) 여부
-
-
-class WorkspaceReportItem(BaseModel):
-    """라이브 PBI 워크스페이스 레포트 (등록 화면 선택용)."""
-    workspace_id: str
-    report_id: str
-    report_name: str
-    dataset_id: str | None = None
-    dataset_name: str | None = None

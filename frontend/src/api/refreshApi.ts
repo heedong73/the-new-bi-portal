@@ -29,6 +29,16 @@ export interface CollectNowResult {
   taskId?: string;
 }
 
+/** `GET /api/collect-status` 응답 — 현재 수집 진행 여부(분산 락 점유). */
+export interface CollectStatusResult {
+  running: boolean;
+}
+
+/** `GET /api/refresh-latest-date` 응답 — 데이터가 있는 가장 최근 일자(APP_TZ). */
+export interface LatestDateResult {
+  date: string | null; // "YYYY-MM-DD"
+}
+
 /**
  * `/api/refresh-timetable` 호출에 사용하는 필터 입력.
  * 필터 store 상태(`from/to/status/reportId/datasetId`)를 그대로 받을 수 있는 형태다.
@@ -118,6 +128,16 @@ export function postCollectNow(): Promise<CollectNowResult> {
   return apiClient.post<CollectNowResult>("/api/collect-now");
 }
 
+/** `GET /api/collect-status` — 현재 수집 진행 여부(진행 배너 폴링용). */
+export function getCollectStatus(signal?: AbortSignal): Promise<CollectStatusResult> {
+  return apiClient.get<CollectStatusResult>("/api/collect-status", { signal });
+}
+
+/** `GET /api/refresh-latest-date` — 데이터가 있는 가장 최근 일자(기본 선택 일자용). */
+export function getLatestDate(signal?: AbortSignal): Promise<LatestDateResult> {
+  return apiClient.get<LatestDateResult>("/api/refresh-latest-date", { signal });
+}
+
 export const refreshApi = {
   getTimetable,
   getRefreshHistory,
@@ -126,6 +146,8 @@ export const refreshApi = {
   getDatasets,
   getSchedules,
   postCollectNow,
+  getCollectStatus,
+  getLatestDate,
 };
 
 export default refreshApi;

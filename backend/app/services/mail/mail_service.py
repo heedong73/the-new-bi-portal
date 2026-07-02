@@ -25,6 +25,7 @@ from app.services.mail.template import (
     InlineImage,
     assemble_body,
     default_context,
+    html_to_text,
     render_subject,
 )
 
@@ -56,8 +57,10 @@ def build_message(
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = subject
 
-    # 평문 fallback + HTML 본문
-    msg.set_content("이 메일은 HTML 형식입니다. HTML을 지원하는 클라이언트에서 확인해 주세요.")
+    # 평문 대체본(text/plain): 모바일 그룹웨어 앱 알림/미리보기에 노출되므로
+    # 본문 텍스트(서식 제거)를 넣고, 텍스트가 없으면 제목을 사용한다.
+    plain = html_to_text(html_body) or subject
+    msg.set_content(plain)
     msg.add_alternative(html_body, subtype="html")
 
     # HTML 파트에 이미지를 related 로 첨부 (cid 연결)
@@ -119,9 +122,11 @@ async def deliver_mail_job(
     schedule_title: str,
     recipients: list[str],
     attachments: list[MailAttachment],
+    sender_email: str | None = None,
 ) -> bool:
     """메일 본문 조립 → 발송(재시도) → Audit 기록. 성공 시 True.
 
+    sender_email 이 지정되면 그 주소를 From 으로 쓰고, 없으면 서버 기본값(SMTP_FROM).
     수신자가 없으면 발송하지 않고 실패 처리한다.
     """
     if not recipients:
@@ -150,7 +155,7 @@ async def deliver_mail_job(
     message = build_message(
         subject=subject,
         html_body=html_body,
-        sender=settings.SMTP_FROM,
+        sender=sender_email or settings.SMTP_FROM,
         recipients=recipients,
         attachments=attachments,
     )

@@ -16,15 +16,28 @@ from app.models.auth import Department, Role, User, UserRole
 from app.services.auth.hr_authenticator import HRProfile
 
 async def _get_or_create_department(db: AsyncSession, profile: HRProfile) -> int | None:
-    """dept_id로 department 조회/생성. dept_id 없으면 None."""
+    """dept_id로 department 조회/생성. dept_id 없으면 None.
+
+    - 신규: name = 인사 한글명(dept_name) 우선, 없으면 dept_id(코드).
+    - 기존: 저장된 name이 코드(external_id)와 같고 인사 한글명이 확보되면 한글명으로 갱신
+      (과거 코드로 저장된 부서명 백필). 관리자가 바꾼 이름은 덮어쓰지 않음.
+    """
     if not profile.dept_id:
         return None
+    resolved_name = profile.dept_name or profile.dept_id
     dept = await db.scalar(
         select(Department).where(Department.external_id == profile.dept_id)
     )
     if dept is None:
-        dept = Department(external_id=profile.dept_id, name=profile.dept_id)
+        dept = Department(external_id=profile.dept_id, name=resolved_name)
         db.add(dept)
+        await db.flush()
+    elif (
+        profile.dept_name
+        and dept.name == dept.external_id
+        and dept.name != profile.dept_name
+    ):
+        dept.name = profile.dept_name
         await db.flush()
     return dept.id
 

@@ -3,10 +3,10 @@
  */
 import { useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, ChevronDown, Building2, Search, Users2 } from 'lucide-react'
+import { ChevronRight, ChevronDown, Building2, Search, Users2, RefreshCcw, X } from 'lucide-react'
 
 import { orgApi, groupsApi, usersApi } from '@/api/adminApi'
-import type { OrgMember, OrgNode } from '@/types/admin'
+import type { OrgMember, OrgNode, TeamGroupSyncResult } from '@/types/admin'
 
 const ROLE_LEVELS = [
   { code: 'General_User', label: '일반 사용자' },
@@ -22,6 +22,7 @@ export default function UsersPage() {
   const [appliedSearch, setAppliedSearch] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [roleDraft, setRoleDraft] = useState<Record<string, string>>({})
+  const [syncPlan, setSyncPlan] = useState<TeamGroupSyncResult | null>(null)
 
   const companiesQuery = useQuery({
     queryKey: ['org-companies'],
@@ -72,6 +73,20 @@ export default function UsersPage() {
     mutationFn: ({ userId, isActive }: { userId: number; isActive: boolean }) =>
       usersApi.setStatus(userId, isActive),
     onSuccess: invalidateMembers,
+  })
+
+  // 팀 그룹 동기화: 미리보기(apply=false) → 적용(apply=true)
+  const previewSyncMutation = useMutation({
+    mutationFn: () => orgApi.syncTeamGroups(selectedDept!.id, false),
+    onSuccess: (plan) => setSyncPlan(plan),
+  })
+  const applySyncMutation = useMutation({
+    mutationFn: () => orgApi.syncTeamGroups(selectedDept!.id, true),
+    onSuccess: () => {
+      setSyncPlan(null)
+      invalidateMembers()
+      qc.invalidateQueries({ queryKey: ['admin-groups'] })
+    },
   })
 
   const companies = companiesQuery.data ?? []
@@ -179,12 +194,23 @@ export default function UsersPage() {
               />
             </div>
             {selectedDept && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                부서: {selectedDept.name}
-                <button type="button" onClick={() => setSelectedDept(null)} className="ml-1 text-blue-400 hover:text-blue-600">×</button>
-              </span>
+              <>
+                <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                  부서: {selectedDept.name}
+                  <button type="button" onClick={() => setSelectedDept(null)} className="ml-1 text-blue-400 hover:text-blue-600">×</button>
+                </span>
+                <button type="button" onClick={() => previewSyncMutation.mutate()} disabled={previewSyncMutation.isPending}
+                  title="이 조직 하위 팀들의 권한 그룹을 자동 생성하고 구성원을 현재 조직도와 동기화합니다"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-blue-600 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50">
+                  <RefreshCcw className="h-3.5 w-3.5" /> {previewSyncMutation.isPending ? '분석 중…' : '팀 그룹 동기화'}
+                </button>
+              </>
             )}
           </div>
+
+          {previewSyncMutation.isError && (
+            <p role="alert" className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">팀 그룹 분석에 실패했습니다. 다시 시도하세요.</p>
+          )}
 
           {Object.keys(roleDraft).length > 0 && (
             <div className="mb-3 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
@@ -248,6 +274,62 @@ export default function UsersPage() {
           <p className="mt-2 text-right text-xs text-slate-400">총 {members.length}명{members.length >= 500 ? ' (최대 500 표시)' : ''}</p>
         </div>
       </div>
+
+      {/* 팀 권한그룹 동기화 미리보기 모달 */}
+      {syncPlan && (
+        <div className="fixed inset-0 z-20 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
+          <div className="my-10 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-800">팀 권한그룹 동기화 미리보기</h3>
+              <button type="button" aria-label="닫기" onClick={() => setSyncPlan(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+
+            <div className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              팀 {syncPlan.groups_total}개 · 신규 그룹 {syncPlan.groups_to_create}개 · 추가 {syncPlan.members_to_add}명 · 제거 {syncPlan.members_to_remove}명 · 자동등록 {syncPlan.to_register}명
+            </div>
+            {syncPlan.members_to_remove > 0 && (
+              <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                완전 동기화: 조직도에서 빠진 인원 {syncPlan.members_to_remove}명이 해당 팀 그룹에서 제거됩니다. (수동 생성 그룹은 영향 없음)
+              </p>
+            )}
+
+            {syncPlan.teams.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-400">이 조직 하위에 구성원이 있는 팀이 없습니다.</p>
+            ) : (
+              <ul className="max-h-[50vh] space-y-1.5 overflow-y-auto">
+                {syncPlan.teams.map((t) => (
+                  <li key={t.dept_id} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-slate-800">{t.group_name}</span>
+                      {t.created && <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-xs text-blue-600">신규</span>}
+                      {t.renamed_from && <span className="text-xs text-slate-400">(이전: {t.renamed_from})</span>}
+                      <span className="ml-auto text-xs text-slate-400">유지 {t.keep}</span>
+                      {t.add.length > 0 && <span className="text-xs text-green-600">+{t.add.length}</span>}
+                      {t.remove.length > 0 && <span className="text-xs text-red-600">-{t.remove.length}</span>}
+                    </div>
+                    {(t.add.length > 0 || t.remove.length > 0) && (
+                      <div className="mt-1 space-y-0.5 text-xs text-slate-500">
+                        {t.add.length > 0 && <div><span className="text-green-600">추가</span> {t.add.map((a) => a.name).join(', ')}</div>}
+                        {t.remove.length > 0 && <div><span className="text-red-600">제거</span> {t.remove.map((a) => a.name).join(', ')}</div>}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {applySyncMutation.isError && <p role="alert" className="mt-3 text-sm text-red-600">적용에 실패했습니다. 다시 시도하세요.</p>}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setSyncPlan(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">취소</button>
+              <button type="button" onClick={() => applySyncMutation.mutate()} disabled={applySyncMutation.isPending || syncPlan.teams.length === 0}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">
+                {applySyncMutation.isPending ? '적용 중…' : '적용'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

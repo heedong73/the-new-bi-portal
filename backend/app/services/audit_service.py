@@ -17,6 +17,7 @@ _ALLOWED_META_KEYS = frozenset({
     "mail_schedule_id", "mail_job_id", "export_id", "folder_id",
     "endpoint", "status_code", "error_type", "reason",
     "before", "after", "target", "count",
+    "request_id", "request_type", "status",
 })
 
 # 절대 기록 금지 (방어적 차단)

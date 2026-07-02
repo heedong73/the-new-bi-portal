@@ -28,11 +28,15 @@ export default function PowerBIEmbed({ embed, onReport }: Props) {
         accessToken: embed.embedToken,
         tokenType: models.TokenType.Embed,
         settings: {
+          layoutType: models.LayoutType.Custom,
+          customLayout: {
+            displayOption: models.DisplayOption.ActualSize,
+          },
           panes: {
             filters: { expanded: false, visible: true },
-            pageNavigation: { visible: true },
+            pageNavigation: { visible: false },
           },
-          background: models.BackgroundType.Transparent,
+          background: models.BackgroundType.Default,
         },
       }}
       cssClassName="h-full w-full"

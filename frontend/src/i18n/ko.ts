@@ -125,9 +125,11 @@ export const table = {
 /** 차트 영역 (Requirement 17.1) */
 export const charts = {
   longestRun: "가장 오래 걸린 리포트",
+  longestRunTop: "가장 오래 걸린 리포트 TOP 5",
   durationByReport: "리포트별 소요 시간",
   hourlyTrend: "시간대별 추이",
   statusRatio: "성공/실패 비율",
+  failedRuns: "실패·경고 리포트",
 } as const;
 
 /** 우측 실행 흐름 패널 (Requirement 16) */

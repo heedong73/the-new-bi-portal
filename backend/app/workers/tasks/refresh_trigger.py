@@ -14,6 +14,7 @@ import redis.asyncio as aioredis
 from app.core.config import settings
 from app.services.powerbi.lock import acquire_lock, release_lock
 from app.services.powerbi.token_service import TokenService, MockTokenService
+from app.workers.async_runner import run_async
 from app.workers.celery_app import celery_app
 
 _REFRESH_JOB_TYPE = "refresh"
@@ -55,5 +56,5 @@ async def _trigger(workspace_id: str, dataset_id: str) -> dict[str, Any]:
 
 @celery_app.task(name="bip.refresh_trigger")
 def refresh_trigger(workspace_id: str, dataset_id: str, user_id: int | None = None) -> dict[str, Any]:
-    """수동 새로고침 작업 진입점 (sync task → asyncio.run)."""
-    return asyncio.run(_trigger(workspace_id, dataset_id))
+    """수동 새로고침 작업 진입점 (sync task → 지속 루프 러너)."""
+    return run_async(_trigger(workspace_id, dataset_id))

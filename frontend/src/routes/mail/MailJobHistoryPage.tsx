@@ -30,7 +30,7 @@ export default function MailJobHistoryPage() {
   const jobs = jobsQuery.data ?? []
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
+    <div>
       <h1 className="mb-5 text-xl font-bold text-slate-800">메일 발송 이력</h1>
       {jobsQuery.isLoading ? (
         <p className="text-sm text-slate-400">불러오는 중…</p>

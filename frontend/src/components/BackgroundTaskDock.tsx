@@ -7,16 +7,32 @@ import { Loader2, CheckCircle2, AlertTriangle, X } from 'lucide-react'
 
 import { reportAdminApi } from '@/api/reportAdminApi'
 import { reportsApi } from '@/api/portalApi'
+import { refreshApi } from '@/api/refreshApi'
 import { useTaskStore, type BgTask } from '@/stores/useTaskStore'
 
 const KIND_LABEL: Record<BgTask['kind'], string> = {
   pbix_import: '레포트 게시',
   pbix_replace: '레포트 업데이트',
   refresh: '새로고침',
+  collect: '데이터 수집',
 }
+
+/** 새로고침 후 복원되어 떠 있는 완료(success) 알림을 잠깐 보여준 뒤 자동 정리하는 지연(ms). */
+const RESTORED_DONE_DISMISS_MS = 6000
 
 export default function BackgroundTaskDock() {
   const tasks = useTaskStore((s) => s.tasks)
+
+  // 새로고침 복원 시점에 이미 완료(success)인 알림은 잠깐 노출 후 정리한다.
+  // (라이브로 완료되는 작업은 각 행에서 처리하므로 마운트 시점 항목만 대상)
+  useEffect(() => {
+    const initial = useTaskStore.getState().tasks.filter((t) => t.status === 'success')
+    if (initial.length === 0) return
+    const { removeTask } = useTaskStore.getState()
+    const timers = initial.map((t) => setTimeout(() => removeTask(t.id), RESTORED_DONE_DISMISS_MS))
+    return () => timers.forEach(clearTimeout)
+  }, [])
+
   if (tasks.length === 0) return null
 
   return (
@@ -40,6 +56,7 @@ function TaskRow({ task }: { task: BgTask }) {
   const removeTask = useTaskStore((s) => s.removeTask)
 
   if (task.kind === 'refresh') return <RefreshTaskRow task={task} qc={qc} updateTask={updateTask} removeTask={removeTask} />
+  if (task.kind === 'collect') return <CollectTaskRow task={task} qc={qc} updateTask={updateTask} removeTask={removeTask} />
   return <ImportTaskRow task={task} qc={qc} updateTask={updateTask} removeTask={removeTask} />
 }
 
@@ -134,6 +151,55 @@ function RefreshTaskRow({ task, qc, updateTask, removeTask }: RowProps) {
   return <TaskRowView task={task} onClose={() => removeTask(task.id)} />
 }
 
+const COLLECT_STARTUP_GRACE_MS = 12_000
+const COLLECT_SAFETY_TIMEOUT_MS = 5 * 60_000
+
+function CollectTaskRow({ task, qc, updateTask, removeTask }: RowProps) {
+  const statusQuery = useQuery({
+    queryKey: ['bg-collect', task.id],
+    queryFn: ({ signal }) => refreshApi.getCollectStatus(signal),
+    enabled: task.status === 'pending',
+    refetchInterval: () => (task.status === 'pending' ? 3000 : false),
+  })
+
+  useEffect(() => {
+    if (task.status !== 'pending') return
+    const data = statusQuery.data as { running?: boolean } | undefined
+    if (data === undefined) return
+    const elapsed = task.startedAt ? Date.now() - task.startedAt : 0
+    const running = !!data.running
+
+    // 안전 타임아웃: 오래 진행 미확정(락 장시간 유지/워커 지연)이면 정리
+    if (elapsed > COLLECT_SAFETY_TIMEOUT_MS) {
+      updateTask(task.id, { status: 'success', message: '요청됨 (반영까지 시간이 걸릴 수 있어요)' })
+      const id = task.id
+      setTimeout(() => removeTask(id), 6000)
+      return
+    }
+
+    if (running) {
+      // 진행 중(락 점유)을 한 번이라도 관측 → 이후 해제 시 완료로 판정
+      if (!task.seenRunning) updateTask(task.id, { seenRunning: true })
+      return
+    }
+
+    // running === false: 진행 중을 봤거나 시작 유예를 지났으면 완료로 간주
+    const done = task.seenRunning || elapsed > COLLECT_STARTUP_GRACE_MS
+    if (done) {
+      updateTask(task.id, { status: 'success', message: '완료' })
+      qc.invalidateQueries({ queryKey: ['refresh-timetable'] })
+      qc.invalidateQueries({ queryKey: ['refresh-history'] })
+      qc.invalidateQueries({ queryKey: ['summary'] })
+      const id = task.id
+      setTimeout(() => removeTask(id), 5000)
+    }
+    // else: 락 미획득(시작 대기) — 계속 폴링한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusQuery.data, statusQuery.dataUpdatedAt])
+
+  return <TaskRowView task={task} onClose={() => removeTask(task.id)} />
+}
+
 function TaskRowView({ task, onClose }: { task: BgTask; onClose: () => void }) {
   return (
     <li className="flex items-start gap-2 px-3 py-2.5">
@@ -146,7 +212,12 @@ function TaskRowView({ task, onClose }: { task: BgTask; onClose: () => void }) {
         <p className="truncate text-sm font-medium text-slate-700">{task.label}</p>
         <p className="text-xs text-slate-400">
           {KIND_LABEL[task.kind]} ·{' '}
-          {task.status === 'pending' && (task.kind === 'refresh' ? '새로고침 중…' : '게시중…')}
+          {task.status === 'pending' &&
+            (task.kind === 'refresh'
+              ? '새로고침 중…'
+              : task.kind === 'collect'
+                ? '수집 중…'
+                : '게시중…')}
           {task.status === 'success' && (task.message ?? '완료')}
           {task.status === 'error' && (task.message ? `실패: ${task.message}` : '실패')}
         </p>

@@ -1,6 +1,7 @@
 from datetime import datetime
+from datetime import date as date_type
 from sqlalchemy import (
-    String, Boolean, BigInteger, Integer, Text, ForeignKey,
+    String, Boolean, BigInteger, Integer, Text, Date, ForeignKey,
     UniqueConstraint, CheckConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -18,11 +19,20 @@ class MailSchedule(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     subject_template: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # 보내는 사람(From) 주소. 비우면 서버 기본값(settings.SMTP_FROM) 사용.
+    sender_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     body_header: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_footer: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_width: Mapped[str | None] = mapped_column(String(32), nullable=True)
     image_resize_px: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cron_expr: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 사용자 친화 스케줄 입력 (cron_expr 는 이로부터 파생 저장)
+    schedule_freq: Mapped[str | None] = mapped_column(String(16), nullable=True)  # daily/weekly/monthly
+    schedule_time: Mapped[str | None] = mapped_column(String(8), nullable=True)   # 'HH:MM'
+    schedule_days: Mapped[str | None] = mapped_column(String(32), nullable=True)  # weekly: cron 요일 CSV '1,3,5'
+    schedule_day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)  # monthly: 1~31
+    start_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)  # 발송 시작일(이전엔 발송 안 함)
+    end_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)    # 발송 종료일(이후엔 발송 안 함)
     export_format: Mapped[str] = mapped_column(String(16), default="PNG", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # 발송 제외 정책 (T-공휴일): 주말/공휴일에는 발송하지 않음 (스케줄별 on/off)

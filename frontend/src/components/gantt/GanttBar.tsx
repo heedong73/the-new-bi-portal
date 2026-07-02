@@ -1,9 +1,10 @@
 /**
- * 개별 Refresh_Run 막대 (Requirements 15.2, 15.3, 15.4, 15.6).
+ * 개별 Refresh_Run 막대 (Requirements 15.2, 15.4, 15.6).
  *
  * design.md "Refresh Timeline(Gantt) 컴포넌트 설계 결정":
  *  - 상태별 색상: success/failed/in_progress(+사선 패턴)/unknown
- *  - duration 라벨: 막대 폭 ≥ 30px면 막대 안, 미만이면 막대 오른쪽 (formatDuration)
+ *  - 소요 시간 등 상세 정보는 막대 위 라벨 대신 hover tooltip으로만 노출한다
+ *    (막대 라벨은 타임테이블이 지저분해져 제거 — 사용자 피드백).
  *  - hover 시 tooltip 트리거(콜백으로 상위에 위임)
  *  - 진행중 막대 연장은 computeBarGeometry(geometry 계산)에서 처리
  *
@@ -12,10 +13,8 @@
  */
 import { memo } from "react";
 import type { RefreshRunOut } from "@/types/refresh";
-import { formatDuration } from "@/utils/duration";
 import {
   BAR_VERTICAL_PADDING,
-  DURATION_LABEL_MIN_WIDTH,
   IN_PROGRESS_PATTERN_ID,
   ROW_HEIGHT,
   STATUS_COLORS,
@@ -34,14 +33,10 @@ export interface GanttBarProps {
 }
 
 function GanttBarImpl({ run, geometry, rowIndex, onHover, onLeave }: GanttBarProps) {
-  const { x, width, displayDurationSeconds } = geometry;
+  const { x, width } = geometry;
   const barTop = rowIndex * ROW_HEIGHT + BAR_VERTICAL_PADDING;
   const barHeight = ROW_HEIGHT - BAR_VERTICAL_PADDING * 2;
   const color = STATUS_COLORS[run.status];
-
-  const label = formatDuration(displayDurationSeconds);
-  const labelInside = width >= DURATION_LABEL_MIN_WIDTH;
-  const labelY = barTop + barHeight / 2;
 
   return (
     <g
@@ -72,32 +67,7 @@ function GanttBarImpl({ run, geometry, rowIndex, onHover, onLeave }: GanttBarPro
           fill={`url(#${IN_PROGRESS_PATTERN_ID})`}
         />
       )}
-      {/* duration 라벨 (Requirement 15.3) */}
-      {labelInside ? (
-        <text
-          x={x + width / 2}
-          y={labelY}
-          textAnchor="middle"
-          dominantBaseline="central"
-          fontSize={10}
-          fill="#ffffff"
-          style={{ pointerEvents: "none", userSelect: "none" }}
-        >
-          {label}
-        </text>
-      ) : (
-        <text
-          x={x + width + 4}
-          y={labelY}
-          textAnchor="start"
-          dominantBaseline="central"
-          fontSize={10}
-          fill="#475569"
-          style={{ pointerEvents: "none", userSelect: "none" }}
-        >
-          {label}
-        </text>
-      )}
+      {/* 소요 시간 라벨은 제거함 — 상세 정보는 hover tooltip에서 확인 */}
     </g>
   );
 }

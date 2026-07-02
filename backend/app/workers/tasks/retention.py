@@ -20,6 +20,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.log import AuditLog
 from app.models.mail import ReportImagePath
 from app.services.storage_service import get_storage_service
+from app.workers.async_runner import run_async
 from app.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -75,4 +76,4 @@ async def _run_retention() -> dict[str, Any]:
 @celery_app.task(name="bip.retention_cleanup")
 def retention_cleanup() -> dict[str, Any]:
     """Beat 진입점: 이미지/감사 로그 보존 정리."""
-    return asyncio.run(_run_retention())
+    return run_async(_run_retention())

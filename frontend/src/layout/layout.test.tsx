@@ -14,6 +14,11 @@ vi.mock('@/api/authApi', () => ({
   authApi: { me: vi.fn(), logout: vi.fn() },
 }))
 
+// AppLayout이 SidebarFolderTree를 통해 폴더 트리를 조회하므로 mock 처리.
+vi.mock('@/api/portalApi', () => ({
+  foldersApi: { tree: vi.fn().mockResolvedValue([]) },
+}))
+
 function wrap(initial: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return render(
@@ -60,7 +65,7 @@ describe('AppLayout 메뉴 (역할별)', () => {
   it('System_Operator는 관리자/통계 메뉴를 본다', async () => {
     vi.mocked(authApi.me).mockResolvedValue(OPERATOR)
     wrap('/')
-    expect(await screen.findByText('관리자')).toBeInTheDocument()
+    expect(await screen.findByText('관리자 콘솔')).toBeInTheDocument()
     expect(screen.getByText('통계')).toBeInTheDocument()
   })
 
@@ -68,7 +73,7 @@ describe('AppLayout 메뉴 (역할별)', () => {
     vi.mocked(authApi.me).mockResolvedValue(GENERAL)
     wrap('/')
     expect(await screen.findByText('레포트')).toBeInTheDocument()
-    expect(screen.queryByText('관리자')).not.toBeInTheDocument()
+    expect(screen.queryByText('관리자 콘솔')).not.toBeInTheDocument()
     expect(screen.queryByText('통계')).not.toBeInTheDocument()
   })
 

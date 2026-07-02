@@ -7,28 +7,34 @@ from __future__ import annotations
 
 import os
 import uuid
+import json
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
 from celery.result import AsyncResult
 from sqlalchemy import select, func, delete
 
 from app.core.config import settings
-from app.core.constants import AuditAction, RoleCode, PermissionAction
-from app.core.deps import SessionDep, require_menu, require_report_permission, get_current_user, PowerBIClientDep
+from app.core.constants import AuditAction, RoleCode, PermissionAction, SubjectType
+from app.core.deps import SessionDep, require_menu, require_report_permission, get_current_user, PowerBIClientDep, RedisDep
 from app.core.errors import NotFoundError, ConflictError, ValidationError, PermissionDeniedError
-from app.models.report import Report, Workspace, ReportFavorite
+from app.models.report import Report, Workspace, ReportFavorite, ReportPermission
 from app.models.mail import MailSchedule
 from app.workers.celery_app import celery_app
 from app.workers.tasks.pbix_import import pbix_import as pbix_import_task
 from app.schemas.report import (
-    ReportCreate, ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse,
+    ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse,
 )
+from app.services.powerbi.client import ReportPageDTO
 from app.services.audit_service import append_audit
 from app.services import permission_service
+from app.services.refresh_query import get_schedule_info
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 _require_operator = require_menu("admin_reports")
+
+# 라이브 새로고침 상태 캐시 TTL(초). 동시 뷰어의 upstream REST 호출을 합쳐 throttling을 줄인다.
+LIVE_STATUS_CACHE_TTL = 20
 
 def _creator_label(op: dict) -> str | None:
     """생성자 라벨 '이름(사번)' 포맷. 이름 없으면 사번만."""
@@ -117,6 +123,23 @@ async def list_favorites(db: SessionDep, current=Depends(get_current_user)):
     return out
 
 
+@router.get("/{report_id}/pages", response_model=list[ReportPageDTO])
+async def list_report_pages(
+    report_id: int,
+    db: SessionDep,
+    client: PowerBIClientDep,
+    _op=Depends(require_menu("mail_schedules")),
+):
+    """레포트의 Power BI 페이지 목록(메일 스케줄 페이지 선택용).
+
+    Export to File 에 쓰는 내부 page name 과 사람이 보는 displayName 을 함께 반환한다.
+    """
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise NotFoundError("레포트를 찾을 수 없습니다.")
+    return await client.get_report_pages(report.workspace_id, report.report_id)
+
+
 @router.put("/{report_id}/favorite", status_code=204)
 async def add_favorite(report_id: int, db: SessionDep, current=Depends(get_current_user)):
     """즐겨찾기 추가 (멱등). VIEW 권한 필요."""
@@ -191,36 +214,25 @@ async def import_status(task_id: str, _op=Depends(_require_operator)):
         payload["error"] = str(res.result)
     return payload
 
-@router.post("", response_model=ReportResponse, status_code=201)
-async def create_report(body: ReportCreate, db: SessionDep, op=Depends(_require_operator)):
-    """ID 수동 등록 + workspace auto-upsert."""
-    dup = await db.scalar(
-        select(Report).where(
-            Report.workspace_id == body.workspace_id, Report.report_id == body.report_id
+async def _grant_creator_view_stats(db: SessionDep, report_id: int, creator_user_id: int | None) -> None:
+    """레포트 작성자에게 통계 조회 권한(VIEW_STATS)을 부여(멱등). 관리자가 이후 회수/수정 가능."""
+    if not creator_user_id:
+        return
+    exists = await db.scalar(
+        select(ReportPermission).where(
+            ReportPermission.report_id == report_id,
+            ReportPermission.subject_type == SubjectType.USER.value,
+            ReportPermission.subject_id == creator_user_id,
+            ReportPermission.permission == PermissionAction.VIEW_STATS.value,
         )
     )
-    if dup is not None:
-        raise ConflictError("이미 등록된 레포트입니다.")
+    if exists is None:
+        db.add(ReportPermission(
+            report_id=report_id, subject_type=SubjectType.USER.value,
+            subject_id=creator_user_id, permission=PermissionAction.VIEW_STATS.value,
+        ))
+        await db.flush()
 
-    await _upsert_workspace(db, body.workspace_id)
-
-    report = Report(
-        workspace_id=body.workspace_id, report_id=body.report_id,
-        dataset_id=body.dataset_id, report_name=body.report_name,
-        display_name=body.display_name, description=body.description,
-        folder_id=body.folder_id, is_published=True,
-        author_label=body.author_label,
-        created_by_user_id=op.get("user_id"),
-        created_by_label=_creator_label(op),
-    )
-    db.add(report)
-    await db.flush()
-    await append_audit(db, action=AuditAction.REPORT_CREATE, result="success",
-                       actor_user_id=op["user_id"], actor_label=op["emp_no"],
-                       resource_type="report", resource_id=str(report.id),
-                       meta={"report_id": report.id, "workspace_id": body.workspace_id})
-    await db.commit()
-    return _to_response(report)
 
 @router.patch("/{report_id}", response_model=ReportResponse)
 async def update_report(report_id: int, body: ReportUpdate, db: SessionDep, op=Depends(_require_operator)):
@@ -526,11 +538,13 @@ async def live_refresh_status(
     report_id: int,
     db: SessionDep,
     client: PowerBIClientDep,
+    redis: RedisDep,
     current=Depends(require_report_permission(PermissionAction.VIEW)),
 ):
     """Power BI에 직접 최신 새로고침 상태를 조회(수집기/DB와 무관, 실시간).
 
     진행 중 판정용으로 도크가 폴링한다. terminal=Completed/Failed/Disabled/Cancelled.
+    dataset 단위 Redis 캐시(TTL 20초)로 동시 뷰어의 upstream REST 호출을 합쳐 부하/쓰로틀을 줄인다.
     """
     report = await db.scalar(select(Report).where(Report.id == report_id))
     if report is None:
@@ -538,16 +552,36 @@ async def live_refresh_status(
     if not report.dataset_id:
         return {"has_history": False, "in_progress": False, "status": None}
 
+    cache_key = f"bip:livestatus:{report.workspace_id}:{report.dataset_id}"
+    try:
+        cached = await redis.get(cache_key)
+    except Exception:
+        cached = None
+    if cached:
+        try:
+            return json.loads(cached)
+        except (ValueError, TypeError):
+            pass
+
     runs = await client.list_refreshes(report.workspace_id, report.dataset_id, top=1)
     if not runs:
-        return {"has_history": False, "in_progress": False, "status": None}
+        payload = {"has_history": False, "in_progress": False, "status": None}
+    else:
+        r = runs[0]
+        terminal = r.status in ("Completed", "Failed", "Disabled", "Cancelled")
+        payload = {
+            "has_history": True,
+            "status": r.status,
+            "in_progress": not terminal,
+            "start_time": r.start_time.isoformat() if r.start_time else None,
+            "end_time": r.end_time.isoformat() if r.end_time else None,
+        }
 
-    r = runs[0]
-    terminal = r.status in ("Completed", "Failed", "Disabled", "Cancelled")
-    return {
-        "has_history": True,
-        "status": r.status,
-        "in_progress": not terminal,
-        "start_time": r.start_time.isoformat() if r.start_time else None,
-        "end_time": r.end_time.isoformat() if r.end_time else None,
-    }
+    # 예약 새로고침(다음 갱신 예정) 정보 추가 (DB의 refresh_schedules 기반)
+    payload["schedule"] = await get_schedule_info(db, report.workspace_id, report.dataset_id)
+
+    try:
+        await redis.set(cache_key, json.dumps(payload), ex=LIVE_STATUS_CACHE_TTL)
+    except Exception:
+        pass
+    return payload

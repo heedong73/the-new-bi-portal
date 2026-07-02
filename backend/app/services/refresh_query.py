@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date as date_type, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -148,3 +149,91 @@ async def query_refresh_timetable(
             errorMessage=rr.error_message,
         ))
     return result
+
+
+# ── 예약 새로고침: 다음 갱신 예정 시각 ──────────────────────────────────────
+# Power BI가 반환하는 예약 타임존(Windows tz id) → IANA 매핑. 없으면 APP_TIMEZONE 폴백.
+_WINDOWS_TZ_TO_IANA: dict[str, str] = {
+    "Korea Standard Time": "Asia/Seoul",
+    "Tokyo Standard Time": "Asia/Tokyo",
+    "China Standard Time": "Asia/Shanghai",
+    "Taipei Standard Time": "Asia/Taipei",
+    "Singapore Standard Time": "Asia/Singapore",
+    "UTC": "UTC",
+    "GMT Standard Time": "Europe/London",
+    "Pacific Standard Time": "America/Los_Angeles",
+    "Eastern Standard Time": "America/New_York",
+}
+_WEEKDAY_TO_NUM: dict[str, int] = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+
+def _resolve_schedule_tz(win_tz: str | None):
+    """예약 타임존 문자열 → tzinfo. 매핑 실패 시 APP_TIMEZONE."""
+    if not win_tz:
+        return get_app_tz()
+    iana = _WINDOWS_TZ_TO_IANA.get(win_tz)
+    for candidate in (iana, win_tz):
+        if candidate:
+            try:
+                return ZoneInfo(candidate)
+            except Exception:  # noqa: BLE001
+                continue
+    return get_app_tz()
+
+
+def compute_next_scheduled(
+    days: list[str] | None, times: list[str] | None, timezone_str: str | None
+) -> datetime | None:
+    """요일 목록 + 시간(HH:MM) 목록 + 타임존으로 '지금 이후 가장 이른' 예약 시각(tz-aware) 계산."""
+    if not days or not times:
+        return None
+    tz = _resolve_schedule_tz(timezone_str)
+    day_nums = {_WEEKDAY_TO_NUM[d.strip().lower()] for d in days if d.strip().lower() in _WEEKDAY_TO_NUM}
+    if not day_nums:
+        return None
+    parsed_times: list[time] = []
+    for t in times:
+        try:
+            hh, mm = str(t).split(":")[:2]
+            parsed_times.append(time(int(hh), int(mm)))
+        except (ValueError, TypeError):
+            continue
+    if not parsed_times:
+        return None
+
+    now = datetime.now(tz)
+    best: datetime | None = None
+    for offset in range(0, 8):  # 주 단위 반복 커버(앞으로 8일)
+        d = (now + timedelta(days=offset)).date()
+        if d.weekday() not in day_nums:
+            continue
+        for pt in parsed_times:
+            cand = datetime.combine(d, pt, tzinfo=tz)
+            if cand > now and (best is None or cand < best):
+                best = cand
+    return best
+
+
+async def get_schedule_info(db: AsyncSession, workspace_id: str, dataset_id: str) -> dict | None:
+    """dataset의 예약 새로고침 정보(요일/시간/활성 + 다음 예정 시각). 예약 없으면 None."""
+    sched = await db.scalar(
+        select(RefreshSchedule).where(
+            RefreshSchedule.workspace_id == workspace_id,
+            RefreshSchedule.dataset_id == dataset_id,
+        )
+    )
+    if sched is None:
+        return None
+    days = list(sched.days or [])
+    times = list(sched.times or [])
+    nxt = compute_next_scheduled(days, times, sched.timezone) if sched.enabled else None
+    return {
+        "enabled": bool(sched.enabled),
+        "days": days,
+        "times": times,
+        "timezone": sched.timezone,
+        "next_scheduled_local": nxt.astimezone(get_app_tz()).isoformat() if nxt else None,
+    }

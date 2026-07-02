@@ -55,6 +55,18 @@ class DatasetDTO(BaseModel):
     dataset_name: str
 
 
+class ReportPageDTO(BaseModel):
+    """Raw Power BI report page (``GET .../reports/{id}/pages`` item).
+
+    ``name`` is the internal section name (e.g. ``ReportSection1``) used by the
+    Export to File API. ``display_name`` is the human-facing tab title.
+    """
+
+    name: str
+    display_name: str
+    order: int | None = None
+
+
 class RefreshRunDTO(BaseModel):
     """Raw Power BI refresh history entry.
 
@@ -124,4 +136,10 @@ class PowerBIClient(Protocol):
         self, workspace_id: str, dataset_id: str
     ) -> RefreshScheduleDTO:
         """Return the dataset's refresh schedule (``GET .../refreshSchedule``)."""
+        ...
+
+    async def get_report_pages(
+        self, workspace_id: str, report_id: str
+    ) -> list[ReportPageDTO]:
+        """Return the report's pages (``GET .../reports/{id}/pages``)."""
         ...

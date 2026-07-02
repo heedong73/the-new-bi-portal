@@ -47,37 +47,31 @@ PowerBIClientDep = Annotated[PowerBIClient, Depends(get_powerbi_client)]
 from fastapi import Cookie, Request
 from sqlalchemy import select
 from app.core.errors import UnauthenticatedError, PermissionDeniedError
-from app.core.constants import RoleCode, ALL_MENU_KEYS
-from app.models.auth import User, UserRole, Role, RoleMenuPermission
+from app.core.constants import RoleCode, ALL_MENU_KEYS, ROLE_MENUS
+from app.models.auth import User, UserRole, Role
 from app.services.auth import session_service
 
 SESSION_COOKIE_NAME = "bip_session"
 
 
-async def _allowed_menus_for_roles(db: AsyncSession, role_codes: list[str], role_ids: list[int]) -> list[str]:
-    """역할 집합의 메뉴 권한 합집합. System_Operator는 전체."""
+def _allowed_menus_for_roles(role_codes: list[str]) -> list[str]:
+    """역할 집합의 메뉴 권한 합집합(코드 고정 매핑). System_Operator는 전체."""
     if RoleCode.SYSTEM_OPERATOR.value in role_codes:
         return list(ALL_MENU_KEYS)
-    if not role_ids:
-        return []
-    rows = await db.execute(
-        select(RoleMenuPermission.menu_key)
-        .where(RoleMenuPermission.role_id.in_(role_ids))
-        .distinct()
-    )
-    return [r[0] for r in rows.all()]
+    menus: set[str] = set()
+    for code in role_codes:
+        menus.update(ROLE_MENUS.get(code, []))
+    return [k for k in ALL_MENU_KEYS if k in menus]
 
 
 async def allowed_menus_for_user(db: AsyncSession, user_id: int) -> list[str]:
     """user_id의 메뉴 권한 합집합 (로그인 응답 등에서 사용)."""
-    role_rows = (await db.execute(
-        select(Role.id, Role.code)
+    codes = (await db.execute(
+        select(Role.code)
         .join(UserRole, UserRole.role_id == Role.id)
         .where(UserRole.user_id == user_id)
-    )).all()
-    return await _allowed_menus_for_roles(
-        db, [c for _, c in role_rows], [i for i, _ in role_rows]
-    )
+    )).scalars().all()
+    return _allowed_menus_for_roles(list(codes))
 
 
 async def get_current_user(
@@ -111,15 +105,13 @@ async def get_current_user(
         # 비활성/삭제된 사용자는 세션 거부
         raise UnauthenticatedError()
 
-    # 역할 조회 (id + code)
-    role_rows = (await db.execute(
-        select(Role.id, Role.code)
+    # 역할 조회 (code) + 메뉴 권한(코드 고정 매핑)
+    roles = list((await db.execute(
+        select(Role.code)
         .join(UserRole, UserRole.role_id == Role.id)
         .where(UserRole.user_id == user_id)
-    )).all()
-    role_ids = [rid for rid, _ in role_rows]
-    roles = [code for _, code in role_rows]
-    allowed_menus = await _allowed_menus_for_roles(db, roles, role_ids)
+    )).scalars().all())
+    allowed_menus = _allowed_menus_for_roles(roles)
 
     return {
         "user_id": user.id,
@@ -144,7 +136,7 @@ def require_role(*allowed: str):
 def require_menu(menu_key: str):
     """해당 메뉴(페이지) 접근 권한을 요구하는 의존성 팩토리.
 
-    역할별 메뉴 권한 매트릭스(role_menu_permissions) 기반. System_Operator/로컬관리자는 전체 허용.
+    역할 → 메뉴 코드 고정 매핑(ROLE_MENUS) 기반. System_Operator/로컬관리자는 전체 허용.
     """
     async def _checker(current=Depends(get_current_user)) -> dict:
         roles = current.get("roles", [])

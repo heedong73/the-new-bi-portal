@@ -1,5 +1,11 @@
 /** 통계/운영 모니터링 타입 (백엔드 stats_service, monitoring_service 응답과 대응). */
 
+/** 통계 조회 가능 레포트(드롭다운용). */
+export interface StatsReport {
+  id: number
+  name: string
+}
+
 export interface StatsOverview {
   scoped?: boolean
   login_count?: number

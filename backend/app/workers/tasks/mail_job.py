@@ -53,6 +53,7 @@ from app.services.mail.image_service import resize_png
 from app.services.mail.mail_service import MailAttachment, deliver_mail_job
 from app.services.mail.recipients import resolve_recipients
 from app.services.storage_service import get_storage_service
+from app.workers.async_runner import run_async
 from app.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -113,7 +114,8 @@ async def _export_one_page(
     # 2) ExportTo 시작 → Running + export_id
     try:
         start_result = await start_export(
-            access_token, workspace_id, powerbi_report_id, export_format
+            access_token, workspace_id, powerbi_report_id, export_format,
+            page_name=page.page_name,
         )
     except Exception as exc:  # noqa: BLE001 - 페이지 단위 실패 격리
         await _mark_export_failed(export_job_id, f"Export 시작 오류: {exc}")
@@ -374,6 +376,7 @@ async def _execute_mail_job(mail_schedule_id: int, run_key: str) -> dict[str, An
         body_header = schedule.body_header
         body_footer = schedule.body_footer
         schedule_title = schedule.title
+        sender_email = schedule.sender_email
         image_width = schedule.image_width
         # 페이지 메타(발송 첨부용): page_name → (caption, 표시폭, sort_order)
         page_meta = {
@@ -421,6 +424,7 @@ async def _execute_mail_job(mail_schedule_id: int, run_key: str) -> dict[str, An
             report_id=report_id,
             report_name=report_name,
             subject_template=subject_template,
+            sender_email=sender_email,
             body_header=body_header,
             body_footer=body_footer,
             schedule_title=schedule_title,
@@ -547,5 +551,5 @@ async def _run_mail_job(mail_schedule_id: int, run_key: str | None = None) -> di
 
 @celery_app.task(name="bip.mail_job")
 def mail_job(mail_schedule_id: int, run_key: str | None = None) -> dict[str, Any]:
-    """메일 잡 진입점 (sync Celery task → asyncio.run)."""
-    return asyncio.run(_run_mail_job(mail_schedule_id, run_key))
+    """메일 잡 진입점 (sync Celery task → 지속 루프 러너)."""
+    return run_async(_run_mail_job(mail_schedule_id, run_key))

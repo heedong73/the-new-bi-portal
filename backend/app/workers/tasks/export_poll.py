@@ -34,6 +34,7 @@ from app.services.powerbi.export_service import (
 )
 from app.services.powerbi.token_service import MockTokenService, TokenService
 from app.services.storage_service import get_storage_service
+from app.workers.async_runner import run_async
 from app.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -175,5 +176,5 @@ async def _run_export(export_job_id: int) -> dict[str, Any]:
 
 @celery_app.task(name="bip.export_poll")
 def export_poll(export_job_id: int) -> dict[str, Any]:
-    """Export 폴링 작업 진입점 (sync Celery task → asyncio.run)."""
-    return asyncio.run(_run_export(export_job_id))
+    """Export 폴링 작업 진입점 (sync Celery task → 지속 루프 러너)."""
+    return run_async(_run_export(export_job_id))
