@@ -223,7 +223,8 @@ backend/app/
 | PATCH | `/api/reports/{id}/visibility` | 공개/비공개 전환 | O | R11.3 |
 | POST | `/api/reports/{id}/pbix` | PBIX Import API 업로드(신규/갱신, Worker 위임) | O | R12.3~12.6 |
 | GET | `/api/reports/imports/{importId}` | PBIX Import 진행/결과 조회 | O | R12.4 |
-| GET | `/api/reports/{id}/embed` | Report 한정 Embed Token + 임베드 정보 발급 | 해당 Report 조회권 | R9.1, R9.3, R24.2 |
+| GET | `/api/reports/{id}/embed` | Report 한정 Embed Token + 임베드 정보 발급(공통 기본 뷰 `defaultViewState` 포함) | 해당 Report 조회권 | R9.1, R9.3, R24.2 |
+| PUT | `/api/reports/{id}/default-view` | 공통 기본 뷰 상태(슬라이서/필터/페이지 = Power BI 북마크 state) 저장/초기화 — .pbix 수정 없이 모든 뷰어에 적용 | 해당 Report MANAGE_REPORT권 | R9 |
 | POST | `/api/reports/{id}/export` | Export to File 직접 요청(Worker 위임, 202 반환) | 해당 Report DOWNLOAD권 | R9.6 |
 | GET | `/api/exports/{id}` | Export 상태/결과 조회 + 다운로드 수단 | 요청자 본인 또는 O | R9.7 |
 | GET | `/api/reports/{id}/refresh-status` | 마지막 Refresh_Run + 다음 예약(Local_Time) | 해당 Report 조회권 | R10.1, R10.2 |

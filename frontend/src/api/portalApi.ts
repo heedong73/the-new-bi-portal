@@ -43,6 +43,10 @@ export const reportsApi = {
       `/api/reports/${reportDbId}/live-refresh-status`, { signal },
     ),
 
+  /** PUT /api/reports/{id}/default-view — 공통 기본 뷰 상태 저장/초기화 (MANAGE_REPORT 권한). */
+  saveDefaultView: (reportDbId: number, state: string | null) =>
+    apiClient.put<void>(`/api/reports/${reportDbId}/default-view`, { state }),
+
   /** POST /api/reports/{id}/replace-pbix — PBIX 재업로드로 레포트 교체 (MANAGE_REPORT 권한). */
   replacePbix: (reportDbId: number, file: File) => {
     const fd = new FormData()

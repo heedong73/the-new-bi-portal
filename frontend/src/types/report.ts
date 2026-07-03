@@ -39,6 +39,8 @@ export interface EmbedInfo {
   embedUrl: string
   embedToken: string
   expiry?: string | null
+  /** 공통 기본 뷰 상태(Power BI 북마크 state). 있으면 로드 시 적용. */
+  defaultViewState?: string | null
 }
 
 /** 레포트 새로고침 상태 (GET /api/reports/{id}/refresh-status). */

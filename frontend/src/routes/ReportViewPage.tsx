@@ -13,7 +13,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { models, type Report } from 'powerbi-client'
 import {
   ArrowLeft, RefreshCw, Upload, X, AlertTriangle, Star,
-  Maximize2, Monitor, ScanLine, ChevronDown, Clock,
+  Maximize2, Monitor, ScanLine, ChevronDown, Clock, Save, RotateCcw,
 } from 'lucide-react'
 
 import { datasetsApi, reportsApi } from '@/api/portalApi'
@@ -108,6 +108,31 @@ export default function ReportViewPage() {
   const [pages, setPages] = useState<{ name: string; displayName: string }[]>([])
   const [activePageName, setActivePageName] = useState('')
 
+  // 전체 화면 종료 시 앱 기본 보기(실제 크기)로 복귀한다.
+  // (전체 화면 진입 시 페이지 맞춤으로 바꾸므로, 나올 때 되돌린다)
+  useEffect(() => {
+    const onFsChange = () => {
+      if (document.fullscreenElement) return
+      reportRef.current
+        ?.updateSettings({
+          layoutType: models.LayoutType.Custom,
+          customLayout: { displayOption: models.DisplayOption.ActualSize },
+        })
+        .catch(() => { /* noop */ })
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  // 공통 기본 뷰 상태(embed 응답의 defaultViewState) — loaded 시 applyState로 적용하기 위해
+  // 최신값을 ref에 유지한다(loaded 이벤트 콜백의 stale closure 방지).
+  const defaultViewStateRef = useRef<string | null>(null)
+  useEffect(() => {
+    defaultViewStateRef.current = embedQuery.data?.defaultViewState ?? null
+  }, [embedQuery.data])
+  // 기본 뷰 저장/초기화 결과 안내(자동 소멸)
+  const [viewSaveMsg, setViewSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
   function handleReport(r: Report | null) {
     reportRef.current = r
     if (renderedAtRef.current == null) renderedAtRef.current = Date.now()
@@ -132,9 +157,18 @@ export default function ReportViewPage() {
         })
         .catch(() => { /* noop */ })
     }
+    // 저장된 공통 기본 뷰(슬라이서/필터/페이지)가 있으면 로드 후 적용한다.
+    const applyDefaultView = () => {
+      const st = defaultViewStateRef.current
+      if (!st) { loadPages(); return }
+      r.bookmarksManager
+        .applyState(st)
+        .catch(() => { /* 레포트 구조 변경 등으로 실패 시 무시 */ })
+        .finally(loadPages)
+    }
     try {
       r.off('loaded')
-      r.on('loaded', () => { applyFit(); loadPages() })
+      r.on('loaded', () => { applyFit(); applyDefaultView() })
     } catch {
       /* noop */
     }
@@ -152,8 +186,20 @@ export default function ReportViewPage() {
 
   async function applyFullscreen() {
     setViewMenuOpen(false)
+    const r = reportRef.current
+    if (!r) return
+    // 전체 화면에서는 화면을 꽉 채우도록 '페이지 맞춤'으로 전환한다.
+    // (실제 크기로 두면 레포트가 상단에 붙고 하단에 여백이 남음)
     try {
-      reportRef.current?.fullscreen()
+      await r.updateSettings({
+        layoutType: models.LayoutType.Custom,
+        customLayout: { displayOption: models.DisplayOption.FitToPage },
+      })
+    } catch {
+      /* noop */
+    }
+    try {
+      r.fullscreen()
     } catch {
       /* noop */
     }
@@ -171,6 +217,42 @@ export default function ReportViewPage() {
     } catch {
       /* noop */
     }
+  }
+
+  // 현재 화면(슬라이서/필터/페이지)을 공통 기본 뷰로 저장/초기화 (MANAGE_REPORT 권한자).
+  const defaultViewMutation = useMutation({
+    mutationFn: (state: string | null) => reportsApi.saveDefaultView(reportDbId, state),
+    onSuccess: (_data, state) => {
+      setViewSaveMsg({
+        ok: true,
+        text: state ? '현재 뷰를 기본값으로 저장했습니다.' : '기본 뷰를 초기화했습니다.',
+      })
+      window.setTimeout(() => setViewSaveMsg(null), 4000)
+      queryClient.invalidateQueries({ queryKey: ['embed', reportDbId] })
+    },
+    onError: () => {
+      setViewSaveMsg({ ok: false, text: '기본 뷰 저장에 실패했습니다.' })
+      window.setTimeout(() => setViewSaveMsg(null), 4000)
+    },
+  })
+
+  async function saveCurrentAsDefault() {
+    setViewMenuOpen(false)
+    const r = reportRef.current
+    if (!r) return
+    try {
+      // 슬라이서/필터/페이지 선택을 북마크 state로 캡처(모든 페이지 포함).
+      const bookmark = await r.bookmarksManager.capture({ allPages: true })
+      defaultViewMutation.mutate(bookmark.state ?? null)
+    } catch {
+      setViewSaveMsg({ ok: false, text: '현재 뷰 상태를 가져오지 못했습니다.' })
+      window.setTimeout(() => setViewSaveMsg(null), 4000)
+    }
+  }
+
+  function clearDefaultView() {
+    setViewMenuOpen(false)
+    defaultViewMutation.mutate(null)
   }
 
   // 즐겨찾기 토글
@@ -412,7 +494,7 @@ export default function ReportViewPage() {
                   className="fixed inset-0 z-10 cursor-default"
                   onClick={() => setViewMenuOpen(false)}
                 />
-                <div role="menu" className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                <div role="menu" className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
                   <button type="button" role="menuitem" onClick={applyFullscreen}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
                     <Maximize2 className="h-4 w-4 text-slate-500" /> 전체 화면
@@ -425,6 +507,19 @@ export default function ReportViewPage() {
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
                     <ScanLine className="h-4 w-4 text-slate-500" /> 실제 크기
                   </button>
+                  {report?.can_manage && (
+                    <>
+                      <div className="my-1 border-t border-slate-100" />
+                      <button type="button" role="menuitem" onClick={saveCurrentAsDefault} disabled={defaultViewMutation.isPending}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                        <Save className="h-4 w-4 text-slate-500" /> 현재 뷰를 기본값으로 저장
+                      </button>
+                      <button type="button" role="menuitem" onClick={clearDefaultView} disabled={defaultViewMutation.isPending}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+                        <RotateCcw className="h-4 w-4 text-slate-400" /> 기본 뷰 초기화
+                      </button>
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -498,6 +593,11 @@ export default function ReportViewPage() {
       {replaceMutation.isSuccess && (
         <div className="bg-green-50 px-5 py-2 text-sm text-green-700">
           레포트 업데이트(교체)를 요청했습니다. 게시 반영까지 잠시 걸릴 수 있습니다.
+        </div>
+      )}
+      {viewSaveMsg && (
+        <div role="status" className={`px-5 py-2 text-sm ${viewSaveMsg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+          {viewSaveMsg.text}
         </div>
       )}
 

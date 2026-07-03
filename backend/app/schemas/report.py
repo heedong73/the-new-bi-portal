@@ -21,6 +21,13 @@ class FolderMoveRequest(BaseModel):
     """레포트 폴더 이동 요청."""
     folder_id: int | None = None
 
+class DefaultViewUpdate(BaseModel):
+    """공통 기본 뷰 상태 저장/초기화 요청.
+
+    state = Power BI 북마크 state 문자열. None/빈 값이면 기본 뷰 해제.
+    """
+    state: str | None = None
+
 class ExportRequest(BaseModel):
     """독립 Export 요청 (T-25). 포맷: PDF | PNG | PPTX"""
     export_format: str = Field(default="PDF", pattern="^(PDF|PNG|PPTX)$")

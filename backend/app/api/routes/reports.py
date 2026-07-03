@@ -22,7 +22,7 @@ from app.models.mail import MailSchedule
 from app.workers.celery_app import celery_app
 from app.workers.tasks.pbix_import import pbix_import as pbix_import_task
 from app.schemas.report import (
-    ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse,
+    ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse, DefaultViewUpdate,
 )
 from app.services.powerbi.client import ReportPageDTO
 from app.services.audit_service import append_audit
@@ -391,6 +391,7 @@ async def get_embed(
         "embedUrl": info.embed_url,
         "embedToken": info.embed_token,
         "expiry": info.expiry,
+        "defaultViewState": report.default_view_state,
     }
 
 # ===== 새로고침 상태 (T-21) =====
@@ -506,6 +507,31 @@ async def replace_pbix(
                        meta={"target": "replace_pbix", "report_id": report_id})
     await db.commit()
     return {"task_id": task.id, "status": "enqueued", "report_id": report_id}
+
+
+@router.put("/{report_id}/default-view", status_code=204)
+async def save_default_view(
+    report_id: int,
+    body: DefaultViewUpdate,
+    *,
+    db: SessionDep,
+    current=Depends(require_report_permission(PermissionAction.MANAGE_REPORT)),
+):
+    """공통 기본 뷰 상태(슬라이서/필터/페이지) 저장/초기화. MANAGE_REPORT 권한 필요.
+
+    Power BI 북마크 state 문자열을 저장하며, 이후 그 레포트를 여는 모든 뷰어가 이
+    상태로 시작한다(.pbix 수정·재업로드 없이 기본 뷰만 변경). state가 비면 기본 뷰 해제.
+    """
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise NotFoundError("레포트를 찾을 수 없습니다.")
+    report.default_view_state = body.state or None
+    await db.flush()
+    await append_audit(db, action=AuditAction.REPORT_UPDATE, result="success",
+                       actor_user_id=current["user_id"], actor_label=current["emp_no"],
+                       resource_type="report", resource_id=str(report_id),
+                       meta={"target": "default_view", "cleared": not body.state})
+    await db.commit()
 
 
 @router.delete("/{report_id}", status_code=204)

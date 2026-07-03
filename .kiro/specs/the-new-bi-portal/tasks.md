@@ -545,6 +545,17 @@
   - 하단 분석 카드 개편: '가장 오래 걸린 리포트'→TOP5 리스트(리포트명·시작시각·소요시간, LongestRunCard runs 기반), '리포트별 소요 시간' bar chart 제거(DurationBarChart 삭제), '시간대별 추이'→30분 단위 48버킷+가로 확장(overflow-x-auto), '성공/실패 비율' 도넛→'실패·경고 리포트' 목록(FailedRunsCard, status failed/unknown)으로 대체(StatusDonutChart 삭제)
   - _Requirements: R14, R15, R19_
 
+- [x] 65. 통계 대시보드 기간 필터 (R18.5)
+  - StatsDashboardPage에 기간 필터 추가: 프리셋(전체/최근 7·30·90일) + 직접 선택(시작~종료 date input). KST 하루 경계를 UTC ISO로 변환해 overview/usage 쿼리에 from/to 전달(백엔드 stats 라우트는 이미 from/to 지원). 기본값 '전체'
+  - dashboardApi.overview/usage에 from/to 인자 추가, 쿼리키에 기간 포함해 변경 시 재조회
+  - _Requirements: R18.5_
+
+- [x] 66. 레포트 공통 기본 뷰 저장 (슬라이서/필터 기본값, .pbix 수정 없이)
+  - 관리자가 레포트 조회 화면에서 현재 뷰(슬라이서/필터/페이지 선택)를 '공통 기본값'으로 저장 → 이후 모든 뷰어가 그 상태로 시작. Power BI 북마크 state를 저장하는 방식이라 원본 .pbix는 변경/재업로드하지 않음
+  - 백엔드: `reports.default_view_state`(TEXT) 컬럼(mig a7c3e9f14d80), `PUT /api/reports/{id}/default-view`(MANAGE_REPORT 게이트, 감사 report_update·target=default_view), embed 응답에 `defaultViewState` 포함
+  - 프런트: ReportViewPage 보기 옵션에 '현재 뷰를 기본값으로 저장'/'기본 뷰 초기화'(can_manage). 로드 시 `bookmarksManager.applyState`로 적용, 저장은 `capture({allPages:true})`. reportsApi.saveDefaultView, EmbedInfo.defaultViewState
+  - _Requirements: R9_
+
 ## v1.1+ (범위 외 - 참고)
 
 - [ ] 48. Job_Context 다중 부서 선택 (R1.7)

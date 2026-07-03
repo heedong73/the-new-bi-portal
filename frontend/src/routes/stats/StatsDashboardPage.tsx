@@ -5,9 +5,34 @@
  */
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { startOfDay, endOfDay, subDays } from 'date-fns'
 import { LogIn, Eye, RefreshCw, Mail, AlertTriangle } from 'lucide-react'
 import { statsApi } from '@/api/dashboardApi'
 import { useAuthStore } from '@/stores/useAuthStore'
+
+/** 기간 프리셋 (전체 = 필터 없음) */
+const PERIOD_PRESETS: { label: string; days: number | null }[] = [
+  { label: '전체', days: null },
+  { label: '최근 7일', days: 7 },
+  { label: '최근 30일', days: 30 },
+  { label: '최근 90일', days: 90 },
+]
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+/** Date → 'YYYY-MM-DD' (로컬 벽시계 기준) */
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+/** 'YYYY-MM-DD' → 로컬 자정 Date */
+function parseYmd(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+/** 프리셋(최근 N일)의 시작/종료 'YYYY-MM-DD' */
+function presetRange(days: number): { from: string; to: string } {
+  const today = new Date()
+  return { from: toYmd(subDays(today, days - 1)), to: toYmd(today) }
+}
 
 function StatCard({ label, value, Icon, tone = 'slate' }: {
   label: string; value: number; Icon: typeof LogIn; tone?: 'slate' | 'green' | 'red' | 'blue'
@@ -62,15 +87,33 @@ export default function StatsDashboardPage() {
   const reportId = isOperator ? undefined : (selectedId ?? undefined)
   const canQuery = isOperator || selectedId !== null
 
+  // 기간 필터 (from/to = 'YYYY-MM-DD' 또는 ''=전체). KST 하루 경계를 UTC ISO로 보낸다.
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const fromParam = fromDate ? startOfDay(parseYmd(fromDate)).toISOString() : undefined
+  const toParam = toDate ? endOfDay(parseYmd(toDate)).toISOString() : undefined
+
+  const applyPreset = (days: number | null) => {
+    if (days === null) { setFromDate(''); setToDate(''); return }
+    const r = presetRange(days)
+    setFromDate(r.from)
+    setToDate(r.to)
+  }
+  const isPresetActive = (days: number | null) => {
+    if (days === null) return !fromDate && !toDate
+    const r = presetRange(days)
+    return fromDate === r.from && toDate === r.to
+  }
+
   const overviewQuery = useQuery({
-    queryKey: ['stats-overview', reportId ?? 'all'],
-    queryFn: ({ signal }) => statsApi.overview(reportId, signal),
+    queryKey: ['stats-overview', reportId ?? 'all', fromParam ?? '', toParam ?? ''],
+    queryFn: ({ signal }) => statsApi.overview(reportId, fromParam, toParam, signal),
     enabled: canQuery,
     staleTime: 60_000,
   })
   const usageQuery = useQuery({
-    queryKey: ['stats-usage', reportId ?? 'all'],
-    queryFn: ({ signal }) => statsApi.usage(reportId, signal),
+    queryKey: ['stats-usage', reportId ?? 'all', fromParam ?? '', toParam ?? ''],
+    queryFn: ({ signal }) => statsApi.usage(reportId, fromParam, toParam, signal),
     enabled: canQuery,
     staleTime: 60_000,
   })
@@ -108,6 +151,60 @@ export default function StatsDashboardPage() {
         </div>
       ) : (
       <>
+      {/* 기간 필터 */}
+      <div className="mb-5 flex flex-wrap items-end gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-slate-500">기간</span>
+          <div className="flex flex-wrap gap-1">
+            {PERIOD_PRESETS.map((p) => {
+              const active = isPresetActive(p.days)
+              return (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => applyPreset(p.days)}
+                  className={
+                    'rounded-md border px-2.5 py-1 text-xs font-medium transition ' +
+                    (active
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')
+                  }
+                >
+                  {p.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-slate-500">직접 선택</span>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(e) => setFromDate(e.target.value)}
+              aria-label="시작일"
+              className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700"
+            />
+            <span className="text-slate-400">~</span>
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(e) => setToDate(e.target.value)}
+              aria-label="종료일"
+              className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700"
+            />
+          </div>
+        </div>
+        <p className="ml-auto self-center text-xs text-slate-400">
+          {fromDate || toDate
+            ? `${fromDate || '처음'} ~ ${toDate || '지금'} 기준`
+            : '전체 기간 기준'}
+        </p>
+      </div>
+
       {/* 기본 운영 통계 */}
       {overviewQuery.isLoading || !o ? (
         <p className="text-sm text-slate-400">불러오는 중…</p>

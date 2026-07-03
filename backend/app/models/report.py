@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Boolean, BigInteger, Integer, ForeignKey, UniqueConstraint, func
+from sqlalchemy import String, Boolean, BigInteger, Integer, ForeignKey, UniqueConstraint, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.session import Base
 
@@ -54,6 +54,9 @@ class Report(Base):
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     category: Mapped[str | None] = mapped_column(String(128), nullable=True)
     author_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 공통 기본 뷰 상태(Power BI 북마크 state 문자열). 슬라이서/필터/페이지 선택을 담으며,
+    # 관리자가 저장하면 모든 뷰어가 이 상태로 시작한다(.pbix 수정 없이).
+    default_view_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
