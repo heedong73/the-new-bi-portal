@@ -24,8 +24,10 @@ def _set_session_cookie(response: Response, session_id: str) -> None:
         key=SESSION_COOKIE_NAME,
         value=session_id,
         httponly=True,
-        samesite="lax",
-        max_age=settings.SESSION_TTL_MINUTES * 60,
+        secure=settings.SESSION_COOKIE_SECURE,
+        samesite=settings.SESSION_COOKIE_SAMESITE,
+        # 쿠키 수명은 absolute 상한까지. 실제 idle 만료는 서버(Redis TTL)가 강제한다.
+        max_age=settings.SESSION_ABSOLUTE_MINUTES * 60,
     )
 
 async def _roles_for(db, user_id: int) -> list[str]:

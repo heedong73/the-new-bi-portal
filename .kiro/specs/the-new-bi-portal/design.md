@@ -306,7 +306,7 @@ sequenceDiagram
 
 - 인증은 `hr_authenticator`가 인사 뷰를 **읽기 전용**으로 조회하여 `sha256³(입력비번) == login_pwd`로 검증한다. 해시는 **단순 SHA-256 3회 반복 + 64자 소문자 hex 저장**(실측 확정, salt 없음). 라운드 간 입력 형태(hex 문자열 재해싱 vs digest 바이트)만 알려진 샘플로 확정. 인증 로직을 한 모듈로 격리하여 향후 그룹웨어 SSO 도입 시 `Authenticator` 인터페이스 교체로 전환.
 - 컬럼/조인(실측): 인증 `scl_v_insa_user_add_pwd(emp_no, login_pwd, cmp_email, user_name, emp_status)`, 프로필 `scl_v_insa_user`, 조직·직급 `scl_v_insa_my_job(emp_no, cmp_id, dept_id, ofc_id, bass_dept_yn)` → 부서 `(cmp_id, dept_id)`=`scl_v_insa_dept_add_depth`, 직급 `(cmp_id, ofc_id)`=`scl_v_insa_office`.
-- 세션 저장 방식은 D-02(쿠키 세션 토큰 + Redis 세션 저장). 세션에는 만료 시간 적용, 로그아웃 시 무효화. (충족: R39.1, R39.2)
+- 세션 저장 방식은 D-02(쿠키 세션 토큰 + Redis 세션 저장). 만료는 **이중 정책**: idle(마지막 활동 기준 `SESSION_IDLE_MINUTES`, 기본 120분 — 접근 시 Redis TTL 슬라이딩 갱신) + absolute(로그인 기준 `SESSION_ABSOLUTE_MINUTES`, 기본 720분 상한), 둘 중 먼저 도달 시 만료. 쿠키는 HttpOnly + SameSite(`SESSION_COOKIE_SAMESITE`, 기본 lax) + Secure(`SESSION_COOKIE_SECURE`, 운영 HTTPS=true). 로그아웃/사용자 비활성화 시 서버 세션 즉시 무효화(opaque 세션이라 즉시 폐기됨 — Refresh Token 불필요). (충족: R39.1, R39.2)
 - **레거시 해시 검증(보안 주의)**: SHA-256 단순 3회 반복은 **신규 비밀번호 저장 방식으로 권장되지 않는다**(salt 없음, 느린 KDF 아님). 본 방식은 기존 인사정보 DB의 `login_pwd`(그룹웨어가 생성)를 검증하기 위해 **불가피하게 사용하는 레거시 검증 방식**이다. BIP는 사용자의 **비밀번호나 그 해시를 자체 저장하지 않으며**(인사 뷰는 읽기 전용 참조), 입력 비밀번호는 **요청 처리 중 메모리에서만 사용하고 로그/응답/Audit_Log에 남기지 않는다**. (충족: R1.6, R39)
 - **Job_Context(겸직) — v1.0는 기본 부서 단일, 선택은 v1.1+**: v1.0에서는 로그인 시 인사 뷰 `scl_v_insa_my_job`에서 `bass_dept_yn='Y'` 우선(없으면 `emp_sort_ordr` 최상위) **1건을 기본 부서로 자동 매핑**하고 별도 선택 UI를 두지 않는다 → `users.department_id`에 저장, 권한 계산의 부서 출처로 사용.
 - **모델 가정(중요)**: 로그인 ID(`emp_no`) = **단일 회사·단일 정체성**으로 취급한다. **계열사 간 겸직은 계열사마다 ID 체계가 달라 로그인 ID(`emp_no`) 자체가 분리**되므로(서로 다른 사용자처럼 동작), BIP는 추가 겸직 처리 없이 일반 로그인과 동일하게 다룬다. 따라서 다중 Job_Context는 "동일 회사 내 다중 부서/직책"인 경우에만 의미가 있으며, 그조차 v1.0은 기본 부서 1건으로 충분하다. 다중 Job_Context 후보 제시·선택·세션 전환은 **v1.1+**로 분리한다(원천 `my_job` 동일, 확장 시 매핑 로직만 추가). 실측상 동일 `emp_no` 다중행은 소수(~119/9183)이며 상당수는 시스템 계정의 회사별 중복으로 추정된다.
@@ -673,7 +673,10 @@ APP_MODE=mock|live
 AUTH_MODE=hr-db|local-only|mock
 APP_TIMEZONE=Asia/Seoul
 SESSION_SECRET=...
-SESSION_TTL_MINUTES=480
+SESSION_IDLE_MINUTES=120        # 마지막 활동 기준(슬라이딩) 2시간
+SESSION_ABSOLUTE_MINUTES=720    # 로그인 시점 기준 상한 12시간
+SESSION_COOKIE_SECURE=false     # 운영(HTTPS)=true
+SESSION_COOKIE_SAMESITE=lax
 # 외부 DB / Redis (운영 DB는 AWS RDS PostgreSQL, 서울 리전 ap-northeast-2, DB명 bi_portal, SSL 필수)
 # 현재 RDS는 개발계(dev). 운영계(prod)는 .env.prod로 동일 구조 구축, 스키마는 Alembic으로 재현
 # 실제 호스트/식별자 값은 문서에 적지 않고 .env(gitignore)에만 보관 — 아래는 플레이스홀더

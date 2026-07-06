@@ -550,6 +550,12 @@
   - dashboardApi.overview/usage에 from/to 인자 추가, 쿼리키에 기간 포함해 변경 시 재조회
   - _Requirements: R18.5_
 
+- [x] 67. 세션 만료 정책 강화 (idle 슬라이딩 + absolute 상한 + 쿠키 보안)
+  - `SESSION_TTL_MINUTES`(단일 절대 8h) → `SESSION_IDLE_MINUTES`(120, 마지막 활동 기준 슬라이딩) + `SESSION_ABSOLUTE_MINUTES`(720, 로그인 상한). get_session이 접근 시 Redis TTL을 idle로 갱신(absolute 넘지 않게 캡), absolute 초과 시 즉시 폐기. payload에 absolute_exp 저장
+  - 쿠키: HttpOnly + `SESSION_COOKIE_SAMESITE`(lax) + `SESSION_COOKIE_SECURE`(env, 운영 HTTPS=true), max_age=absolute. 로그아웃/비활성화 시 서버측 즉시 폐기(기존)
+  - opaque Redis 세션 유지(JWT/Refresh Token 미도입 — 즉시 폐기가 기본). 관리자 재인증(step-up)은 범위 제외(사용자 결정)
+  - _Requirements: R39_
+
 - [x] 66. 레포트 공통 기본 뷰 저장 (슬라이서/필터 기본값, .pbix 수정 없이)
   - 관리자가 레포트 조회 화면에서 현재 뷰(슬라이서/필터/페이지 선택)를 '공통 기본값'으로 저장 → 이후 모든 뷰어가 그 상태로 시작. Power BI 북마크 state를 저장하는 방식이라 원본 .pbix는 변경/재업로드하지 않음
   - 백엔드: `reports.default_view_state`(TEXT) 컬럼(mig a7c3e9f14d80), `PUT /api/reports/{id}/default-view`(MANAGE_REPORT 게이트, 감사 report_update·target=default_view), embed 응답에 `defaultViewState` 포함

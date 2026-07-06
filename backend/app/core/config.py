@@ -9,7 +9,13 @@ class Settings(BaseSettings):
     AUTH_MODE: Literal["hr-db", "local-only", "mock"] = "mock"
     APP_TIMEZONE: str = "Asia/Seoul"
     SESSION_SECRET: str = "change-me"
-    SESSION_TTL_MINUTES: int = 480
+    # 세션 정책: 마지막 활동 기준 idle(슬라이딩) + 로그인 기준 absolute(상한).
+    # 무활동이 idle 을 넘거나 absolute 상한에 도달하면(둘 중 먼저) 만료된다.
+    SESSION_IDLE_MINUTES: int = 120       # 마지막 활동 기준 2시간
+    SESSION_ABSOLUTE_MINUTES: int = 720   # 로그인 시점 기준 12시간 상한
+    # 세션 쿠키 옵션. Secure 는 HTTPS 전용이므로 개발(HTTP)=False, 운영(HTTPS)=.env 에서 True.
+    SESSION_COOKIE_SECURE: bool = False
+    SESSION_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
 
     # DB
     DATABASE_URL: str = "postgresql+asyncpg://bip_test:bip_test@localhost:5432/bi_portal_test"

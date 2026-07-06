@@ -81,6 +81,7 @@
   3. **DB 세션**: 장점: 영속. 단점: 매 요청 DB 조회 부하.
 - 추천 ①. 세션은 Redis 휘발성으로 두되, 손실 시 재인증으로 복구(R29.4 일관).
 - 되돌리기 낮음: 세션 서비스 모듈 교체로 전환 가능.
+- **만료 정책(2026-07 강화, task 67)**: 단일 절대 TTL(8h) → **idle 슬라이딩(`SESSION_IDLE_MINUTES` 기본 120분, 접근 시 Redis TTL 갱신) + absolute 상한(`SESSION_ABSOLUTE_MINUTES` 기본 720분)** 이중 정책. 쿠키 HttpOnly + SameSite(lax) + Secure(운영). opaque 세션이라 로그아웃·비활성화 시 즉시 폐기되어 별도 Refresh Token 불필요. 관리자 step-up 재인증은 편의상 도입 안 함(사용자 결정).
 
 ### D-03 Refresh 정보 표시 — Decided (되돌리기: 낮음)
 - 관련 요구: R10, R14. 범위: v1.0.
