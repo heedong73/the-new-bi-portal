@@ -87,21 +87,23 @@ async def authenticate(db: AsyncSession, emp_no: str, password: str) -> HRProfil
     ).first()
 
     # 부서 한글명 조회 (scl_v_insa_dept_add_depth). 실패해도 로그인은 계속되도록 방어.
+    # 주의 1: asyncpg는 `(:cmp_id IS NULL OR cmp_id = :cmp_id)` 형태에서 파라미터 타입을
+    #   추론하지 못해 AmbiguousParameterError를 낸다 → cmp_id 유무에 따라 조건을 구성한다.
+    # 주의 2: 조회 실패가 상위 트랜잭션을 오염(InFailedSQLTransactionError)시키지 않도록
+    #   SAVEPOINT(begin_nested)로 격리한다. 실패 시 savepoint만 롤백되고 로그인은 계속된다.
     dept_name: str | None = None
     if job and job.dept_id:
+        sql = "SELECT dept_name FROM public.scl_v_insa_dept_add_depth WHERE dept_id = :dept_id"
+        params: dict = {"dept_id": job.dept_id}
+        if job.cmp_id:
+            sql += " AND cmp_id = :cmp_id"
+            params["cmp_id"] = job.cmp_id
+        sql += " LIMIT 1"
         try:
-            dept_row = (
-                await db.execute(
-                    text(
-                        "SELECT dept_name FROM public.scl_v_insa_dept_add_depth "
-                        "WHERE dept_id = :dept_id "
-                        "AND (:cmp_id IS NULL OR cmp_id = :cmp_id) LIMIT 1"
-                    ),
-                    {"dept_id": job.dept_id, "cmp_id": job.cmp_id},
-                )
-            ).first()
-            if dept_row is not None:
-                dept_name = dept_row.dept_name
+            async with db.begin_nested():
+                dept_row = (await db.execute(text(sql), params)).first()
+                if dept_row is not None:
+                    dept_name = dept_row.dept_name
         except Exception:  # noqa: BLE001 - 부서명 조회 실패가 로그인을 막지 않도록
             dept_name = None
 
