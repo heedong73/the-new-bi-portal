@@ -15,7 +15,7 @@ set ROOT=%~dp0
 echo Ensuring Redis container (detached, auto-restart)...
 docker start bip-redis >NUL 2>&1 || docker run -d --name bip-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
 if errorlevel 1 (
-  echo [WARN] Redis 컨테이너를 시작하지 못했습니다. Docker Desktop이 실행 중인지 확인하세요.
+  echo [WARN] Failed to start Redis container. Make sure Docker Desktop is running.
 )
 
 echo Starting Worker / Beat / Backend / Frontend in separate windows...
