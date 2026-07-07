@@ -89,3 +89,23 @@ class RequestComment(Base):
     is_operator: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class RequestStatusHistory(Base):
+    """서비스 센터 요청 상태 변경 이력 (from → to). 생성 시 1건(from=None→pending),
+    이후 운영자가 상태를 바꿀 때마다 1건씩 기록한다. 요청 삭제 시 CASCADE."""
+    __tablename__ = "request_status_history"
+    __table_args__ = (
+        Index("idx_request_status_history_request", "request_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    request_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.requests.id", ondelete="CASCADE"), nullable=False
+    )
+    from_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # 생성 시 None
+    to_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    changed_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    changed_by_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

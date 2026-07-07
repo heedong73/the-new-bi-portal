@@ -87,7 +87,9 @@ class MailJob(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     mail_schedule_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey(f"{SCHEMA}.mail_schedules.id"), nullable=False
+        BigInteger,
+        ForeignKey(f"{SCHEMA}.mail_schedules.id", ondelete="CASCADE"),
+        nullable=False,
     )
     run_key: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)

@@ -71,6 +71,18 @@ class CommentResponse(BaseModel):
     created_at: datetime
 
 
+class StatusHistoryResponse(BaseModel):
+    """상태 변경 이력 1건 (from → to). from_status가 None이면 요청 생성 시점."""
+
+    id: int
+    request_id: int
+    from_status: str | None = None
+    to_status: str
+    changed_by_user_id: int | None = None
+    changed_by_label: str | None = None
+    created_at: datetime
+
+
 class RequestResponse(BaseModel):
     """요청 응답 (첨부/댓글 + 요청자 부서/완료예정일 포함)."""
 
@@ -89,3 +101,4 @@ class RequestResponse(BaseModel):
     updated_at: datetime
     attachments: list[AttachmentResponse] = []
     comments: list[CommentResponse] = []
+    status_history: list[StatusHistoryResponse] = []

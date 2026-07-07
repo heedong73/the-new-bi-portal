@@ -84,6 +84,8 @@ export default function MailSchedulePage() {
   const queryClient = useQueryClient()
   const [editingId, setEditingId] = useState<number | 'new' | null>(null)
   const [form, setForm] = useState<MailScheduleCreate>(emptyForm())
+  // 삭제 확인 대상 스케줄 (null = 확인창 닫힘)
+  const [confirmDelete, setConfirmDelete] = useState<MailSchedule | null>(null)
 
   const listQuery = useQuery({
     queryKey: ['mail-schedules'],
@@ -137,7 +139,7 @@ export default function MailSchedulePage() {
   })
   const deleteMutation = useMutation({
     mutationFn: (id: number) => mailSchedulesApi.remove(id),
-    onSuccess: () => invalidate(),
+    onSuccess: () => { setConfirmDelete(null); invalidate() },
   })
 
   const schedules = listQuery.data ?? []
@@ -295,7 +297,7 @@ export default function MailSchedulePage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button type="button" onClick={() => openEdit(s)} className="mr-2 text-xs text-blue-600 hover:underline">수정</button>
-                    <button type="button" onClick={() => deleteMutation.mutate(s.id)} className="text-xs text-red-600 hover:underline">삭제</button>
+                    <button type="button" onClick={() => { deleteMutation.reset(); setConfirmDelete(s) }} className="text-xs text-red-600 hover:underline">삭제</button>
                   </td>
                 </tr>
               ))}
@@ -593,6 +595,44 @@ export default function MailSchedulePage() {
                 <button type="submit" disabled={!canSave} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">저장</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 삭제 확인 모달 */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
+            <h2 className="text-base font-semibold text-slate-800">메일 스케줄 삭제</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              '<span className="font-medium text-slate-800">{confirmDelete.title}</span>' 스케줄을 삭제할까요?
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              관련 수신자·페이지·발송 이력이 함께 삭제되며 되돌릴 수 없습니다.
+            </p>
+            {deleteMutation.isError && (
+              <p role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                disabled={deleteMutation.isPending}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteMutation.mutate(confirmDelete.id)}
+                disabled={deleteMutation.isPending}
+                className="inline-flex items-center gap-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" /> {deleteMutation.isPending ? '삭제 중…' : '삭제'}
+              </button>
+            </div>
           </div>
         </div>
       )}

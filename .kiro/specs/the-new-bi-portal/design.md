@@ -574,7 +574,8 @@ sequenceDiagram
   - 조회(`GET /api/requests`): 일반 사용자는 **본인 요청만**, System_Operator는 전체. 상태/유형/검색(제목·요청자) 필터 지원. 응답에 요청자 부서(`requester_department`, users→departments 조인) 포함.
   - 변경(`PATCH /api/requests/{id}`): **System_Operator만** `status`/`operator_response`/`reject_reason`/`expected_completion_date` 설정 가능.
 - **첨부 파일(R17.5)**: `bip.request_attachments`(request_id FK CASCADE, file_name, storage_path, mime_type, file_size, uploaded_by_user_id) + StorageService(`request-attachments/{request_id}/{uuid}{ext}`, D-09 재사용). 업로드/조회/삭제는 소유자 또는 운영자만, 다운로드는 권한 검증 후 스트리밍(이미지 inline). 허용 확장자·최대 크기(`REQUEST_ATTACHMENT_MAX_MB`, 기본 10MB) 검증.
-- **대화(R17.6)**: `bip.request_comments`(request_id FK CASCADE, author_user_id, author_label, is_operator, body)로 요청자↔담당자가 소통. 작성/조회는 소유자 또는 운영자만(추가 전용).
+- **대화(R17.6)**: `bip.request_comments`(request_id FK CASCADE, author_user_id, author_label, is_operator, body)로 요청자↔담당자가 소통. 작성/조회는 소유자 또는 운영자만(추가 전용). 화면은 메신저형(현재 사용자 기준 내 메시지=우측/상대=좌측 말풍선).
+- **상태 이력(R17)**: `bip.request_status_history`(request_id FK CASCADE, from_status, to_status, changed_by_user_id/label)로 상태 전환을 기록(생성=None→pending, 운영자 변경 시 from→to). 상세 화면에 타임라인으로 노출.
 - **알림 메일(R17.7)**: 새 요청 등록 → 관리자 이메일(`REQUEST_ADMIN_EMAIL`, 기본 `220042@samchully.co.kr`). 운영자 상태변경/응답 → 요청자, 대화 작성 → 상대방. 기존 SMTP(`mail_service`) 재사용, **FastAPI BackgroundTasks**로 비차단 best-effort 발송. `REQUEST_NOTIFY_ENABLED`(기본 true) 토글, `APP_MODE=mock`은 로그만.
 - **감사(R17.8)**: 생성 시 `request_create`, 운영자 상태변경/응답/반려 시 `request_update`, 대화 작성 시 `request_comment`.
 - **입력 검증**: 제목 ≤200자, 내용 ≤5000자, `rejected` 전환 시 `reject_reason` 누락하면 HTTP 400. 표시 시 XSS 방지(프론트 escape, 알림 메일 HTML escape 후 조립).
@@ -837,6 +838,7 @@ erDiagram
     users ||--o{ requests : creates
     requests ||--o{ request_attachments : has
     requests ||--o{ request_comments : has
+    requests ||--o{ request_status_history : has
     users ||--o{ audit_logs : acts
 
     users {

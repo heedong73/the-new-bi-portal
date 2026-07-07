@@ -333,7 +333,11 @@ async def delete_mail_schedule(
     db: SessionDep,
     current: dict = Depends(require_menu("mail_schedules")),
 ):
-    """메일 스케줄 삭제 (CASCADE 로 recipients, pages 자동 삭제)."""
+    """메일 스케줄 삭제.
+
+    FK CASCADE로 recipients·pages와 발송 이력(mail_jobs → export_jobs·report_image_paths)까지
+    함께 삭제된다. 발송 감사 기록은 audit_logs에 별도 보존된다.
+    """
     schedule = await _get_schedule_or_404(db, schedule_id)
 
     await append_audit(

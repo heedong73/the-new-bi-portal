@@ -25,6 +25,17 @@ export interface RequestComment {
   created_at: string
 }
 
+/** 상태 변경 이력 1건 (from → to). from_status가 null이면 요청 생성 시점. */
+export interface StatusHistoryEntry {
+  id: number
+  request_id: number
+  from_status: RequestStatus | null
+  to_status: RequestStatus
+  changed_by_user_id: number | null
+  changed_by_label: string | null
+  created_at: string
+}
+
 /** 요청 단건 (RequestResponse). */
 export interface ServiceRequest {
   id: number
@@ -42,6 +53,7 @@ export interface ServiceRequest {
   updated_at: string
   attachments: RequestAttachment[]
   comments: RequestComment[]
+  status_history: StatusHistoryEntry[]
 }
 
 /** 생성 요청 (RequestCreate). */

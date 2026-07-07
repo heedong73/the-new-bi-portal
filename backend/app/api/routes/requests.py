@@ -32,6 +32,7 @@ from app.models.log import (
     Request as RequestModel,
     RequestAttachment,
     RequestComment,
+    RequestStatusHistory,
 )
 from app.schemas.request_center import (
     AttachmentResponse,
@@ -40,6 +41,7 @@ from app.schemas.request_center import (
     RequestCreate,
     RequestResponse,
     RequestUpdate,
+    StatusHistoryResponse,
 )
 from app.services import request_notify
 from app.services.audit_service import append_audit
@@ -150,12 +152,25 @@ def _comment_to_response(c: RequestComment) -> CommentResponse:
     )
 
 
+def _status_history_to_response(h: RequestStatusHistory) -> StatusHistoryResponse:
+    return StatusHistoryResponse(
+        id=h.id,
+        request_id=h.request_id,
+        from_status=h.from_status,
+        to_status=h.to_status,
+        changed_by_user_id=h.changed_by_user_id,
+        changed_by_label=h.changed_by_label,
+        created_at=to_local(h.created_at),
+    )
+
+
 def _to_response(
     row: RequestModel,
     name: str | None,
     department: str | None = None,
     attachments: list[RequestAttachment] | None = None,
     comments: list[RequestComment] | None = None,
+    status_history: list[RequestStatusHistory] | None = None,
 ) -> RequestResponse:
     return RequestResponse(
         id=row.id,
@@ -173,13 +188,23 @@ def _to_response(
         updated_at=to_local(row.updated_at),
         attachments=[_attachment_to_response(a) for a in (attachments or [])],
         comments=[_comment_to_response(c) for c in (comments or [])],
+        status_history=[_status_history_to_response(h) for h in (status_history or [])],
     )
 
 
 async def _build_single(db: SessionDep, row: RequestModel, name: str | None, department: str | None) -> RequestResponse:
     attach = await _attachments_map(db, {row.id})
     comments = await _comments_map(db, {row.id})
-    return _to_response(row, name, department, attach.get(row.id, []), comments.get(row.id, []))
+    history = (
+        await db.execute(
+            select(RequestStatusHistory)
+            .where(RequestStatusHistory.request_id == row.id)
+            .order_by(RequestStatusHistory.id)
+        )
+    ).scalars().all()
+    return _to_response(
+        row, name, department, attach.get(row.id, []), comments.get(row.id, []), history
+    )
 
 
 async def _get_request_or_404(db: SessionDep, request_id: int) -> RequestModel:
@@ -217,6 +242,15 @@ async def create_request(
     )
     db.add(row)
     await db.flush()
+
+    # 상태 이력 초기 항목 (생성: from=None → pending)
+    db.add(RequestStatusHistory(
+        request_id=row.id,
+        from_status=None,
+        to_status=row.status,
+        changed_by_user_id=current["user_id"],
+        changed_by_label=current.get("name"),
+    ))
 
     await append_audit(
         db,
@@ -324,6 +358,7 @@ async def update_request(
     row = await _get_request_or_404(db, request_id)
 
     data = body.model_dump(exclude_unset=True)
+    old_status = row.status  # 상태 이력 기록용(변경 전 값)
 
     new_status = data.get("status", row.status)
     if new_status == "rejected":
@@ -339,6 +374,17 @@ async def update_request(
         setattr(row, field, value)
 
     await db.flush()
+
+    # 상태가 실제로 바뀐 경우에만 이력 기록 (from=이전, to=변경 후)
+    if "status" in data and data["status"] != old_status:
+        db.add(RequestStatusHistory(
+            request_id=row.id,
+            from_status=old_status,
+            to_status=row.status,
+            changed_by_user_id=current["user_id"],
+            changed_by_label=current.get("name"),
+        ))
+        await db.flush()
 
     meta = {"request_id": row.id, "status": row.status}
     if row.status == "rejected" and row.reject_reason:

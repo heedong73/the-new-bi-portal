@@ -562,6 +562,15 @@
   - 프런트: ReportViewPage 보기 옵션에 '현재 뷰를 기본값으로 저장'/'기본 뷰 초기화'(can_manage). 로드 시 `bookmarksManager.applyState`로 적용, 저장은 `capture({allPages:true})`. reportsApi.saveDefaultView, EmbedInfo.defaultViewState
   - _Requirements: R9_
 
+- [x] 68. 서비스 센터 UX: 채팅 좌/우 분리 + 상태 변경 이력
+  - RequestComments를 메신저형으로: 현재 사용자(useAuthStore.user.id)와 작성자 비교 → 내 메시지=우측(파란 말풍선)/상대=좌측(회색 말풍선)
+  - 상태 변경 이력: `request_status_history` 테이블(mig c4e7a2b9f130 — from_status→to_status·changed_by·created_at) 신설, 요청 삭제 시 CASCADE. 생성(None→pending)·운영자 상태 변경 시 기록. RequestResponse.status_history + RequestDetailModal 타임라인(from→to·담당자·시각) 표시
+  - _Requirements: R17_
+
+- [x] 69. 버그 수정: 메일 스케줄 삭제 500 (mail_jobs FK CASCADE)
+  - 발송 이력(mail_jobs)이 있는 스케줄 삭제 시 FK 위반(ForeignKeyViolationError)으로 500 발생. `mail_jobs.mail_schedule_id` FK를 ON DELETE CASCADE로 변경(mig d5f8c1a63b40 + 모델 MailJob). 삭제 시 mail_jobs→export_jobs·report_image_paths까지 정리(발송 감사는 audit_logs 별도 보존)
+  - _Requirements: R16_
+
 ## v1.1+ (범위 외 - 참고)
 
 - [ ] 48. Job_Context 다중 부서 선택 (R1.7)

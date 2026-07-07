@@ -158,6 +158,42 @@ export default function RequestDetailModal({
                 <MetaRow label="완료예정">{fmtDate(r.expected_completion_date)}</MetaRow>
               </dl>
 
+              {r.status_history.length > 0 && (
+                <div className="mt-4 border-t border-slate-200 pt-4">
+                  <h3 className="mb-2 text-sm font-semibold text-slate-700">상태 변경 이력</h3>
+                  <ol className="space-y-2 border-l-2 border-slate-100 pl-3">
+                    {r.status_history.map((h) => (
+                      <li key={h.id} className="relative">
+                        <span className="absolute -left-[1.16rem] top-1 h-2 w-2 rounded-full border-2 border-white bg-slate-300" />
+                        <div className="flex flex-wrap items-center gap-1">
+                          {h.from_status ? (
+                            <>
+                              <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${REQUEST_STATUS_CLS[h.from_status]}`}>
+                                {REQUEST_STATUS_LABEL[h.from_status]}
+                              </span>
+                              <span className="text-slate-400">→</span>
+                              <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${REQUEST_STATUS_CLS[h.to_status]}`}>
+                                {REQUEST_STATUS_LABEL[h.to_status]}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs text-slate-500">요청 생성</span>
+                              <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${REQUEST_STATUS_CLS[h.to_status]}`}>
+                                {REQUEST_STATUS_LABEL[h.to_status]}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-slate-400">
+                          {h.changed_by_label ?? '-'} · {fmtDateTime(h.created_at)}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
               {isOperator && (
                 <div className="mt-4 border-t border-slate-200 pt-4">
                   <h3 className="mb-2 text-sm font-semibold text-slate-700">관리자 처리</h3>

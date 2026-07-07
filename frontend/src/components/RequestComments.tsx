@@ -1,12 +1,15 @@
-/** 서비스 센터 요청 댓글 스레드 (사용자/관리자 화면 공용).
+/** 서비스 센터 요청 댓글(대화) 스레드 — 메신저형 (사용자/관리자 화면 공용).
  *
- * 댓글 목록 표시 + 새 댓글 작성. 작성 성공 시 onAdded로 상위에 알려 목록을 갱신한다.
+ * 내가 보낸 메시지는 우측(파란 말풍선), 상대방 메시지는 좌측(회색 말풍선)으로 분리한다.
+ * "나" 판정은 현재 로그인 사용자 id와 작성자 id 비교(뷰어 기준 상대 정렬).
+ * 작성 성공 시 onAdded로 상위에 알려 목록을 갱신한다.
  */
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Send, ShieldCheck, User as UserIcon } from 'lucide-react'
+import { Send, ShieldCheck } from 'lucide-react'
 
 import { requestsApi } from '@/api/requestsApi'
+import { useAuthStore } from '@/stores/useAuthStore'
 import type { RequestComment } from '@/types/request'
 
 function formatDateTime(iso: string): string {
@@ -25,6 +28,7 @@ export default function RequestComments({
   onAdded: () => void
 }) {
   const [text, setText] = useState('')
+  const myId = useAuthStore((s) => s.user?.id)
 
   const addMutation = useMutation({
     mutationFn: () => requestsApi.addComment(requestId, text.trim()),
@@ -41,28 +45,30 @@ export default function RequestComments({
       <div className="text-xs font-medium text-slate-500">대화 {comments.length > 0 && `(${comments.length})`}</div>
 
       {comments.length > 0 && (
-        <ul className="mt-2 space-y-2">
-          {comments.map((c) => (
-            <li
-              key={c.id}
-              className={`rounded-lg px-3 py-2 text-sm ${
-                c.is_operator ? 'bg-blue-50' : 'bg-slate-50'
-              }`}
-            >
-              <div className="mb-0.5 flex items-center gap-1.5 text-xs text-slate-500">
-                {c.is_operator ? (
-                  <ShieldCheck className="h-3.5 w-3.5 text-blue-500" />
-                ) : (
-                  <UserIcon className="h-3.5 w-3.5 text-slate-400" />
-                )}
-                <span className="font-medium text-slate-600">{c.author_label ?? '-'}</span>
-                {c.is_operator && <span className="text-blue-600">운영자</span>}
-                <span className="text-slate-300">·</span>
-                <time>{formatDateTime(c.created_at)}</time>
-              </div>
-              <p className="whitespace-pre-wrap text-slate-700">{c.body}</p>
-            </li>
-          ))}
+        <ul className="mt-2 space-y-3">
+          {comments.map((c) => {
+            const mine = myId != null && c.author_user_id === myId
+            return (
+              <li key={c.id} className={`flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                <div className="mb-0.5 flex items-center gap-1.5 px-1 text-xs text-slate-400">
+                  {!mine && c.is_operator && <ShieldCheck className="h-3.5 w-3.5 text-blue-500" />}
+                  <span className="font-medium text-slate-500">{mine ? '나' : (c.author_label ?? '-')}</span>
+                  {c.is_operator && !mine && <span className="text-blue-600">운영자</span>}
+                  <span className="text-slate-300">·</span>
+                  <time>{formatDateTime(c.created_at)}</time>
+                </div>
+                <div
+                  className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${
+                    mine
+                      ? 'rounded-tr-sm bg-blue-600 text-white'
+                      : 'rounded-tl-sm bg-slate-100 text-slate-800'
+                  }`}
+                >
+                  {c.body}
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
 
@@ -71,14 +77,14 @@ export default function RequestComments({
           e.preventDefault()
           if (canSend) addMutation.mutate()
         }}
-        className="mt-2 flex items-end gap-2"
+        className="mt-3 flex items-end gap-2"
       >
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={2}
           maxLength={10000}
-          placeholder="댓글을 입력하세요"
+          placeholder="메시지를 입력하세요"
           aria-label="댓글 입력"
           className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
         />
