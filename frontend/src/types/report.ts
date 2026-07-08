@@ -13,9 +13,24 @@ export interface ReportSummary {
   folder_id?: number | null
   is_published: boolean
   can_manage?: boolean
+  can_download?: boolean
   author_label?: string | null
   updated_at?: string | null
   is_favorite?: boolean
+}
+
+/** Export 다운로드 포맷. PDF/PPTX/PNG=렌더링, PBIX=원본 파일. */
+export type ExportFormat = 'PDF' | 'PPTX' | 'PNG' | 'PBIX'
+
+/** Export 작업 상태 (GET /api/exports/{id}). status: NotStarted/Running/Succeeded/Failed. */
+export interface ExportStatusResponse {
+  export_job_id: number
+  status: string
+  export_format?: string | null
+  file_name?: string | null
+  mime_type?: string | null
+  download_url?: string
+  error_message?: string
 }
 
 /** 폴더 트리 노드 (자식 폴더 + 권한 필터된 레포트 ID 포함). */

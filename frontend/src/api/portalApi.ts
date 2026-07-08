@@ -1,6 +1,8 @@
 /** 레포트 카탈로그/폴더 API 래퍼 (BIP 포털). */
-import apiClient from '@/api/client'
-import type { EmbedInfo, FolderTreeNode, RefreshStatus, ReportSummary } from '@/types/report'
+import apiClient, { API_BASE_URL } from '@/api/client'
+import type {
+  EmbedInfo, ExportFormat, ExportStatusResponse, FolderTreeNode, RefreshStatus, ReportSummary,
+} from '@/types/report'
 
 export const foldersApi = {
   /** GET /api/report-folders/tree — VIEW 권한 필터된 폴더 트리. */
@@ -65,6 +67,20 @@ export const reportsApi = {
   /** DELETE /api/reports/{id}/favorite — 즐겨찾기 해제. */
   removeFavorite: (reportDbId: number) =>
     apiClient.del<void>(`/api/reports/${reportDbId}/favorite`),
+
+  /** POST /api/reports/{id}/export — Export 요청(DOWNLOAD 권한). 202 {export_job_id}. */
+  startExport: (reportDbId: number, format: ExportFormat) =>
+    apiClient.post<{ export_job_id: number; status: string }>(
+      `/api/reports/${reportDbId}/export`, { export_format: format },
+    ),
+}
+
+export const exportsApi = {
+  /** GET /api/exports/{id} — Export 작업 상태(+ 완료 시 download_url). */
+  status: (exportJobId: number, signal?: AbortSignal) =>
+    apiClient.get<ExportStatusResponse>(`/api/exports/${exportJobId}`, { signal }),
+  /** 완료된 Export 파일의 다운로드 URL(브라우저 직접 다운로드용, 세션 쿠키 동반). */
+  fileUrl: (exportJobId: number) => `${API_BASE_URL}/api/exports/${exportJobId}/file`,
 }
 
 export const datasetsApi = {

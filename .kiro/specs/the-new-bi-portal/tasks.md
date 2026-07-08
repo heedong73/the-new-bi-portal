@@ -48,7 +48,7 @@
 
 - **WP7. Export / 메일 발송** [완료]
   - 7.1 StorageService(local/nas) (task 26 / R16,R31)
-  - 7.2 독립 Export API(DOWNLOAD) (task 25 / R9.6,R9.7,R8)
+  - 7.2 독립 Export API(DOWNLOAD) + 레포트 뷰 다운로드 버튼(PDF/PPTX/PNG + 원본 PBIX, can_download 게이트) (task 25,71 / R9.6,R9.7,R8)
   - 7.3 메일 스케줄 CRUD(친화 스케줄, 수신자 USER/GROUP/DEPT/EMAIL, 받는사람/참조/숨은참조, 페이지 다중·순서, **sender_email**) (task 27,56,70 / R16)
   - 7.4 Export→ZIP→Image 파이프라인(**페이지별 export**) (task 28,56 / R16.3-16.9)
   - 7.5 Pillow 이미지 리사이즈 (task 29 / R16.17)
@@ -576,6 +576,12 @@
   - `resolve_recipients`가 field별로 그룹핑하여 `ResolvedRecipients(to/cc/bcc)` 반환 + 우선순위(to>cc>bcc) 전역 중복 제거. `build_message`는 To/Cc 헤더만 설정(**Bcc 헤더 미설정**), 실제 발송은 envelope(to+cc+bcc)로만 하여 숨은참조 비노출. to가 비면 To=`undisclosed-recipients:;`. `send_with_retry`/`_send_once`는 평면 envelope 리스트 유지(request_notify 공용)
   - 스키마 RecipientCreate/Response.field, 라우트 create/update/_build_response 반영. 프런트: RecipientItem.field, MailSchedulePage 추가행 칸 셀렉트 + 리스트 인라인 칸 배지/드롭다운(받는사람/참조/숨은참조)
   - _Requirements: R16_
+
+- [x] 71. 레포트 뷰 다운로드 버튼(Export PDF/PPTX/PNG + 원본 PBIX)
+  - 레포트 조회 화면 헤더에 '다운로드' 드롭다운 추가. **DOWNLOAD 권한자에게만 노출**(대부분 미보유) — 목록 응답 `ReportResponse.can_download`(accessible_report_ids(DOWNLOAD))로 게이트, 백엔드는 `POST /api/reports/{id}/export`에서 DOWNLOAD 재검증
+  - 포맷: PDF/PowerPoint(PPTX)/이미지(PNG)=ExportTo 렌더링, **원본 Power BI 파일(.pbix)**=`GET .../reports/{id}/Export`. PBIX는 ExportTo/폴링 없이 단일 다운로드 후 StorageService 저장(`export_service.download_report_pbix`, `export_poll` PBIX 분기, 저장·완료는 `_store_and_finalize` 공용). ExportRequest 포맷 PDF|PNG|PPTX|PBIX
+  - 비동기 흐름: 클릭 → ExportJob 생성/enqueue(202) → 우측 상단 BackgroundTaskDock가 `GET /api/exports/{id}` 폴링(kind 'export') → 완료 시 `/api/exports/{id}/file` 자동 다운로드(1회) → 실패 시 오류 표시. useTaskStore 'export' kind + exportJobId/downloaded
+  - _Requirements: R9.6, R9.7, R8_
 
 ## v1.1+ (범위 외 - 참고)
 

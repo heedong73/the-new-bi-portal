@@ -1,7 +1,7 @@
 /** 레포트 권한 부여 패널 (T-추가) — VIEW/DOWNLOAD/REFRESH/MANAGE 주체별 부여·회수. */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 
 import { reportAdminApi } from '@/api/reportAdminApi'
 import { usersApi, groupsApi } from '@/api/adminApi'
@@ -72,6 +72,23 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
   }
 
   const permLabel = (code: string) => PERMISSIONS.find((p) => p.value === code)?.label ?? code
+  const permOrder = (code: string) => {
+    const i = PERMISSIONS.findIndex((p) => p.value === code)
+    return i === -1 ? 999 : i
+  }
+  // 주체(주체유형+ID)별로 묶어 한 줄에 표시. 각 그룹의 권한은 PERMISSIONS 정의 순으로 정렬.
+  const groupedPerms = Object.values(
+    perms.reduce<Record<string, { key: string; items: ReportPermission[] }>>((acc, p) => {
+      const key = `${p.subject_type}#${p.subject_id}`
+      if (!acc[key]) acc[key] = { key, items: [] }
+      acc[key].items.push(p)
+      return acc
+    }, {}),
+  ).map((g) => ({
+    ...g,
+    items: [...g.items].sort((a, b) => permOrder(a.permission) - permOrder(b.permission)),
+  }))
+
   const canGrant = subjectId.trim() !== '' && selectedPerms.length > 0 && !grantMutation.isPending
 
   return (
@@ -131,15 +148,23 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
         <p className="text-sm text-slate-400">부여된 권한이 없습니다. (System_Operator는 항상 전체 접근)</p>
       ) : (
         <ul className="divide-y divide-slate-200">
-          {perms.map((p) => (
-            <li key={p.id} className="flex items-center justify-between py-2 text-sm">
-              <span className="text-slate-700">
-                {subjectLabel(p)} · <span className="font-medium">{permLabel(p.permission)}</span>
-              </span>
-              <button type="button" onClick={() => revokeMutation.mutate(p.id)} aria-label={`권한 ${p.id} 회수`}
-                className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50">
-                <Trash2 className="h-3.5 w-3.5" /> 회수
-              </button>
+          {groupedPerms.map((g) => (
+            <li key={g.key} className="flex items-start gap-2 py-2 text-sm">
+              <span className="mt-0.5 shrink-0 font-medium text-slate-700">{subjectLabel(g.items[0])}</span>
+              <span className="mt-0.5 shrink-0 text-slate-300">-</span>
+              <div className="flex flex-1 flex-wrap gap-1">
+                {g.items.map((p) => (
+                  <span key={p.id}
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white py-0.5 pl-2 pr-1 text-xs text-slate-600">
+                    {permLabel(p.permission)}
+                    <button type="button" onClick={() => revokeMutation.mutate(p.id)}
+                      aria-label={`${subjectLabel(g.items[0])} ${permLabel(p.permission)} 회수`}
+                      className="rounded-full p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-500">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
             </li>
           ))}
         </ul>

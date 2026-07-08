@@ -225,8 +225,8 @@ backend/app/
 | GET | `/api/reports/imports/{importId}` | PBIX Import 진행/결과 조회 | O | R12.4 |
 | GET | `/api/reports/{id}/embed` | Report 한정 Embed Token + 임베드 정보 발급(공통 기본 뷰 `defaultViewState` 포함) | 해당 Report 조회권 | R9.1, R9.3, R24.2 |
 | PUT | `/api/reports/{id}/default-view` | 공통 기본 뷰 상태(슬라이서/필터/페이지 = Power BI 북마크 state) 저장/초기화 — .pbix 수정 없이 모든 뷰어에 적용 | 해당 Report MANAGE_REPORT권 | R9 |
-| POST | `/api/reports/{id}/export` | Export to File 직접 요청(Worker 위임, 202 반환) | 해당 Report DOWNLOAD권 | R9.6 |
-| GET | `/api/exports/{id}` | Export 상태/결과 조회 + 다운로드 수단 | 요청자 본인 또는 O | R9.7 |
+| POST | `/api/reports/{id}/export` | Export 직접 요청(Worker 위임, 202 반환). 포맷 PDF/PPTX/PNG(ExportTo 렌더링) 또는 **PBIX(원본 파일, `GET .../reports/{id}/Export`)** — PBIX는 ExportTo/폴링 없이 단일 다운로드 후 저장, 동일 ExportJob 흐름 재사용 | 해당 Report DOWNLOAD권 | R9.6 |
+| GET | `/api/exports/{id}` | Export 상태/결과 조회 + 다운로드 수단(완료 시 `/api/exports/{id}/file`) | 요청자 본인 또는 O | R9.7 |
 | GET | `/api/reports/{id}/refresh-status` | 마지막 Refresh_Run + 다음 예약(Local_Time) | 해당 Report 조회권 | R10.1, R10.2 |
 | POST | `/api/datasets/{id}/refresh` | 수동 새로고침 트리거(Worker 위임, 진행중이면 차단) | 해당 Dataset refresh권 | R13 |
 | GET | `/api/refresh-history`, `/api/refresh-timetable`, `/api/refresh-schedules`, `/api/summary`, `/api/refresh-latest-date` | PRM 편입 화면 데이터(단일 일자 조회, latest-date=기본 선택 일자) | 모니터링 접근권 | R15.3 |

@@ -29,8 +29,8 @@ class DefaultViewUpdate(BaseModel):
     state: str | None = None
 
 class ExportRequest(BaseModel):
-    """독립 Export 요청 (T-25). 포맷: PDF | PNG | PPTX"""
-    export_format: str = Field(default="PDF", pattern="^(PDF|PNG|PPTX)$")
+    """독립 Export 요청 (T-25). 포맷: PDF | PNG | PPTX(렌더링) | PBIX(원본 파일)"""
+    export_format: str = Field(default="PDF", pattern="^(PDF|PNG|PPTX|PBIX)$")
 
 class ReportResponse(BaseModel):
     """레포트 응답 (목록/상세)."""
@@ -52,3 +52,4 @@ class ReportResponse(BaseModel):
     created_by_label: str | None = None
     created_at: datetime | None = None
     can_manage: bool = False  # MANAGE_REPORT 권한(레포트 교체 가능) 여부
+    can_download: bool = False  # DOWNLOAD 권한(Export/원본 다운로드 가능) 여부

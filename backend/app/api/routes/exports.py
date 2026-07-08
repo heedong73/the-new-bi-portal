@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app.core.constants import RoleCode, ExportStatus
 from app.core.deps import SessionDep, get_current_user
 from app.core.errors import NotFoundError, PermissionDeniedError
+from app.core.http_utils import content_disposition
 from app.models.mail import ExportJob
 from app.services.storage_service import get_storage_service
 
@@ -71,5 +72,5 @@ async def download_export_file(
     return StreamingResponse(
         file_obj,
         media_type=mime,
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        headers={"Content-Disposition": content_disposition(fname)},
     )

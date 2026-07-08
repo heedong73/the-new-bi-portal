@@ -13,18 +13,23 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { models, type Report } from 'powerbi-client'
 import {
   ArrowLeft, RefreshCw, Upload, X, AlertTriangle, Star,
-  Maximize2, Monitor, ScanLine, ChevronDown, Clock, Save, RotateCcw,
+  Maximize2, Monitor, ScanLine, ChevronDown, Clock, Save, RotateCcw, Download,
 } from 'lucide-react'
 
 import { datasetsApi, reportsApi } from '@/api/portalApi'
 import { ApiError } from '@/api/client'
-import { reportDisplayName, type RefreshStatus } from '@/types/report'
+import { reportDisplayName, type RefreshStatus, type ExportFormat } from '@/types/report'
 import { useTaskStore } from '@/stores/useTaskStore'
 import { useBeforeUnload } from '@/hooks/useBeforeUnload'
 import PowerBIEmbed from '@/components/embed/PowerBIEmbed'
 import RefreshStatusBadge from '@/components/refresh/RefreshStatusBadge'
 
 const REFRESH_TERMINAL_FAIL = ['Failed', 'Cancelled', 'Disabled']
+
+/** 다운로드 포맷 표시 라벨. */
+const EXPORT_FORMAT_LABEL: Record<ExportFormat, string> = {
+  PDF: 'PDF', PPTX: 'PowerPoint', PNG: '이미지', PBIX: '원본(.pbix)',
+}
 
 /** 요일(영문) → 한글 축약. */
 const WEEKDAY_KO: Record<string, string> = {
@@ -103,6 +108,7 @@ export default function ReportViewPage() {
   // 임베드된 Report 인스턴스 (보기 옵션 제어용)
   const reportRef = useRef<Report | null>(null)
   const [viewMenuOpen, setViewMenuOpen] = useState(false)
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
   const [schedOpen, setSchedOpen] = useState(false)
   // 레포트 페이지 목록 + 현재 페이지 (하단 탭 대신 헤더 드롭다운으로 전환)
   const [pages, setPages] = useState<{ name: string; displayName: string }[]>([])
@@ -286,6 +292,26 @@ export default function ReportViewPage() {
       queryClient.invalidateQueries({ queryKey: ['live-refresh', reportDbId] })
     },
   })
+
+  // 다운로드(Export): 포맷별 비동기 Export 요청 → 작업 도크가 진행/완료·자동 다운로드 처리.
+  const exportMutation = useMutation({
+    mutationFn: (format: ExportFormat) => reportsApi.startExport(reportDbId, format),
+    onSuccess: (res, format) => {
+      addTask({
+        id: `export-${res.export_job_id}`,
+        label: `${report ? reportDisplayName(report) : '레포트'} · ${EXPORT_FORMAT_LABEL[format]}`,
+        kind: 'export',
+        status: 'pending',
+        exportJobId: res.export_job_id,
+        startedAt: Date.now(),
+      })
+    },
+  })
+
+  function requestExport(format: ExportFormat) {
+    setDownloadMenuOpen(false)
+    exportMutation.mutate(format)
+  }
 
   const [replaceOpen, setReplaceOpen] = useState(false)
   const [replaceFile, setReplaceFile] = useState<File | null>(null)
@@ -525,6 +551,48 @@ export default function ReportViewPage() {
             )}
           </div>
 
+          {/* 다운로드 드롭다운 (DOWNLOAD 권한자에게만 노출) */}
+          {report?.can_download && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setDownloadMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={downloadMenuOpen}
+                disabled={exportMutation.isPending}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Download className="h-4 w-4" />
+                다운로드
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+              {downloadMenuOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-hidden="true"
+                    tabIndex={-1}
+                    className="fixed inset-0 z-10 cursor-default"
+                    onClick={() => setDownloadMenuOpen(false)}
+                  />
+                  <div role="menu" className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                    <p className="px-3 py-1.5 text-xs font-medium text-slate-400">렌더링 파일</p>
+                    <button type="button" role="menuitem" onClick={() => requestExport('PDF')}
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">PDF</button>
+                    <button type="button" role="menuitem" onClick={() => requestExport('PPTX')}
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
+                    <button type="button" role="menuitem" onClick={() => requestExport('PNG')}
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">이미지 (PNG)</button>
+                    <div className="my-1 border-t border-slate-100" />
+                    <p className="px-3 py-1.5 text-xs font-medium text-slate-400">원본 파일</p>
+                    <button type="button" role="menuitem" onClick={() => requestExport('PBIX')}
+                      className="flex w-full items-center px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">Power BI 원본 (.pbix)</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {report?.can_manage && (
             <button
               type="button"
@@ -563,6 +631,11 @@ export default function ReportViewPage() {
       {refreshFailed && (
         <div role="alert" className="bg-red-50 px-5 py-2 text-sm text-red-600">
           {refreshFailed}
+        </div>
+      )}
+      {exportMutation.isError && (
+        <div role="alert" className="bg-red-50 px-5 py-2 text-sm text-red-600">
+          다운로드 요청에 실패했습니다. 잠시 후 다시 시도해 주세요.
         </div>
       )}
       {newDataAvailable && (

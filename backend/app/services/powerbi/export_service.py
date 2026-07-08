@@ -13,6 +13,8 @@ live 모드: httpx + Bearer token, timeout = connect 5s / read 60s.
 from __future__ import annotations
 
 import asyncio
+import io
+import zipfile
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,7 +47,13 @@ _MOCK_PNG_BYTES: bytes = (
     b"\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
+# 원본 .pbix 다운로드(Export Report API)용 — pbix 는 zip 컨테이너, mock 은 빈 zip.
+PBIX_MIME = "application/octet-stream"
+_MOCK_PBIX_BYTES: bytes = b"PK\x05\x06" + b"\x00" * 18  # 최소 유효 zip(EOCD)
+
 _EXPORT_TIMEOUT = httpx.Timeout(connect=5.0, read=60.0, write=30.0, pool=30.0)
+# 원본 .pbix 는 용량이 클 수 있어 read 타임아웃을 넉넉히 둔다.
+_PBIX_TIMEOUT = httpx.Timeout(connect=5.0, read=300.0, write=60.0, pool=60.0)
 
 
 @dataclass
@@ -201,6 +209,50 @@ async def get_export_status(
     )
 
 
+def _finalize_download(
+    data: bytes,
+    fmt: str,
+    report_name: str,
+    resp_content_type: str | None,
+) -> ExportFileResult:
+    """다운로드 바이트를 실제 형식에 맞는 파일명/타입으로 정규화한다.
+
+    Power BI PNG export는 페이지가 여럿이면 result.zip(페이지별 PNG)으로 반환된다.
+    그대로 ``.png``로 저장하면 실제 내용이 zip이라 이미지로 열리지 않는다.
+      - PNG + zip + 이미지 1장   → 그 PNG만 꺼내 ``.png``로 제공
+      - PNG + zip + 이미지 여러장 → zip 그대로 ``.zip``으로 제공(단일 PNG 불가)
+      - 그 외(PDF/PPTX/단일 PNG)  → 원본 그대로 해당 확장자로 제공
+    주의: PPTX 자체가 zip 컨테이너이므로 **PNG일 때만** 언랩한다.
+    """
+    info = EXPORT_FORMATS.get(fmt, EXPORT_FORMATS["PDF"])
+    default = ExportFileResult(
+        data=data,
+        content_type=resp_content_type or info["mime"],
+        file_name=f"{report_name}{info['ext']}",
+    )
+    is_zip = len(data) >= 4 and data[:4] == b"PK\x03\x04"
+    if fmt != "PNG" or not is_zip:
+        return default
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            images = [
+                zf.read(i)
+                for i in sorted(zf.infolist(), key=lambda x: x.filename)
+                if not i.is_dir() and i.filename.lower().endswith(".png")
+            ]
+            images = [b for b in images if b]
+    except zipfile.BadZipFile:
+        return default
+    if len(images) == 1:
+        return ExportFileResult(
+            data=images[0], content_type="image/png", file_name=f"{report_name}.png",
+        )
+    # 이미지가 여러 장(또는 0장)이면 zip 그대로 제공(.png로 위장 금지)
+    return ExportFileResult(
+        data=data, content_type="application/zip", file_name=f"{report_name}.zip",
+    )
+
+
 async def download_export_file(
     access_token: str,
     workspace_id: str,
@@ -235,15 +287,65 @@ async def download_export_file(
     if resp.status_code >= 400:
         raise PowerBIError(f"Export 파일 다운로드 실패 (HTTP {resp.status_code}).")
 
-    info = EXPORT_FORMATS.get(fmt, EXPORT_FORMATS["PDF"])
-    content_type = resp.headers.get("Content-Type", info["mime"])
-    file_name = f"{report_name}{info['ext']}"
-
+    result = _finalize_download(
+        resp.content, fmt, report_name, resp.headers.get("Content-Type"),
+    )
     logger.info(
         "export_downloaded",
         export_id=export_id,
         size=len(resp.content),
-        content_type=content_type,
+        content_type=result.content_type,
+        file_name=result.file_name,
+    )
+    return result
+
+
+async def download_report_pbix(
+    access_token: str,
+    workspace_id: str,
+    report_id: str,
+    report_name: str,
+) -> ExportFileResult:
+    """원본 .pbix 파일을 다운로드한다 (GET .../reports/{id}/Export).
+
+    ExportTo(PDF/PPTX/PNG 렌더링)와 달리 Power BI 서비스에 게시된 원본 보고서
+    파일을 그대로 받는다. 폴링 없는 단일 GET이다. .pbix 업로드로 게시한 보고서는
+    대체로 다운로드 가능하나, 서비스에서 생성했거나 특정 조건의 보고서는 Power BI가
+    다운로드를 거부(4xx)할 수 있다. mock 모드는 최소 zip 바이트를 반환한다.
+    """
+    file_name = f"{report_name}.pbix"
+    if settings.APP_MODE == "mock":
+        return ExportFileResult(
+            data=_MOCK_PBIX_BYTES, content_type=PBIX_MIME, file_name=file_name,
+        )
+
+    url = (
+        f"{settings.POWERBI_API_BASE_URL}/groups/{workspace_id}"
+        f"/reports/{report_id}/Export"
+    )
+    try:
+        async with httpx.AsyncClient(
+            timeout=_PBIX_TIMEOUT, verify=settings.POWERBI_VERIFY_SSL
+        ) as client:
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+    except httpx.HTTPError as exc:
+        raise PowerBIError("원본(.pbix) 다운로드 중 연결 오류가 발생했습니다.") from exc
+
+    if resp.status_code >= 400:
+        raise PowerBIError(
+            f"원본(.pbix) 다운로드 실패 (HTTP {resp.status_code}). "
+            "서비스에서 생성됐거나 다운로드가 허용되지 않는 보고서일 수 있습니다."
+        )
+
+    content_type = resp.headers.get("Content-Type", PBIX_MIME)
+    logger.info(
+        "pbix_downloaded",
+        workspace_id=workspace_id,
+        report_id=report_id,
+        size=len(resp.content),
     )
     return ExportFileResult(
         data=resp.content,

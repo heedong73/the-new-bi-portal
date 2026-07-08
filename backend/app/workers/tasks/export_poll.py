@@ -29,6 +29,7 @@ from app.models.mail import ExportJob
 from app.models.report import Report
 from app.services.powerbi.export_service import (
     download_export_file,
+    download_report_pbix,
     poll_until_done,
     start_export,
 )
@@ -44,6 +45,42 @@ def _storage_path(export_job_id: int, file_name: str) -> str:
     """저장소 상대 경로: export/{년}/{월}/{id}_{파일명}."""
     now = datetime.now(timezone.utc)
     return f"export/{now.year}/{now.month:02d}/{export_job_id}_{file_name}"
+
+
+async def _store_and_finalize(export_job_id: int, file_result: Any) -> dict[str, Any]:
+    """다운로드한 파일을 StorageService에 저장하고 ExportJob을 완료 처리한다.
+
+    ExportTo(PDF/PPTX/PNG)와 원본 .pbix 다운로드가 공통으로 사용한다.
+    """
+    rel_path = _storage_path(export_job_id, file_result.file_name)
+    storage = get_storage_service()
+    try:
+        stored = storage.save(rel_path, file_result.data, file_result.content_type)
+    except Exception as exc:
+        async with AsyncSessionLocal() as db:
+            job = await db.scalar(select(ExportJob).where(ExportJob.id == export_job_id))
+            if job:
+                job.status = ExportStatus.FAILED
+                job.error_message = f"파일 저장 오류: {exc}"
+                await db.commit()
+        return {"status": "Failed", "error": str(exc)}
+
+    async with AsyncSessionLocal() as db:
+        job = await db.scalar(select(ExportJob).where(ExportJob.id == export_job_id))
+        if job:
+            job.status = ExportStatus.SUCCEEDED
+            job.file_path = stored.relative_path
+            job.file_name = file_result.file_name
+            job.mime_type = file_result.content_type
+            await db.commit()
+
+    logger.info("export_succeeded", export_job_id=export_job_id, file_path=stored.relative_path)
+    return {
+        "status": "Succeeded",
+        "export_job_id": export_job_id,
+        "file_path": stored.relative_path,
+        "file_name": file_result.file_name,
+    }
 
 
 async def _run_export(export_job_id: int) -> dict[str, Any]:
@@ -79,6 +116,22 @@ async def _run_export(export_job_id: int) -> dict[str, Any]:
     else:
         token_service = TokenService(settings=settings, redis=redis_client)
     access_token = await token_service.get_token()
+
+    # 원본 .pbix: ExportTo/폴링 없이 단일 GET(Export Report API)으로 받아 바로 저장.
+    if export_format.upper() == "PBIX":
+        try:
+            file_result = await download_report_pbix(
+                access_token, workspace_id, powerbi_report_id, report_name,
+            )
+        except (PowerBIError, Exception) as exc:
+            async with AsyncSessionLocal() as db:
+                job = await db.scalar(select(ExportJob).where(ExportJob.id == export_job_id))
+                if job:
+                    job.status = ExportStatus.FAILED
+                    job.error_message = f"원본(.pbix) 다운로드 오류: {exc}"
+                    await db.commit()
+            return {"status": "Failed", "error": str(exc)}
+        return await _store_and_finalize(export_job_id, file_result)
 
     # ExportTo 시작
     try:
@@ -142,36 +195,7 @@ async def _run_export(export_job_id: int) -> dict[str, Any]:
                 await db.commit()
         return {"status": "Failed", "error": str(exc)}
 
-    rel_path = _storage_path(export_job_id, file_result.file_name)
-    storage = get_storage_service()
-    try:
-        stored = storage.save(rel_path, file_result.data, file_result.content_type)
-    except Exception as exc:
-        async with AsyncSessionLocal() as db:
-            job = await db.scalar(select(ExportJob).where(ExportJob.id == export_job_id))
-            if job:
-                job.status = ExportStatus.FAILED
-                job.error_message = f"파일 저장 오류: {exc}"
-                await db.commit()
-        return {"status": "Failed", "error": str(exc)}
-
-    # 완료 갱신
-    async with AsyncSessionLocal() as db:
-        job = await db.scalar(select(ExportJob).where(ExportJob.id == export_job_id))
-        if job:
-            job.status = ExportStatus.SUCCEEDED
-            job.file_path = stored.relative_path
-            job.file_name = file_result.file_name
-            job.mime_type = file_result.content_type
-            await db.commit()
-
-    logger.info("export_succeeded", export_job_id=export_job_id, file_path=stored.relative_path)
-    return {
-        "status": "Succeeded",
-        "export_job_id": export_job_id,
-        "file_path": stored.relative_path,
-        "file_name": file_result.file_name,
-    }
+    return await _store_and_finalize(export_job_id, file_result)
 
 
 @celery_app.task(name="bip.export_poll")

@@ -9,7 +9,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export type TaskStatus = 'pending' | 'success' | 'error'
-export type TaskKind = 'pbix_import' | 'pbix_replace' | 'refresh' | 'collect'
+export type TaskKind = 'pbix_import' | 'pbix_replace' | 'refresh' | 'collect' | 'export'
 
 export interface BgTask {
   id: string // celery task_id (또는 고유 키)
@@ -22,6 +22,8 @@ export interface BgTask {
   baseline?: string | null // (legacy) 트리거 시점 마지막 새로고침 시각
   seenRunning?: boolean // refresh: 진행 중(Unknown) 상태를 한 번이라도 관측했는지
   startedAt?: number // 타임아웃/영속 정리 판정용 (ms)
+  exportJobId?: number // export: 폴링/다운로드할 ExportJob id
+  downloaded?: boolean // export: 자동 다운로드를 이미 트리거했는지(중복 방지)
 }
 
 interface TaskState {

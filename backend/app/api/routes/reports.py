@@ -79,6 +79,9 @@ async def list_reports(
     manage_ids = await permission_service.accessible_report_ids(
         db, current["user_id"], PermissionAction.MANAGE_REPORT, roles=current.get("roles")
     )
+    download_ids = await permission_service.accessible_report_ids(
+        db, current["user_id"], PermissionAction.DOWNLOAD, roles=current.get("roles")
+    )
     fav_ids = {
         rid for (rid,) in (await db.execute(
             select(ReportFavorite.report_id).where(ReportFavorite.user_id == current["user_id"])
@@ -93,6 +96,7 @@ async def list_reports(
         if r.id in accessible:
             resp = _to_response(r)
             resp.can_manage = r.id in manage_ids
+            resp.can_download = r.id in download_ids
             resp.is_favorite = r.id in fav_ids
             result.append(resp)
     return result

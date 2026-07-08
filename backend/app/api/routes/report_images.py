@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app.core.constants import PermissionAction, RoleCode
 from app.core.deps import SessionDep, get_current_user
 from app.core.errors import NotFoundError, PermissionDeniedError
+from app.core.http_utils import content_disposition
 from app.models.mail import MailJob, MailSchedule, ReportImagePath
 from app.services import permission_service
 from app.services.storage_service import get_storage_service
@@ -65,5 +66,5 @@ async def download_report_image(
     return StreamingResponse(
         file_obj,
         media_type=mime,
-        headers={"Content-Disposition": f'inline; filename="{fname}"'},
+        headers={"Content-Disposition": content_disposition(fname, inline=True)},
     )
