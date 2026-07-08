@@ -100,6 +100,7 @@ async def _build_response(db: SessionDep, schedule: MailSchedule) -> MailSchedul
                 recipient_type=r.recipient_type,
                 recipient_id=r.recipient_id,
                 email=r.email,
+                field=r.field,
             )
             for r in recipients
         ],
@@ -189,6 +190,7 @@ async def create_mail_schedule(
             recipient_type=r.recipient_type,
             recipient_id=r.recipient_id,
             email=str(r.email) if r.email else None,
+            field=r.field,
         ))
 
     # 페이지 저장
@@ -289,6 +291,7 @@ async def update_mail_schedule(
                 recipient_type=r.recipient_type,
                 recipient_id=r.recipient_id,
                 email=str(r.email) if r.email else None,
+                field=r.field,
             ))
 
     # pages 교체

@@ -4,9 +4,9 @@
  * Export 형식 → 메일 제목 → 상단/하단 안내문구 → 수신자 → 발송 스케줄(주기/시간/기간)
  * → 발송 제외(주말/공휴일)/활성화. 요구사항: R16.
  */
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, X, ArrowUp, ArrowDown, GripVertical } from 'lucide-react'
+import { Plus, Trash2, X, ArrowUp, ArrowDown } from 'lucide-react'
 
 import { mailSchedulesApi } from '@/api/mailApi'
 import { reportAdminApi } from '@/api/reportAdminApi'
@@ -16,6 +16,7 @@ import RichTextEditor from '@/components/RichTextEditor'
 import type {
   MailSchedule,
   MailScheduleCreate,
+  RecipientField,
   RecipientItem,
   RecipientType,
   ScheduleFreq,
@@ -24,6 +25,16 @@ import type {
 const RECIPIENT_TYPES: RecipientType[] = ['USER', 'GROUP', 'DEPARTMENT', 'EMAIL']
 const RECIPIENT_LABEL: Record<RecipientType, string> = {
   USER: '사용자', GROUP: '그룹', DEPARTMENT: '부서', EMAIL: '직접입력',
+}
+// 수신 칸(받는사람/참조/숨은참조)
+const RECIPIENT_FIELDS: RecipientField[] = ['to', 'cc', 'bcc']
+const RECIPIENT_FIELD_LABEL: Record<RecipientField, string> = {
+  to: '받는사람', cc: '참조', bcc: '숨은참조',
+}
+const RECIPIENT_FIELD_BADGE: Record<RecipientField, string> = {
+  to: 'bg-slate-100 text-slate-600',
+  cc: 'bg-sky-50 text-sky-700',
+  bcc: 'bg-violet-50 text-violet-700',
 }
 const WEEKDAYS: { v: number; l: string }[] = [
   { v: 0, l: '일' }, { v: 1, l: '월' }, { v: 2, l: '화' }, { v: 3, l: '수' },
@@ -204,11 +215,11 @@ export default function MailSchedulePage() {
     })
   }
 
-  // 수신자 입력창(1개) → 추가 버튼으로 리스트에 append. 매번 입력행이 늘지 않도록.
+  // 수신자 입력창(1개) → 추가 버튼으로 칸(받는사람/참조/숨은참조)별 chip 그룹에 append.
+  const [newRecipField, setNewRecipField] = useState<RecipientField>('to')
   const [newRecipType, setNewRecipType] = useState<RecipientType>('USER')
   const [newRecipEmail, setNewRecipEmail] = useState('')
   const [newRecipId, setNewRecipId] = useState('')
-  const dragIndex = useRef<number | null>(null)
 
   function addRecipientFromInput() {
     setForm((f) => {
@@ -216,38 +227,18 @@ export default function MailSchedulePage() {
         const email = newRecipEmail.trim()
         if (!email) return f
         if (f.recipients.some((r) => r.recipient_type === 'EMAIL' && (r.email ?? '').toLowerCase() === email.toLowerCase())) return f
-        return { ...f, recipients: [...f.recipients, { recipient_type: 'EMAIL', email }] }
+        return { ...f, recipients: [...f.recipients, { recipient_type: 'EMAIL', email, field: newRecipField }] }
       }
       const id = Number(newRecipId)
       if (!id) return f
       if (f.recipients.some((r) => r.recipient_type === newRecipType && r.recipient_id === id)) return f
-      return { ...f, recipients: [...f.recipients, { recipient_type: newRecipType, recipient_id: id }] }
+      return { ...f, recipients: [...f.recipients, { recipient_type: newRecipType, recipient_id: id, field: newRecipField }] }
     })
     setNewRecipEmail('')
     setNewRecipId('')
   }
   function removeRecipient(i: number) {
     setForm((f) => ({ ...f, recipients: f.recipients.filter((_, idx) => idx !== i) }))
-  }
-  function moveRecipient(i: number, dir: -1 | 1) {
-    setForm((f) => {
-      const arr = [...f.recipients]
-      const j = i + dir
-      if (j < 0 || j >= arr.length) return f
-      ;[arr[i], arr[j]] = [arr[j], arr[i]]
-      return { ...f, recipients: arr }
-    })
-  }
-  function dropRecipient(to: number) {
-    const from = dragIndex.current
-    dragIndex.current = null
-    if (from === null || from === to) return
-    setForm((f) => {
-      const arr = [...f.recipients]
-      const [m] = arr.splice(from, 1)
-      arr.splice(to, 0, m)
-      return { ...f, recipients: arr }
-    })
   }
   const newRecipValid = newRecipType === 'EMAIL' ? newRecipEmail.trim() !== '' : newRecipId !== ''
 
@@ -312,7 +303,7 @@ export default function MailSchedulePage() {
       {/* 생성/수정 폼 (모달) */}
       {editingId !== null && (
         <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
-          <div className="my-8 w-full max-w-5xl rounded-2xl bg-white p-6 shadow-2xl">
+          <div className="my-8 w-full max-w-7xl rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-800">
                 {editingId === 'new' ? '새 메일 스케줄' : '메일 스케줄 수정'}
@@ -323,7 +314,7 @@ export default function MailSchedulePage() {
             </div>
 
             <form onSubmit={(e) => { e.preventDefault(); if (canSave) saveMutation.mutate() }} className="space-y-4">
-              <div className="grid grid-cols-1 gap-x-6 gap-y-4 lg:grid-cols-2 lg:items-start">
+              <div className="grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2 xl:grid-cols-3 xl:items-start">
                 <div className="space-y-4">
               {/* 1. 스케줄명 */}
               <Field label="스케줄명">
@@ -412,21 +403,12 @@ export default function MailSchedulePage() {
                 </div>
 
                 <div className="space-y-4">
-              {/* 5. 메일 제목(수신자에게 표시) */}
+              {/* 메일 내용: 제목 + 상단/하단 안내문구 */}
               <Field label="메일 제목 (수신자에게 표시)">
                 <input value={form.subject_template ?? ''} placeholder="예: {date} 일일 보고서"
                   onChange={(e) => setField('subject_template', e.target.value)} className={inputCls} />
               </Field>
 
-              {/* 5-1. 보내는 사람(From) — 비우면 서버 기본값 */}
-              <Field label="보내는 사람 이메일 (선택)">
-                <input type="email" value={form.sender_email ?? ''} placeholder="비우면 기본 발신 주소로 발송"
-                  aria-label="보내는 사람 이메일"
-                  onChange={(e) => setField('sender_email', e.target.value)} className={inputCls} />
-                <p className="mt-1 text-xs text-slate-400">비우면 시스템 기본 발신 주소로 발송됩니다. 메일 서버 정책상 허용되지 않는 주소는 발송이 거부될 수 있습니다.</p>
-              </Field>
-
-              {/* 6/7. 상단/하단 안내문구 (리치 텍스트) */}
               <Field label="상단 안내문구">
                 <RichTextEditor value={form.body_header ?? ''} ariaLabel="상단 안내문구"
                   onChange={(html) => setField('body_header', html)} />
@@ -435,14 +417,29 @@ export default function MailSchedulePage() {
                 <RichTextEditor value={form.body_footer ?? ''} ariaLabel="하단 안내문구"
                   onChange={(html) => setField('body_footer', html)} minHeight={72} />
               </Field>
+                </div>
 
-              {/* 8. 수신자 — 입력창 1개로 선택 후 "추가" → 아래 리스트로 표시 + 순서 변경 */}
+                <div className="space-y-4">
+              {/* 발신: 보내는 사람(From) — 비우면 서버 기본값 */}
+              <Field label="보내는 사람 이메일 (선택)">
+                <input type="email" value={form.sender_email ?? ''} placeholder="비우면 기본 발신 주소로 발송"
+                  aria-label="보내는 사람 이메일"
+                  onChange={(e) => setField('sender_email', e.target.value)} className={inputCls} />
+                <p className="mt-1 text-xs text-slate-400">비우면 시스템 기본 발신 주소로 발송됩니다. 메일 서버 정책상 허용되지 않는 주소는 발송이 거부될 수 있습니다.</p>
+              </Field>
+
+              {/* 수신자 — 유형·값 선택 후 칸(받는사람/참조/숨은참조)에 추가 → 칸별 chip 그룹 */}
               <div>
                 <span className="mb-2 block text-sm font-medium text-slate-700">수신자</span>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <select value={newRecipField} aria-label="수신 칸"
+                    onChange={(e) => setNewRecipField(e.target.value as RecipientField)}
+                    className={`${rowInputCls} w-24 shrink-0`}>
+                    {RECIPIENT_FIELDS.map((fld) => <option key={fld} value={fld}>{RECIPIENT_FIELD_LABEL[fld]}</option>)}
+                  </select>
                   <select value={newRecipType} aria-label="수신자 유형"
                     onChange={(e) => { setNewRecipType(e.target.value as RecipientType); setNewRecipEmail(''); setNewRecipId('') }}
-                    className={`${rowInputCls} w-28 shrink-0`}>
+                    className={`${rowInputCls} w-24 shrink-0`}>
                     {RECIPIENT_TYPES.map((t) => <option key={t} value={t}>{RECIPIENT_LABEL[t]}</option>)}
                   </select>
                   {newRecipType === 'EMAIL' ? (
@@ -475,34 +472,40 @@ export default function MailSchedulePage() {
                   </button>
                 </div>
 
-                {form.recipients.length === 0 ? (
-                  <p className="mt-2 text-xs text-slate-400">추가된 수신자가 없습니다. 위에서 선택 후 "추가"를 누르세요.</p>
-                ) : (
-                  <ul className="mt-2 space-y-1">
-                    {form.recipients.map((r, i) => {
-                      const label = recipientLabel(r)
-                      return (
-                        <li key={i} draggable
-                          onDragStart={() => { dragIndex.current = i }}
-                          onDragOver={(e) => e.preventDefault()}
-                          onDrop={() => dropRecipient(i)}
-                          className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm">
-                          <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-slate-300" />
-                          <span className="w-5 shrink-0 text-center text-xs font-medium text-slate-400">{i + 1}</span>
-                          <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{RECIPIENT_LABEL[r.recipient_type]}</span>
-                          <span className={`flex-1 truncate ${label ? 'text-slate-700' : 'text-amber-600'}`}>{label ?? '미선택'}</span>
-                          <button type="button" disabled={i === 0} onClick={() => moveRecipient(i, -1)} aria-label="위로"
-                            className="rounded p-1 text-slate-400 hover:bg-slate-100 disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button>
-                          <button type="button" disabled={i === form.recipients.length - 1} onClick={() => moveRecipient(i, 1)} aria-label="아래로"
-                            className="rounded p-1 text-slate-400 hover:bg-slate-100 disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button>
-                          <button type="button" onClick={() => removeRecipient(i)} aria-label={`수신자 ${i + 1} 삭제`}
-                            className="rounded p-1 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
+                {/* 칸별 chip 그룹: 받는사람/참조/숨은참조. pill 가로 wrap, x로 삭제 */}
+                <div className="mt-2 space-y-1.5">
+                  {RECIPIENT_FIELDS.map((fld) => {
+                    const items = form.recipients
+                      .map((r, i) => ({ r, i }))
+                      .filter((it) => (it.r.field ?? 'to') === fld)
+                    return (
+                      <div key={fld} className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                        <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${RECIPIENT_FIELD_BADGE[fld]}`}>
+                          {RECIPIENT_FIELD_LABEL[fld]}
+                        </span>
+                        {items.length === 0 ? (
+                          <span className="mt-1 text-xs text-slate-300">없음</span>
+                        ) : (
+                          <div className="flex flex-1 flex-wrap gap-1">
+                            {items.map((it) => {
+                              const label = recipientLabel(it.r)
+                              return (
+                                <span key={it.i}
+                                  className={`inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-2 pr-1 text-xs ${label ? 'text-slate-700' : 'text-amber-600'}`}>
+                                  <span className="text-[10px] text-slate-400">{RECIPIENT_LABEL[it.r.recipient_type]}</span>
+                                  <span className="max-w-[11rem] truncate">{label ?? '미선택'}</span>
+                                  <button type="button" onClick={() => removeRecipient(it.i)} aria-label="수신자 삭제"
+                                    className="rounded-full p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-500">
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
 
@@ -584,6 +587,8 @@ export default function MailSchedulePage() {
                   </label>
                 </div>
                 <p className="mt-2 text-xs text-slate-400">활성화를 끄면 스케줄은 저장되지만 발송되지 않습니다(일시중지). 다시 켜면 설정한 주기로 발송이 재개됩니다.</p>
+              </div>
+                </div>
               </div>
 
               {saveMutation.isError && (

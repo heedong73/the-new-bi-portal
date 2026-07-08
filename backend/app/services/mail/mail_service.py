@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.core.constants import AuditAction
 from app.core.logging import get_logger
 from app.services.audit_service import append_audit
+from app.services.mail.recipients import ResolvedRecipients
 from app.services.mail.template import (
     InlineImage,
     assemble_body,
@@ -48,13 +49,21 @@ def build_message(
     subject: str,
     html_body: str,
     sender: str,
-    recipients: list[str],
+    to: list[str],
     attachments: list[MailAttachment],
+    cc: list[str] | None = None,
 ) -> EmailMessage:
-    """multipart/related EmailMessage 조립. HTML 본문 + CID inline 이미지."""
+    """multipart/related EmailMessage 조립. HTML 본문 + CID inline 이미지.
+
+    To/Cc 헤더만 설정하고 Bcc 헤더는 넣지 않는다 — 숨은참조는 SMTP envelope
+    발송 대상에만 포함되어 다른 수신자에게 노출되지 않는다. to 가 비어 있으면
+    (참조/숨은참조 전용 발송) 유효 헤더를 위해 To 를 'undisclosed-recipients:;' 로 둔다.
+    """
     msg = EmailMessage()
     msg["From"] = sender
-    msg["To"] = ", ".join(recipients)
+    msg["To"] = ", ".join(to) if to else "undisclosed-recipients:;"
+    if cc:
+        msg["Cc"] = ", ".join(cc)
     msg["Subject"] = subject
 
     # 평문 대체본(text/plain): 모바일 그룹웨어 앱 알림/미리보기에 노출되므로
@@ -120,16 +129,19 @@ async def deliver_mail_job(
     body_header: str | None,
     body_footer: str | None,
     schedule_title: str,
-    recipients: list[str],
+    recipients: ResolvedRecipients,
     attachments: list[MailAttachment],
     sender_email: str | None = None,
 ) -> bool:
     """메일 본문 조립 → 발송(재시도) → Audit 기록. 성공 시 True.
 
     sender_email 이 지정되면 그 주소를 From 으로 쓰고, 없으면 서버 기본값(SMTP_FROM).
-    수신자가 없으면 발송하지 않고 실패 처리한다.
+    recipients 는 받는사람/참조/숨은참조로 그룹화된 ResolvedRecipients — To/Cc 헤더는
+    to/cc 로 구성하고, 실제 발송(envelope)은 bcc 포함 전체를 대상으로 한다.
+    수신자가 하나도 없으면 발송하지 않고 실패 처리한다.
     """
-    if not recipients:
+    envelope = recipients.envelope
+    if not envelope:
         await append_audit(
             db, action=AuditAction.MAIL_SEND, result="failure",
             resource_type="mail_job", resource_id=str(mail_job_id),
@@ -156,18 +168,19 @@ async def deliver_mail_job(
         subject=subject,
         html_body=html_body,
         sender=sender_email or settings.SMTP_FROM,
-        recipients=recipients,
+        to=recipients.to,
+        cc=recipients.cc,
         attachments=attachments,
     )
 
     try:
-        await send_with_retry(message, recipients)
+        await send_with_retry(message, envelope)
     except Exception as exc:  # noqa: BLE001
         await append_audit(
             db, action=AuditAction.MAIL_SEND, result="failure",
             resource_type="mail_job", resource_id=str(mail_job_id),
             meta={"mail_job_id": mail_job_id, "report_id": report_id,
-                  "reason": str(exc), "count": len(recipients)},
+                  "reason": str(exc), "count": recipients.total},
         )
         await db.commit()
         logger.error("mail_send_failed", mail_job_id=mail_job_id, error=str(exc))
@@ -177,8 +190,12 @@ async def deliver_mail_job(
         db, action=AuditAction.MAIL_SEND, result="success",
         resource_type="mail_job", resource_id=str(mail_job_id),
         meta={"mail_job_id": mail_job_id, "report_id": report_id,
-              "count": len(recipients)},
+              "count": recipients.total, "to": len(recipients.to),
+              "cc": len(recipients.cc), "bcc": len(recipients.bcc)},
     )
     await db.commit()
-    logger.info("mail_sent", mail_job_id=mail_job_id, recipients=len(recipients))
+    logger.info(
+        "mail_sent", mail_job_id=mail_job_id,
+        to=len(recipients.to), cc=len(recipients.cc), bcc=len(recipients.bcc),
+    )
     return True

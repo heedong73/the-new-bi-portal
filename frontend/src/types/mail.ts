@@ -2,11 +2,15 @@
 
 export type RecipientType = 'USER' | 'GROUP' | 'DEPARTMENT' | 'EMAIL'
 
+/** 수신 칸: 받는사람(to)/참조(cc)/숨은참조(bcc). */
+export type RecipientField = 'to' | 'cc' | 'bcc'
+
 export interface RecipientItem {
   id?: number
   recipient_type: RecipientType
   recipient_id?: number | null
   email?: string | null
+  field?: RecipientField
 }
 
 export interface PageItem {

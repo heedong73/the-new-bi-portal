@@ -13,6 +13,8 @@ design.md "수신자(mail_recipients) 해석"(R16.14) 참조.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,29 @@ from app.models.mail import MailRecipient
 from app.models.portal import UserGroupMember
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class ResolvedRecipients:
+    """전개된 수신자 이메일 — 받는사람(to)/참조(cc)/숨은참조(bcc)로 그룹.
+
+    - to/cc/bcc 는 각각 소문자 정규화 + 정렬된 이메일 리스트.
+    - 우선순위(to > cc > bcc)로 전역 중복 제거: 같은 주소가 여러 칸에 걸리면
+      가장 높은 칸에만 남는다(중복 발송 방지).
+    """
+
+    to: list[str] = field(default_factory=list)
+    cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
+
+    @property
+    def envelope(self) -> list[str]:
+        """실제 SMTP 발송 대상(to+cc+bcc). bcc 포함, 중복 없음."""
+        return [*self.to, *self.cc, *self.bcc]
+
+    @property
+    def total(self) -> int:
+        return len(self.to) + len(self.cc) + len(self.bcc)
 
 
 def _normalize(email: str | None) -> str | None:
@@ -49,10 +74,13 @@ async def _emails_for_user_ids(db: AsyncSession, user_ids: list[int]) -> list[st
     return [r[0] for r in rows if r[0]]
 
 
-async def resolve_recipients(db: AsyncSession, mail_schedule_id: int) -> list[str]:
+async def resolve_recipients(
+    db: AsyncSession, mail_schedule_id: int
+) -> ResolvedRecipients:
     """스케줄의 수신자 행을 실제 이메일 집합으로 전개한다.
 
-    반환: 소문자 정규화 + 중복 제거된 이메일 리스트(정렬). 발송 대상.
+    각 수신자 행의 field(to/cc/bcc)에 따라 그룹으로 분류하고, 소문자 정규화 +
+    우선순위(to > cc > bcc) 중복 제거 후 반환한다.
     """
     recipients = (
         await db.execute(
@@ -62,7 +90,7 @@ async def resolve_recipients(db: AsyncSession, mail_schedule_id: int) -> list[st
         )
     ).scalars().all()
 
-    collected: set[str] = set()
+    buckets: dict[str, set[str]] = {"to": set(), "cc": set(), "bcc": set()}
 
     for r in recipients:
         rtype = r.recipient_type
@@ -95,16 +123,28 @@ async def resolve_recipients(db: AsyncSession, mail_schedule_id: int) -> list[st
             ).scalars().all()
             emails = await _emails_for_user_ids(db, list(dept_user_ids))
 
+        target = r.field if r.field in buckets else "to"
         for e in emails:
             norm = _normalize(e)
             if norm:
-                collected.add(norm)
+                buckets[target].add(norm)
 
-    result = sorted(collected)
+    # 우선순위 중복 제거: to > cc > bcc
+    to_set = buckets["to"]
+    cc_set = buckets["cc"] - to_set
+    bcc_set = buckets["bcc"] - to_set - cc_set
+
+    resolved = ResolvedRecipients(
+        to=sorted(to_set),
+        cc=sorted(cc_set),
+        bcc=sorted(bcc_set),
+    )
     logger.info(
         "recipients_resolved",
         mail_schedule_id=mail_schedule_id,
         recipient_rows=len(recipients),
-        resolved_count=len(result),
+        to_count=len(resolved.to),
+        cc_count=len(resolved.cc),
+        bcc_count=len(resolved.bcc),
     )
-    return result
+    return resolved

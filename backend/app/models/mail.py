@@ -49,6 +49,10 @@ class MailRecipient(Base):
             "OR (recipient_type <> 'EMAIL' AND recipient_id IS NOT NULL AND email IS NULL)",
             name="ck_mail_recipient_type",
         ),
+        CheckConstraint(
+            "field IN ('to', 'cc', 'bcc')",
+            name="ck_mail_recipient_field",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -59,6 +63,10 @@ class MailRecipient(Base):
     recipient_type: Mapped[str] = mapped_column(String(16), nullable=False)
     recipient_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 수신 칸: 받는사람(to)/참조(cc)/숨은참조(bcc). 기본 'to'.
+    field: Mapped[str] = mapped_column(
+        String(8), server_default="to", default="to", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
 class MailSchedulePage(Base):

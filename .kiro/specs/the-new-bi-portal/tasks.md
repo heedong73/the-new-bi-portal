@@ -49,7 +49,7 @@
 - **WP7. Export / 메일 발송** [완료]
   - 7.1 StorageService(local/nas) (task 26 / R16,R31)
   - 7.2 독립 Export API(DOWNLOAD) (task 25 / R9.6,R9.7,R8)
-  - 7.3 메일 스케줄 CRUD(친화 스케줄, 수신자 USER/GROUP/DEPT/EMAIL, 페이지 다중·순서, **sender_email**) (task 27,56 / R16)
+  - 7.3 메일 스케줄 CRUD(친화 스케줄, 수신자 USER/GROUP/DEPT/EMAIL, 받는사람/참조/숨은참조, 페이지 다중·순서, **sender_email**) (task 27,56,70 / R16)
   - 7.4 Export→ZIP→Image 파이프라인(**페이지별 export**) (task 28,56 / R16.3-16.9)
   - 7.5 Pillow 이미지 리사이즈 (task 29 / R16.17)
   - 7.6 템플릿 조립(**리치 본문 서식/줄바꿈**, CID inline, **평문 대체본**) + SMTP 발송 (task 30,56 / R16.10,R16.14,R34)
@@ -569,6 +569,12 @@
 
 - [x] 69. 버그 수정: 메일 스케줄 삭제 500 (mail_jobs FK CASCADE)
   - 발송 이력(mail_jobs)이 있는 스케줄 삭제 시 FK 위반(ForeignKeyViolationError)으로 500 발생. `mail_jobs.mail_schedule_id` FK를 ON DELETE CASCADE로 변경(mig d5f8c1a63b40 + 모델 MailJob). 삭제 시 mail_jobs→export_jobs·report_image_paths까지 정리(발송 감사는 audit_logs 별도 보존)
+  - _Requirements: R16_
+
+- [x] 70. 메일 스케줄 수신 칸: 참조(CC)/숨은참조(BCC) 추가
+  - `mail_recipients.field`(to/cc/bcc, 기본 to) 컬럼 신설(mig e2c9b7a4d150 + 모델 MailRecipient + CHECK ck_mail_recipient_field). recipient_type(USER/GROUP/DEPARTMENT/EMAIL)과 직교 — 모든 유형을 받는사람/참조/숨은참조 어디로든 지정
+  - `resolve_recipients`가 field별로 그룹핑하여 `ResolvedRecipients(to/cc/bcc)` 반환 + 우선순위(to>cc>bcc) 전역 중복 제거. `build_message`는 To/Cc 헤더만 설정(**Bcc 헤더 미설정**), 실제 발송은 envelope(to+cc+bcc)로만 하여 숨은참조 비노출. to가 비면 To=`undisclosed-recipients:;`. `send_with_retry`/`_send_once`는 평면 envelope 리스트 유지(request_notify 공용)
+  - 스키마 RecipientCreate/Response.field, 라우트 create/update/_build_response 반영. 프런트: RecipientItem.field, MailSchedulePage 추가행 칸 셀렉트 + 리스트 인라인 칸 배지/드롭다운(받는사람/참조/숨은참조)
   - _Requirements: R16_
 
 ## v1.1+ (범위 외 - 참고)

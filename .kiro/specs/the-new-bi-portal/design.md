@@ -525,7 +525,8 @@ sequenceDiagram
 
 - 다중 페이지: `mail_schedule_pages`에 페이지별 행 저장, 각 페이지마다 Export_Job 생성. 각 Export_Job의 ExportTo 호출은 `powerBIReportConfiguration.pages:[{pageName}]`로 **해당 페이지만** 내보낸다(미지정 시 리포트 전체가 나와 모든 페이지가 같은 내용으로 채워지는 문제 방지). (충족: R16.2, R16.4)
 - **수신자(mail_recipients) 해석**: 스케줄에는 수신 대상을 `recipient_type`(USER/GROUP/DEPARTMENT/EMAIL) + (recipient_id 또는 email)로 **참조만 저장**한다. Mail_Job 발송 시점에 각 행을 실제 이메일로 펼친다 — USER→`scl_v_insa_user.cmp_email`, GROUP→그룹원 사용자들의 cmp_email, DEPARTMENT→해당 부서 사용자들의 cmp_email, EMAIL→입력값 그대로. 펼친 결과를 정규화(소문자)·**중복 제거** 후 발송. 발송 시점 해석이므로 **그룹원/부서원이 바뀌면 다음 발송에 자동 반영**(R16 수신자 자동 반영). 메일이 없는 사용자는 스킵하고 로그에 기록.
-- EMAIL 타입은 형식 검증(R40.1), recipient_id 타입은 존재/활성 검증. CHECK 제약으로 타입별 컬럼 정합성 보장.
+- **수신 칸(받는사람/참조/숨은참조)**: 각 수신자 행은 `field`(to/cc/bcc, 기본 to) 컬럼으로 어느 칸에 넣을지 지정한다(모든 recipient_type과 직교). 발송 시 `resolve_recipients`가 field별로 그룹핑하여 `ResolvedRecipients(to, cc, bcc)`로 반환하되 **우선순위(to > cc > bcc)로 전역 중복 제거**한다(같은 주소가 여러 칸에 걸리면 가장 높은 칸에만). 메일 헤더에는 **To/Cc만** 설정하고 **Bcc 헤더는 넣지 않으며**, 숨은참조는 SMTP envelope(`aiosmtplib.send(recipients=to+cc+bcc)`) 발송 대상에만 포함되어 다른 수신자에게 노출되지 않는다(D-15계열 운영 피드백). to가 비어 있으면(참조/숨은참조 전용 발송) To 헤더를 `undisclosed-recipients:;`로 둔다. (task 70)
+- EMAIL 타입은 형식 검증(R40.1), recipient_id 타입은 존재/활성 검증. CHECK 제약으로 타입별 컬럼 정합성 보장(`ck_mail_recipient_type`) 및 field 값 정합성 보장(`ck_mail_recipient_field`: to/cc/bcc).
 - 상태 전이 NotStarted→Running→Succeeded polling + 로그. (충족: R16.5, R16.6)
 - result.zip 다운로드 → extracted 해제 → `/reportimage/...` 경로 저장(DB엔 경로/메타만, 파일 본체는 저장소). (충족: R16.7~16.9, R31.2)
 - 전체 페이지 이미지 저장 완료 후 메일 발송 — 각 페이지 이미지를 `multipart/related` + `Content-ID(cid:)`로 **inline 첨부**(URL/인증 불필요, 외부 이미지 차단 영향 없음). 정적 URL 링크 방식은 사용하지 않음(기본). (충족: R16.10)
@@ -970,6 +971,7 @@ erDiagram
         string recipient_type "USER/GROUP/DEPARTMENT/EMAIL"
         bigint recipient_id "USER/GROUP/DEPARTMENT일 때 (users/user_groups/departments) nullable"
         string email "EMAIL일 때 직접 주소 nullable"
+        string field "수신 칸 to/cc/bcc (기본 to)"
         timestamptz created_at
     }
     mail_schedule_pages {
@@ -1077,7 +1079,7 @@ erDiagram
 | refresh_runs | id | **(workspace_id, dataset_id, request_id)** | — | idx(ws, start_time_utc DESC), idx(status), idx(ws, dataset_id, start_time_utc DESC) |
 | refresh_schedules | id | (workspace_id, dataset_id) | — | — |
 | mail_schedules | id | — | report_id→reports | idx(enabled), idx(report_id) |
-| mail_recipients | id | (mail_schedule_id, recipient_type, recipient_id, email) | mail_schedule_id→mail_schedules(CASCADE) | idx(mail_schedule_id), CHECK(recipient_type='EMAIL' ↔ email NOT NULL·recipient_id NULL / 그 외 ↔ recipient_id NOT NULL·email NULL) |
+| mail_recipients | id | (mail_schedule_id, recipient_type, recipient_id, email) | mail_schedule_id→mail_schedules(CASCADE) | idx(mail_schedule_id), `field`(to/cc/bcc, 기본 to) 컬럼, CHECK(recipient_type='EMAIL' ↔ email NOT NULL·recipient_id NULL / 그 외 ↔ recipient_id NOT NULL·email NULL), CHECK(field IN to/cc/bcc) |
 | mail_schedule_pages | id | (mail_schedule_id, page_name) | mail_schedule_id→mail_schedules(CASCADE) | idx(mail_schedule_id) |
 | mail_jobs | id | **(mail_schedule_id, run_key)** | mail_schedule_id→mail_schedules | idx(status), idx(mail_schedule_id, started_at DESC) |
 | export_jobs | id | (mail_job_id, page_name) | mail_job_id→mail_jobs(CASCADE) | idx(status) |

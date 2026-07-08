@@ -14,6 +14,8 @@ ScheduleFreqStr = Literal["daily", "weekly", "monthly"]
 # ---------------------------------------------------------------------------
 
 RecipientTypeStr = Literal["USER", "GROUP", "DEPARTMENT", "EMAIL"]
+# 수신 칸: 받는사람(to)/참조(cc)/숨은참조(bcc)
+RecipientFieldStr = Literal["to", "cc", "bcc"]
 
 
 class RecipientCreate(BaseModel):
@@ -21,11 +23,13 @@ class RecipientCreate(BaseModel):
 
     - EMAIL 타입: email 필수, recipient_id 불가
     - 나머지 타입: recipient_id 필수, email 불가
+    - field: 받는사람(to, 기본)/참조(cc)/숨은참조(bcc)
     """
 
     recipient_type: RecipientTypeStr
     recipient_id: int | None = Field(default=None, gt=0)
     email: EmailStr | None = None
+    field: RecipientFieldStr = "to"
 
     @model_validator(mode="after")
     def _validate_type_fields(self) -> "RecipientCreate":
@@ -49,6 +53,7 @@ class RecipientResponse(BaseModel):
     recipient_type: str
     recipient_id: int | None = None
     email: str | None = None
+    field: str = "to"
 
 
 # ---------------------------------------------------------------------------
