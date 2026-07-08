@@ -11,9 +11,9 @@ beat_schedule = {
         "schedule": settings.COLLECT_INTERVAL_MINUTES * 60,
         "args": [settings.POWERBI_WORKSPACE_ID],
     },
-    "dispatch-due-mail-schedules-every-minute": {
+    "dispatch-due-mail-schedules-every-30s": {
         "task": "bip.dispatch_due_mail_schedules",
-        "schedule": 60.0,
+        "schedule": 30.0,
         "args": [],
     },
     "retention-cleanup-daily": {
