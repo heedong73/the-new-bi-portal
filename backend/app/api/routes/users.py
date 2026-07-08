@@ -4,11 +4,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 
+from sqlalchemy import text, bindparam
+
 from app.core.constants import AuditAction, RoleCode
 from app.core.deps import SessionDep, RedisDep, require_menu
 from app.core.errors import NotFoundError
-from app.models.auth import User, Role, UserRole
-from app.schemas.user import UserListItem, UserStatusUpdate
+from app.models.auth import User, Role, UserRole, Department
+from app.models.portal import UserGroup, UserGroupMember
+from app.schemas.user import UserListItem, UserGroupBrief, UserStatusUpdate
 from app.services.audit_service import append_audit
 from app.services.auth import session_service
 
@@ -24,16 +27,75 @@ async def _roles_for(db, user_id: int) -> list[str]:
 
 @router.get("", response_model=list[UserListItem])
 async def list_users(db: SessionDep, _operator=Depends(_require_operator)):
-    """전체 사용자 목록 (식별자/이름/부서/메일/역할/활성)."""
+    """전체 사용자 목록 (식별자/이름/부서명/메일/역할/권한 그룹/활성).
+
+    역할·그룹·부서명을 사용자별 개별 조회(N+1) 대신 일괄 조회한다.
+    """
     users = (await db.execute(select(User).order_by(User.id))).scalars().all()
-    result = []
-    for u in users:
-        result.append(UserListItem(
+    if not users:
+        return []
+    user_ids = [u.id for u in users]
+
+    # 역할 일괄
+    roles_by_user: dict[int, list[str]] = {}
+    for uid, code in (await db.execute(
+        select(UserRole.user_id, Role.code)
+        .join(Role, Role.id == UserRole.role_id)
+        .where(UserRole.user_id.in_(user_ids))
+    )).all():
+        roles_by_user.setdefault(uid, []).append(code)
+
+    # 권한 그룹 일괄
+    groups_by_user: dict[int, list[UserGroupBrief]] = {}
+    for uid, gid, gname in (await db.execute(
+        select(UserGroupMember.user_id, UserGroup.id, UserGroup.name)
+        .join(UserGroup, UserGroup.id == UserGroupMember.group_id)
+        .where(UserGroupMember.user_id.in_(user_ids))
+        .order_by(UserGroup.name)
+    )).all():
+        groups_by_user.setdefault(uid, []).append(UserGroupBrief(id=gid, name=gname))
+
+    # 부서명 + 부서코드(external_id = 조직도 dept_id) 일괄
+    dept_ids = {u.department_id for u in users if u.department_id is not None}
+    dept_meta: dict[int, tuple[str | None, str | None]] = {}
+    if dept_ids:
+        for d_id, d_name, d_ext in (await db.execute(
+            select(Department.id, Department.name, Department.external_id)
+            .where(Department.id.in_(dept_ids))
+        )).all():
+            dept_meta[d_id] = (d_name, d_ext)
+
+    # 부서 한글명: 인사 뷰(scl_v_insa_dept_add_depth)에서 dept_id로 조회.
+    # (BIP departments.name이 코드로 남아있는 경우 대비, 인사명 없으면 BIP 저장명 폴백)
+    ext_ids = [ext for (_n, ext) in dept_meta.values() if ext]
+    hr_names: dict[str, str] = {}
+    if ext_ids:
+        stmt = text(
+            "SELECT dept_id, dept_name FROM public.scl_v_insa_dept_add_depth "
+            "WHERE dept_id IN :ids"
+        ).bindparams(bindparam("ids", expanding=True))
+        for d_id, d_name in (await db.execute(stmt, {"ids": ext_ids})).all():
+            hr_names[d_id] = d_name
+
+    def _dept(dep_id: int | None) -> tuple[str | None, str | None]:
+        if not dep_id:
+            return (None, None)
+        bip_name, ext = dept_meta.get(dep_id, (None, None))
+        name = (hr_names.get(ext) if ext else None) or bip_name
+        return (name, ext)
+
+    return [
+        UserListItem(
             id=u.id, emp_no=u.external_id, name=u.name, email=u.email,
-            department_id=u.department_id, roles=await _roles_for(db, u.id),
+            department_id=u.department_id,
+            department_ext_id=_dept(u.department_id)[1],
+            department_name=_dept(u.department_id)[0],
+            roles=roles_by_user.get(u.id, []),
+            groups=groups_by_user.get(u.id, []),
             is_active=u.is_active,
-        ))
-    return result
+        )
+        for u in users
+    ]
 
 @router.patch("/{user_id}/status", response_model=UserListItem)
 async def update_status(

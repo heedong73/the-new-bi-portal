@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronRight, ChevronDown, Building2, Search, Users2, RefreshCcw, X } from 'lucide-react'
 
 import { orgApi, groupsApi, usersApi } from '@/api/adminApi'
-import type { OrgMember, OrgNode, TeamGroupSyncResult } from '@/types/admin'
+import type { OrgMember, OrgNode, TeamGroupSyncResult, UserListItem } from '@/types/admin'
 
 const ROLE_LEVELS = [
   { code: 'General_User', label: '일반 사용자' },
@@ -23,6 +23,7 @@ export default function UsersPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [roleDraft, setRoleDraft] = useState<Record<string, string>>({})
   const [syncPlan, setSyncPlan] = useState<TeamGroupSyncResult | null>(null)
+  const [view, setView] = useState<'org' | 'grants'>('org')
 
   const companiesQuery = useQuery({
     queryKey: ['org-companies'],
@@ -151,6 +152,23 @@ export default function UsersPage() {
         </p>
       </div>
 
+      {/* 탭: 조직도 / 권한 현황 */}
+      <div className="mb-4 flex gap-1 border-b border-slate-200">
+        <button type="button" onClick={() => setView('org')}
+          className={`-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium ${
+            view === 'org' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          <Building2 className="h-4 w-4" /> 조직도
+        </button>
+        <button type="button" onClick={() => setView('grants')}
+          className={`-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium ${
+            view === 'grants' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          <Users2 className="h-4 w-4" /> 권한 현황
+        </button>
+      </div>
+
+      {view === 'grants' && <GrantsView />}
+
+      {view === 'org' && (
       <div className="flex gap-4">
         {/* 좌측: 조직도 */}
         <aside className="w-72 shrink-0 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -274,6 +292,7 @@ export default function UsersPage() {
           <p className="mt-2 text-right text-xs text-slate-400">총 {members.length}명{members.length >= 500 ? ' (최대 500 표시)' : ''}</p>
         </div>
       </div>
+      )}
 
       {/* 팀 권한그룹 동기화 미리보기 모달 */}
       {syncPlan && (
@@ -402,5 +421,370 @@ function MemberRow({ m, groups, roleValue, roleDirty, onAddGroup, onRemoveGroup,
         )}
       </td>
     </tr>
+  )
+}
+
+
+/** 역할 목록에서 대표 역할 레벨 도출(운영자 > 파워 > 일반). */
+function roleLevelOf(roles: string[]): string {
+  if (roles.includes('System_Operator')) return 'System_Operator'
+  if (roles.includes('Super_User')) return 'Super_User'
+  return 'General_User'
+}
+
+/** 권한 현황 뷰 — 등록 사용자 전체를 트리 무관 평면 목록으로. 검색/필터 + 인라인 관리. */
+function GrantsView() {
+  const qc = useQueryClient()
+  const usersQuery = useQuery({
+    queryKey: ['admin-users'],
+    queryFn: ({ signal }) => usersApi.list(signal),
+    staleTime: 30_000,
+  })
+  const groupsQuery = useQuery({
+    queryKey: ['admin-groups'],
+    queryFn: ({ signal }) => groupsApi.list(signal),
+    staleTime: 60_000,
+  })
+
+  const [q, setQ] = useState('')
+  const [roleF, setRoleF] = useState<'all' | 'General_User' | 'Super_User' | 'System_Operator'>('all')
+  const [groupF, setGroupF] = useState<'all' | 'has' | 'none'>('all')
+  const [activeF, setActiveF] = useState<'all' | 'active' | 'inactive'>('all')
+  const [groupBy, setGroupBy] = useState<'none' | 'dept' | 'group'>('dept')
+
+  // 부서별 보기: 좌측 조직도와 동일한 계층/한글명 재사용 (전체 회사)
+  const orgTreeQuery = useQuery({
+    queryKey: ['org-tree', ''],
+    queryFn: ({ signal }) => orgApi.tree(undefined, signal),
+    staleTime: 300_000,
+    enabled: groupBy === 'dept',
+  })
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['admin-users'] })
+    qc.invalidateQueries({ queryKey: ['org-members'] })
+  }
+  const roleMut = useMutation({
+    mutationFn: ({ empNo, code }: { empNo: string; code: string }) => orgApi.setRoleLevel(empNo, code),
+    onSuccess: invalidate,
+  })
+  const addGroupMut = useMutation({
+    mutationFn: ({ empNo, groupId }: { empNo: string; groupId: number }) => orgApi.addGroup(empNo, groupId),
+    onSuccess: invalidate,
+  })
+  const removeGroupMut = useMutation({
+    mutationFn: ({ empNo, groupId }: { empNo: string; groupId: number }) => orgApi.removeGroup(empNo, groupId),
+    onSuccess: invalidate,
+  })
+  const statusMut = useMutation({
+    mutationFn: ({ userId, isActive }: { userId: number; isActive: boolean }) => usersApi.setStatus(userId, isActive),
+    onSuccess: invalidate,
+  })
+  const busy = roleMut.isPending || addGroupMut.isPending || removeGroupMut.isPending || statusMut.isPending
+
+  const users = usersQuery.data ?? []
+  const groups = groupsQuery.data ?? []
+  const orgTree = orgTreeQuery.data ?? []
+
+  const term = q.trim().toLowerCase()
+  const filtered = users.filter((u) => {
+    if (term && !`${u.name} ${u.emp_no} ${u.email ?? ''}`.toLowerCase().includes(term)) return false
+    if (roleF !== 'all' && roleLevelOf(u.roles) !== roleF) return false
+    const hasGroup = (u.groups?.length ?? 0) > 0
+    if (groupF === 'has' && !hasGroup) return false
+    if (groupF === 'none' && hasGroup) return false
+    if (activeF === 'active' && !u.is_active) return false
+    if (activeF === 'inactive' && u.is_active) return false
+    return true
+  })
+
+  const selCls = 'rounded-lg border border-slate-300 px-2 py-1.5 text-sm'
+
+  const renderRow = (u: UserListItem) => (
+    <GrantUserRow
+      key={u.id}
+      u={u}
+      groups={groups}
+      busy={busy}
+      onSetRole={(code) => roleMut.mutate({ empNo: u.emp_no, code })}
+      onAddGroup={(gid) => addGroupMut.mutate({ empNo: u.emp_no, groupId: gid })}
+      onRemoveGroup={(gid) => removeGroupMut.mutate({ empNo: u.emp_no, groupId: gid })}
+      onToggleActive={() => statusMut.mutate({ userId: u.id, isActive: !u.is_active })}
+    />
+  )
+  const sections = groupBy === 'group' ? buildSections(filtered, 'group') : []
+
+  // 부서별: 조직 트리에 사용자 배치 (department_ext_id ↔ OrgNode.dept_id) + 하위 인원수 집계
+  const usersByDept = new Map<string, UserListItem[]>()
+  const subtreeCount = new Map<string, number>()
+  let deptRoots: OrgNode[] = []
+  let unmatchedDept: UserListItem[] = []
+  if (groupBy === 'dept') {
+    for (const u of filtered) {
+      if (!u.department_ext_id) continue
+      const a = usersByDept.get(u.department_ext_id)
+      if (a) a.push(u)
+      else usersByDept.set(u.department_ext_id, [u])
+    }
+    const computeCount = (node: OrgNode): number => {
+      let c = usersByDept.get(node.dept_id)?.length ?? 0
+      for (const ch of node.children) c += computeCount(ch)
+      subtreeCount.set(node.dept_id, c)
+      return c
+    }
+    orgTree.forEach(computeCount)
+    deptRoots = orgTree.filter((n) => (subtreeCount.get(n.dept_id) ?? 0) > 0)
+    unmatchedDept = filtered.filter(
+      (u) => !u.department_ext_id || !subtreeCount.has(u.department_ext_id),
+    )
+  }
+
+  return (
+    <div className="min-w-0">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-56 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} aria-label="사용자 검색"
+            placeholder="이름, 사번, 이메일 검색"
+            className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm" />
+        </div>
+        <select value={roleF} onChange={(e) => setRoleF(e.target.value as typeof roleF)} aria-label="역할 필터" className={selCls}>
+          <option value="all">역할: 전체</option>
+          <option value="General_User">일반</option>
+          <option value="Super_User">파워</option>
+          <option value="System_Operator">운영자</option>
+        </select>
+        <select value={groupF} onChange={(e) => setGroupF(e.target.value as typeof groupF)} aria-label="권한 그룹 필터" className={selCls}>
+          <option value="all">그룹: 전체</option>
+          <option value="has">그룹 보유</option>
+          <option value="none">그룹 없음</option>
+        </select>
+        <select value={activeF} onChange={(e) => setActiveF(e.target.value as typeof activeF)} aria-label="활성 필터" className={selCls}>
+          <option value="all">상태: 전체</option>
+          <option value="active">활성</option>
+          <option value="inactive">해제</option>
+        </select>
+        <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as typeof groupBy)} aria-label="보기 방식" className={selCls}>
+          <option value="group">보기: 그룹별</option>
+          <option value="dept">보기: 부서별</option>
+          <option value="none">보기: 전체 목록</option>
+        </select>
+      </div>
+
+      {usersQuery.isLoading ? (
+        <p className="py-10 text-center text-sm text-slate-400">불러오는 중…</p>
+      ) : filtered.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-slate-300 py-10 text-center text-sm text-slate-400">조건에 맞는 사용자가 없습니다.</p>
+      ) : groupBy === 'none' ? (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <GrantThead />
+            <tbody className="divide-y divide-slate-100">{filtered.map(renderRow)}</tbody>
+          </table>
+        </div>
+      ) : groupBy === 'group' ? (
+        <div className="space-y-2">
+          {sections.map((s) => (
+            <GrantSection key={s.key} title={s.key} count={s.users.length}>
+              <GrantThead />
+              <tbody className="divide-y divide-slate-100">{s.users.map(renderRow)}</tbody>
+            </GrantSection>
+          ))}
+        </div>
+      ) : orgTreeQuery.isLoading ? (
+        <p className="py-10 text-center text-sm text-slate-400">조직도 불러오는 중…</p>
+      ) : (
+        <div className="space-y-2">
+          {deptRoots.map((n) => (
+            <div key={n.dept_id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <DeptNode node={n} depth={0} usersByDept={usersByDept} subtreeCount={subtreeCount} renderRow={renderRow} />
+            </div>
+          ))}
+          {unmatchedDept.length > 0 && (
+            <GrantSection title="(기타/미매칭 부서)" count={unmatchedDept.length}>
+              <GrantThead />
+              <tbody className="divide-y divide-slate-100">{unmatchedDept.map(renderRow)}</tbody>
+            </GrantSection>
+          )}
+          {deptRoots.length === 0 && unmatchedDept.length === 0 && (
+            <p className="rounded-xl border border-dashed border-slate-300 py-10 text-center text-sm text-slate-400">표시할 사용자가 없습니다.</p>
+          )}
+        </div>
+      )}
+      <p className="mt-2 text-right text-xs text-slate-400">필터 {filtered.length}명 / 전체 {users.length}명</p>
+    </div>
+  )
+}
+
+/** 권한 현황 테이블 헤더(평면/섹션 공용). */
+function GrantThead() {
+  return (
+    <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+      <tr>
+        <th className="px-3 py-3">이름</th>
+        <th className="px-3 py-3">사번</th>
+        <th className="px-3 py-3">부서</th>
+        <th className="px-3 py-3">역할</th>
+        <th className="px-3 py-3">권한 그룹</th>
+        <th className="px-3 py-3 text-right">상태</th>
+      </tr>
+    </thead>
+  )
+}
+
+/** 부서/그룹 접이식 섹션 카드. */
+function GrantSection({ title, count, children }: { title: string; count: number; children: ReactNode }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-4 py-2.5 hover:bg-slate-50">
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+          {open ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
+          {title}
+        </span>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">{count}명</span>
+      </button>
+      {open && (
+        <div className="overflow-x-auto border-t border-slate-100">
+          <table className="w-full text-sm">{children}</table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 필터된 사용자를 부서/그룹 기준 섹션으로 묶는다(그룹별은 다중 소속이면 각 그룹에 중복 표시). */
+function buildSections(
+  users: UserListItem[],
+  groupBy: 'none' | 'dept' | 'group',
+): { key: string; users: UserListItem[] }[] {
+  if (groupBy === 'none') return []
+  const map = new Map<string, UserListItem[]>()
+  const push = (k: string, u: UserListItem) => {
+    const arr = map.get(k)
+    if (arr) arr.push(u)
+    else map.set(k, [u])
+  }
+  for (const u of users) {
+    if (groupBy === 'dept') {
+      push(u.department_name || '(부서 없음)', u)
+    } else {
+      const gs = u.groups ?? []
+      if (gs.length === 0) push('(그룹 없음)', u)
+      else for (const g of gs) push(g.name, u)
+    }
+  }
+  return [...map.entries()]
+    .map(([key, us]) => ({ key, users: us }))
+    .sort((a, b) => {
+      const sa = a.key.startsWith('('), sb = b.key.startsWith('(')
+      if (sa !== sb) return sa ? 1 : -1
+      return a.key.localeCompare(b.key, 'ko')
+    })
+}
+
+interface GrantUserRowProps {
+  u: UserListItem
+  groups: { id: number; name: string }[]
+  busy: boolean
+  onSetRole: (code: string) => void
+  onAddGroup: (groupId: number) => void
+  onRemoveGroup: (groupId: number) => void
+  onToggleActive: () => void
+}
+
+function GrantUserRow({ u, groups, busy, onSetRole, onAddGroup, onRemoveGroup, onToggleActive }: GrantUserRowProps) {
+  const level = roleLevelOf(u.roles)
+  const assigned = u.groups ?? []
+  const assignedIds = new Set(assigned.map((g) => g.id))
+  const available = groups.filter((g) => !assignedIds.has(g.id))
+  return (
+    <tr className={`hover:bg-slate-50 ${u.is_active ? '' : 'bg-slate-50/60'}`}>
+      <td className="px-3 py-2.5 font-medium text-slate-800">{u.name}</td>
+      <td className="px-3 py-2.5 font-mono text-slate-600">{u.emp_no}</td>
+      <td className="px-3 py-2.5 text-slate-600">{u.department_name ?? '-'}</td>
+      <td className="px-3 py-2.5">
+        <select value={level} disabled={busy} aria-label={`${u.emp_no} 역할`}
+          onChange={(e) => onSetRole(e.target.value)}
+          className="w-28 rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-50">
+          {ROLE_LEVELS.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
+        </select>
+      </td>
+      <td className="px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-1">
+          {assigned.map((g) => (
+            <span key={g.id} className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+              {g.name}
+              <button type="button" aria-label={`${u.emp_no} ${g.name} 그룹 제거`} disabled={busy}
+                onClick={() => onRemoveGroup(g.id)} className="text-blue-400 hover:text-blue-600 disabled:opacity-50">×</button>
+            </span>
+          ))}
+          {assigned.length === 0 && <span className="text-xs text-slate-300">없음</span>}
+          <select value="" disabled={busy || available.length === 0} aria-label={`${u.emp_no} 권한 그룹 추가`}
+            onChange={(e) => { if (e.target.value) onAddGroup(Number(e.target.value)) }}
+            className="rounded border border-dashed border-slate-300 px-1.5 py-0.5 text-xs text-slate-500 disabled:opacity-50">
+            <option value="">+ 그룹</option>
+            {available.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        </div>
+      </td>
+      <td className="px-3 py-2.5 text-right">
+        <button type="button" onClick={onToggleActive} disabled={busy}
+          className={`rounded-lg px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${
+            u.is_active ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-blue-600 text-white hover:bg-blue-500'}`}>
+          {u.is_active ? '해제' : '활성화'}
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+
+/** 부서별 조직 계층 노드(재귀). 하위에 등록 사용자가 있는 가지만 표시, 팀(리프)은 기본 접힘. */
+function DeptNode({
+  node, depth, usersByDept, subtreeCount, renderRow,
+}: {
+  node: OrgNode
+  depth: number
+  usersByDept: Map<string, UserListItem[]>
+  subtreeCount: Map<string, number>
+  renderRow: (u: UserListItem) => ReactNode
+}) {
+  const count = subtreeCount.get(node.dept_id) ?? 0
+  const direct = usersByDept.get(node.dept_id) ?? []
+  const childNodes = node.children.filter((c) => (subtreeCount.get(c.dept_id) ?? 0) > 0)
+  const [open, setOpen] = useState(false)  // 기본 전부 접힘(조직이 많아 한눈에 보기 위함)
+  if (count === 0) return null
+  return (
+    <div className={depth === 0 ? '' : 'border-t border-slate-100'}>
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between py-2 pr-3 hover:bg-slate-50"
+        style={{ paddingLeft: depth * 16 + 12 }}>
+        <span className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+          {open ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
+          {node.dept_name}
+        </span>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">{count}명</span>
+      </button>
+      {open && (
+        <div>
+          {/* 이 조직 직속 구성원(예: 담당임원)을 하위 팀보다 먼저, 들여써서 소속을 표시 */}
+          {direct.length > 0 && (
+            <div className="overflow-x-auto border-t border-slate-100 bg-slate-50/40"
+              style={{ paddingLeft: (depth + 1) * 16 + 12 }}>
+              <table className="w-full text-sm">
+                <GrantThead />
+                <tbody className="divide-y divide-slate-100">{direct.map(renderRow)}</tbody>
+              </table>
+            </div>
+          )}
+          {childNodes.map((c) => (
+            <DeptNode key={c.dept_id} node={c} depth={depth + 1}
+              usersByDept={usersByDept} subtreeCount={subtreeCount} renderRow={renderRow} />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

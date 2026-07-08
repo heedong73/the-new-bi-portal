@@ -28,7 +28,7 @@
 
 - **WP4. 사용자/그룹/역할/권한 관리** [완료]
   - 4.1 권한 계산 서비스(user/role/dept/group 합집합, Redis 캐시) (task 13 / R8,R22,R24)
-  - 4.2 사용자 관리 API + 조직도(org: 회사/트리/구성원, 자동등록) (task 14 / R4)
+  - 4.2 사용자 관리 API + 조직도(org: 회사/트리/구성원, 자동등록) + 권한 현황 탭(등록 사용자 평면 목록·검색/필터) (task 14,72 / R4)
   - 4.3 그룹 API + **조직 기반 팀 그룹 자동생성/완전동기화**(source_dept_id, 미리보기/적용) + **전체 조직 트리 뷰**(/api/groups/tree) (task 15,62 / R5,R6,R8)
   - 4.4 역할(**메뉴 고정 매핑**, 매트릭스 제거) + 레포트 권한(부여/회수, **다중 부여 bulk**, MANAGE_REPORT='교체') (task 16,60,61 / R7,R8,R23)
 
@@ -576,6 +576,18 @@
   - `resolve_recipients`가 field별로 그룹핑하여 `ResolvedRecipients(to/cc/bcc)` 반환 + 우선순위(to>cc>bcc) 전역 중복 제거. `build_message`는 To/Cc 헤더만 설정(**Bcc 헤더 미설정**), 실제 발송은 envelope(to+cc+bcc)로만 하여 숨은참조 비노출. to가 비면 To=`undisclosed-recipients:;`. `send_with_retry`/`_send_once`는 평면 envelope 리스트 유지(request_notify 공용)
   - 스키마 RecipientCreate/Response.field, 라우트 create/update/_build_response 반영. 프런트: RecipientItem.field, MailSchedulePage 추가행 칸 셀렉트 + 리스트 인라인 칸 배지/드롭다운(받는사람/참조/숨은참조)
   - _Requirements: R16_
+
+- [x] 73. 폴더 트리 권한 가시성: 조회권 없는 레포트만 있는 폴더 숨김 (R41.4/R41.7)
+  - `GET /api/report-folders/tree`가 하위(자기 포함)에 VIEW 권한 레포트가 하나도 없는 폴더를 가지치기하여 반환. 레포트 조회권이 없으면 그 레포트가 속한 상위 폴더도 사이드바 탐색기에서 보이지 않는다. 접근 가능한 레포트의 상위 폴더 경로는 유지(직속 0이어도 하위에 있으면 표시). 관리자 [레포트 관리]는 별도 평면 목록(`GET /api/report-folders`)이라 폴더 관리 영향 없음
+  - _Requirements: R41.4, R41.7_
+
+- [x] 72. 사용자 관리: 권한 현황 탭(등록 사용자 평면 목록)
+  - 조직도 트리를 파고들지 않아도 부여 현황을 보도록 사용자 관리에 **[조직도] | [권한 현황] 탭** 추가. 권한 현황은 트리 무관 평면 테이블로 **등록 사용자 전체**를 표시(이름/사번/부서/역할/권한 그룹/활성)
+  - 검색(이름·사번·이메일) + 필터(역할 전체/일반/파워/운영자, 권한 그룹 보유/없음, 활성/해제). 인라인 관리: 역할 변경·그룹 추가/제거(orgApi.setRoleLevel/addGroup/removeGroup)·활성 토글(usersApi.setStatus)
+  - 보기 방식: **부서별(기본, 전부 접힘)/그룹별/전체 목록**. 그룹별은 접이식 섹션(멤버 수 배지, 다중 소속 시 각 그룹 중복 표시). **부서별은 좌측 조직도와 동일한 조직 계층 트리(본부>담당>팀)로 렌더** — `orgApi.tree` 재사용, `UserListItem.department_ext_id`(=departments.external_id=조직도 dept_id)로 사용자를 팀에 매칭, 등록 사용자 있는 가지만 표시·하위 인원수 배지·**전 노드 기본 접힘**(조직 많을 때 가시성). 노드 직속 인원(담당임원 등)은 하위 팀보다 먼저 들여쓰기로 표시
+  - 부서 한글명: `GET /api/users`가 `departments.name`(코드로 남을 수 있음) 대신 **인사 뷰(scl_v_insa_dept_add_depth) dept_name**으로 해석해 반환(폴백 BIP명). 그룹 변경(생성/삭제/멤버/동기화)이 다른 화면에 반영되도록 GroupsPage가 `admin-groups`/`admin-users`/`org-members` 캐시 무효화
+  - 백엔드: `GET /api/users`(UserListItem)에 `department_name` + `groups[{id,name}]` 추가, roles/groups/부서명 **일괄 조회**(N+1 제거)
+  - _Requirements: R4, R8_
 
 - [x] 71. 레포트 뷰 다운로드 버튼(Export PDF/PPTX/PNG + 원본 PBIX)
   - 레포트 조회 화면 헤더에 '다운로드' 드롭다운 추가. **DOWNLOAD 권한자에게만 노출**(대부분 미보유) — 목록 응답 `ReportResponse.can_download`(accessible_report_ids(DOWNLOAD))로 게이트, 백엔드는 `POST /api/reports/{id}/export`에서 DOWNLOAD 재검증

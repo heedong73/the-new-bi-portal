@@ -7,7 +7,10 @@ export interface UserListItem {
   name: string
   email?: string | null
   department_id?: number | null
+  department_ext_id?: string | null
+  department_name?: string | null
   roles: string[]
+  groups?: { id: number; name: string }[]
   is_active: boolean
 }
 

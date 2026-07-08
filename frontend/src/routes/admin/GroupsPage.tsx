@@ -40,9 +40,18 @@ export default function GroupsPage() {
     enabled: selectedId !== null,
   })
 
-  const invalidateTree = () => queryClient.invalidateQueries({ queryKey: ['admin-group-tree'] })
-  const invalidateMembers = () =>
+  const invalidateTree = () => {
+    queryClient.invalidateQueries({ queryKey: ['admin-group-tree'] })
+    // 다른 화면(사용자 관리: 권한 현황/조직도)이 공유하는 그룹·사용자 캐시도 갱신
+    queryClient.invalidateQueries({ queryKey: ['admin-groups'] })
+    queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    queryClient.invalidateQueries({ queryKey: ['org-members'] })
+  }
+  const invalidateMembers = () => {
     queryClient.invalidateQueries({ queryKey: ['admin-group-members', selectedId] })
+    queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+    queryClient.invalidateQueries({ queryKey: ['org-members'] })
+  }
 
   const createMutation = useMutation({
     mutationFn: (name: string) => groupsApi.create(name),

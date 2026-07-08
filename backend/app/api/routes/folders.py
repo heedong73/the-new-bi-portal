@@ -118,4 +118,11 @@ async def folder_tree(db: SessionDep, current=Depends(get_current_user)):
             nodes[f.parent_id].children.append(nodes[f.id])
         else:
             roots.append(nodes[f.id])
-    return roots
+
+    # 하위(자기 포함)에 조회권 있는 레포트가 하나도 없는 폴더는 숨긴다(R41.4/R41.7).
+    # 레포트 조회 권한이 없으면 그 레포트가 속한 상위 폴더도 보이지 않아야 한다.
+    def _keep(node: FolderTreeNode) -> bool:
+        node.children = [c for c in node.children if _keep(c)]
+        return bool(node.report_ids) or bool(node.children)
+
+    return [r for r in roots if _keep(r)]
