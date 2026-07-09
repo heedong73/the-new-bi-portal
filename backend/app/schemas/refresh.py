@@ -70,8 +70,19 @@ class CollectNowOut(BaseModel):
 
 
 class CollectStatusOut(BaseModel):
-    """GET /api/collect-status 응답 — 현재 workspace 수집 진행 여부(분산 락 점유)."""
+    """GET /api/collect-status 응답.
+
+    task_id가 주어지면 그 수집 태스크의 실제 결과(state)를 반영한다:
+      - running   : 아직 진행/대기 중
+      - succeeded : 수집 성공
+      - failed    : 수집 실패(error에 사유)
+      - skipped   : 이미 다른 수집이 진행 중이어서 건너뜀
+      - unknown   : 판정 불가
+    task_id가 없으면 분산 락 점유 여부만으로 running을 판정한다(하위호환).
+    """
     running: bool
+    state: str = "unknown"
+    error: str | None = None
 
 
 class LatestDateOut(BaseModel):

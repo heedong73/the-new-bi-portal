@@ -1,7 +1,8 @@
 """모니터링 라우트 — /api/collect-now, /api/health, /api/monitoring/status."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from celery.result import AsyncResult
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 
 from app.core.constants import AuditAction, RoleCode
@@ -11,6 +12,7 @@ from app.schemas.refresh import CollectNowOut, CollectStatusOut
 from app.services import monitoring_service
 from app.services.audit_service import append_audit
 from app.services.powerbi.lock import is_collect_locked
+from app.workers.celery_app import celery_app
 from app.workers.tasks.collect import collect_workspace_task
 
 router = APIRouter(tags=["monitoring"])
@@ -54,16 +56,36 @@ async def collect_now(
 @router.get("/api/collect-status", response_model=CollectStatusOut)
 async def collect_status(
     redis: RedisDep,
+    task_id: str | None = Query(default=None),
     current=Depends(require_menu("monitoring_refresh")),
 ):
-    """현재 workspace 수집 진행 여부를 반환한다(분산 락 점유 = 진행 중).
+    """수집 진행/결과를 반환한다.
 
-    Refresh 현황 화면의 진행 배너(BackgroundTaskDock)가 이 값을 폴링하여
-    "수집 중 → 완료"를 표시하며, 페이지 새로고침 후에도 락이 유지되는 동안은
-    진행 상태가 복원된다.
+    task_id가 주어지면 그 수집 태스크의 **실제 결과**(성공/실패/스킵)를 Celery
+    결과 백엔드에서 읽어 반영한다 — 락만 보면 실패해도 '완료'로 오표시되므로.
+    task_id가 없으면(하위호환/복원) 분산 락 점유 여부로 running만 판정한다.
+    Refresh 현황 진행 배너(BackgroundTaskDock)가 이 값을 폴링한다.
     """
+    if task_id:
+        ar = AsyncResult(task_id, app=celery_app)
+        state = ar.state
+        if state in ("PENDING", "RECEIVED", "STARTED", "RETRY"):
+            return CollectStatusOut(running=True, state="running")
+        if state == "SUCCESS":
+            result = ar.result if isinstance(ar.result, dict) else {}
+            rstatus = result.get("status")
+            if rstatus == "failed":
+                return CollectStatusOut(running=False, state="failed", error=result.get("error"))
+            if rstatus == "already-running":
+                return CollectStatusOut(running=False, state="skipped")
+            return CollectStatusOut(running=False, state="succeeded")
+        if state == "FAILURE":
+            return CollectStatusOut(running=False, state="failed", error=str(ar.result))
+        return CollectStatusOut(running=False, state="unknown")
+
     workspace_id = settings.POWERBI_WORKSPACE_ID
-    return CollectStatusOut(running=await is_collect_locked(redis, workspace_id))
+    running = await is_collect_locked(redis, workspace_id)
+    return CollectStatusOut(running=running, state="running" if running else "unknown")
 
 @router.get("/api/health")
 async def health():

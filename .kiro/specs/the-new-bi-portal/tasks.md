@@ -577,6 +577,17 @@
   - 스키마 RecipientCreate/Response.field, 라우트 create/update/_build_response 반영. 프런트: RecipientItem.field, MailSchedulePage 추가행 칸 셀렉트 + 리스트 인라인 칸 배지/드롭다운(받는사람/참조/숨은참조)
   - _Requirements: R16_
 
+- [x] 75. 버그 수정(중대): 수집기 `select` import 누락으로 Refresh 수집 전면 중단
+  - task 59에서 `upsert_reports`를 update-only(`select(Report.report_id)...`)로 바꿀 때 `collector.py`에 `from sqlalchemy import select`가 누락됨. `collect_workspace`가 첫 단계 `upsert_reports`에서 `NameError`로 실패 → **수집 태스크가 조용히 실패(except로 로그만)** 하여 07-01 이후 refresh_runs가 전혀 갱신되지 않음(즉시 수집/Beat 모두). 도크는 락 해제만 보고 "완료"로 오표시
+  - 수정: `collector.py`에 `select` import 추가. 직접 수집 재실행으로 확인(reports/datasets 102, refresh_runs 1837, 최신 이력 07-08 16:30까지 정상 반영). **운영 반영: Celery 워커 재시작 필요**(워커는 --reload 안 됨)
+  - 수집 실패 '완료' 오표시 개선(동반 수정): `POST /api/collect-now`가 반환하는 Celery task_id를 도크가 저장하고, `GET /api/collect-status?task_id=`가 **AsyncResult 실제 결과**(succeeded/failed/skipped/running)를 반환. 도크 collect 행이 완료/실패/이미진행중을 정확히 표시하고, 결과 미확정(워커 미가동 등)은 안전 타임아웃(10분) 후 **실패**로 처리(더 이상 실패를 완료로 오표시하지 않음). CollectStatusOut에 state/error 추가
+  - _Requirements: R14, R36_
+
+- [x] 74. Refresh 현황: 카탈로그 미등록 레포트도 이름 추적 (reportName 폴백)
+  - 새로고침 모니터링은 데이터셋 단위이고 데이터셋 이름(dataset_name)은 전부 수집되나, 간트/표가 카탈로그 report_name이 없으면 '알 수 없음'으로 뭉쳐 표시되던 문제. `refresh_query`(query_refresh_timetable/query_refresh_history)에서 reportName을 **report_name → dataset_name → '알 수 없음'** 순으로 폴백(PBIX 게시 시 레포트=데이터셋 동명이라 미등록 레포트도 실제 이름 표시). dev 워크스페이스 91개 데이터셋 중 88개가 '알 수 없음'→실제 이름으로 확인
+  - (후속·MSP 이관 대비 [예정]) 새 MSP=새 워크스페이스/데이터셋이므로: 2단계 다중 워크스페이스 수집(`POWERBI_WORKSPACE_ID` 단일 → 목록 + 워크스페이스 필터)로 이관 과도기 옛·새 동시 모니터링, 3단계 이름 기반 연속성(워크스페이스 무관 이름 그룹핑)으로 이관 전후 이력 연결
+  - _Requirements: R14, R15_
+
 - [x] 73. 폴더 트리 권한 가시성: 조회권 없는 레포트만 있는 폴더 숨김 (R41.4/R41.7)
   - `GET /api/report-folders/tree`가 하위(자기 포함)에 VIEW 권한 레포트가 하나도 없는 폴더를 가지치기하여 반환. 레포트 조회권이 없으면 그 레포트가 속한 상위 폴더도 사이드바 탐색기에서 보이지 않는다. 접근 가능한 레포트의 상위 폴더 경로는 유지(직속 0이어도 하위에 있으면 표시). 관리자 [레포트 관리]는 별도 평면 목록(`GET /api/report-folders`)이라 폴더 관리 영향 없음
   - _Requirements: R41.4, R41.7_

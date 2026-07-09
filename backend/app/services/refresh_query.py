@@ -74,7 +74,7 @@ async def query_refresh_history(
     for rr, r_rid, r_rname, d_name in rows.all():
         result.append(RefreshRunOut(
             reportId=r_rid,
-            reportName=r_rname or "알 수 없음",
+            reportName=r_rname or d_name or "알 수 없음",
             datasetId=rr.dataset_id,
             datasetName=d_name or "데이터셋 없음",
             refreshType=getattr(rr, "refresh_type", None),
@@ -135,7 +135,7 @@ async def query_refresh_timetable(
             continue
         result.append(RefreshRunOut(
             reportId=r_rid,
-            reportName=r_rname or "알 수 없음",
+            reportName=r_rname or d_name or "알 수 없음",
             datasetId=rr.dataset_id,
             datasetName=d_name or "데이터셋 없음",
             refreshType=getattr(rr, "refresh_type", None),

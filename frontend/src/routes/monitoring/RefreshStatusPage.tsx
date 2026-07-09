@@ -181,6 +181,17 @@ export default function RefreshStatusPage() {
       startedAt: Date.now(),
     });
     collectNow.mutate(undefined, {
+      onSuccess: (result) => {
+        if (result.status === "already-running") {
+          updateTask(COLLECT_TASK_ID, {
+            status: "success",
+            message: "이미 수집이 진행 중입니다.",
+          });
+        } else if (result.taskId) {
+          // 도크가 이 task의 실제 결과(성공/실패)를 폴링하도록 id 저장
+          updateTask(COLLECT_TASK_ID, { collectTaskId: result.taskId });
+        }
+      },
       onError: () =>
         updateTask(COLLECT_TASK_ID, {
           status: "error",

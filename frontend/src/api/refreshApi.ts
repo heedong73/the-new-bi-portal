@@ -29,9 +29,12 @@ export interface CollectNowResult {
   taskId?: string;
 }
 
-/** `GET /api/collect-status` 응답 — 현재 수집 진행 여부(분산 락 점유). */
+/** `GET /api/collect-status` 응답. task_id 지정 시 실제 결과(state)를 반영. */
 export interface CollectStatusResult {
   running: boolean;
+  /** running | succeeded | failed | skipped | unknown */
+  state: "running" | "succeeded" | "failed" | "skipped" | "unknown";
+  error?: string | null;
 }
 
 /** `GET /api/refresh-latest-date` 응답 — 데이터가 있는 가장 최근 일자(APP_TZ). */
@@ -128,9 +131,15 @@ export function postCollectNow(): Promise<CollectNowResult> {
   return apiClient.post<CollectNowResult>("/api/collect-now");
 }
 
-/** `GET /api/collect-status` — 현재 수집 진행 여부(진행 배너 폴링용). */
-export function getCollectStatus(signal?: AbortSignal): Promise<CollectStatusResult> {
-  return apiClient.get<CollectStatusResult>("/api/collect-status", { signal });
+/** `GET /api/collect-status?task_id=` — 수집 진행/결과(진행 배너 폴링용). */
+export function getCollectStatus(
+  taskId?: string,
+  signal?: AbortSignal
+): Promise<CollectStatusResult> {
+  return apiClient.get<CollectStatusResult>("/api/collect-status", {
+    query: { task_id: taskId ?? undefined },
+    signal,
+  });
 }
 
 /** `GET /api/refresh-latest-date` — 데이터가 있는 가장 최근 일자(기본 선택 일자용). */

@@ -24,6 +24,7 @@ export interface BgTask {
   startedAt?: number // 타임아웃/영속 정리 판정용 (ms)
   exportJobId?: number // export: 폴링/다운로드할 ExportJob id
   downloaded?: boolean // export: 자동 다운로드를 이미 트리거했는지(중복 방지)
+  collectTaskId?: string // collect: 결과 폴링할 Celery task id
 }
 
 interface TaskState {

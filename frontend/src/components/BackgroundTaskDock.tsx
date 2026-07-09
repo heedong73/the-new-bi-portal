@@ -163,49 +163,56 @@ function RefreshTaskRow({ task, qc, updateTask, removeTask }: RowProps) {
   return <TaskRowView task={task} onClose={() => removeTask(task.id)} />
 }
 
-const COLLECT_STARTUP_GRACE_MS = 12_000
-const COLLECT_SAFETY_TIMEOUT_MS = 5 * 60_000
+const COLLECT_SAFETY_TIMEOUT_MS = 10 * 60_000
 
 function CollectTaskRow({ task, qc, updateTask, removeTask }: RowProps) {
+  // 실제 수집 결과(성공/실패/스킵)를 Celery task 결과로 폴링. task_id가 붙기 전엔 대기.
   const statusQuery = useQuery({
-    queryKey: ['bg-collect', task.id],
-    queryFn: ({ signal }) => refreshApi.getCollectStatus(signal),
-    enabled: task.status === 'pending',
-    refetchInterval: () => (task.status === 'pending' ? 3000 : false),
+    queryKey: ['bg-collect', task.id, task.collectTaskId],
+    queryFn: ({ signal }) => refreshApi.getCollectStatus(task.collectTaskId, signal),
+    enabled: task.status === 'pending' && !!task.collectTaskId,
+    refetchInterval: (q) => {
+      const st = (q.state.data as { state?: string } | undefined)?.state
+      return st && st !== 'running' ? false : 2500
+    },
   })
 
   useEffect(() => {
     if (task.status !== 'pending') return
-    const data = statusQuery.data as { running?: boolean } | undefined
-    if (data === undefined) return
+    const data = statusQuery.data
     const elapsed = task.startedAt ? Date.now() - task.startedAt : 0
-    const running = !!data.running
 
-    // 안전 타임아웃: 오래 진행 미확정(락 장시간 유지/워커 지연)이면 정리
+    if (data) {
+      if (data.state === 'succeeded') {
+        updateTask(task.id, { status: 'success', message: '완료' })
+        qc.invalidateQueries({ queryKey: ['refresh-timetable'] })
+        qc.invalidateQueries({ queryKey: ['refresh-history'] })
+        qc.invalidateQueries({ queryKey: ['summary'] })
+        qc.invalidateQueries({ queryKey: ['refresh-latest-date'] })
+        const id = task.id
+        setTimeout(() => removeTask(id), 5000)
+        return
+      }
+      if (data.state === 'skipped') {
+        updateTask(task.id, { status: 'success', message: '이미 수집 중이었습니다' })
+        const id = task.id
+        setTimeout(() => removeTask(id), 6000)
+        return
+      }
+      if (data.state === 'failed') {
+        updateTask(task.id, { status: 'error', message: data.error || '수집 실패' })
+        return
+      }
+      // running/unknown → 계속 진행 표시
+    }
+
+    // 안전 타임아웃: 결과 미확정(워커 미가동/지연 등)이면 '완료' 대신 실패로 정리
     if (elapsed > COLLECT_SAFETY_TIMEOUT_MS) {
-      updateTask(task.id, { status: 'success', message: '요청됨 (반영까지 시간이 걸릴 수 있어요)' })
-      const id = task.id
-      setTimeout(() => removeTask(id), 6000)
-      return
+      updateTask(task.id, {
+        status: 'error',
+        message: '수집 상태를 확인하지 못했습니다(시간 초과). 워커 상태를 확인하세요.',
+      })
     }
-
-    if (running) {
-      // 진행 중(락 점유)을 한 번이라도 관측 → 이후 해제 시 완료로 판정
-      if (!task.seenRunning) updateTask(task.id, { seenRunning: true })
-      return
-    }
-
-    // running === false: 진행 중을 봤거나 시작 유예를 지났으면 완료로 간주
-    const done = task.seenRunning || elapsed > COLLECT_STARTUP_GRACE_MS
-    if (done) {
-      updateTask(task.id, { status: 'success', message: '완료' })
-      qc.invalidateQueries({ queryKey: ['refresh-timetable'] })
-      qc.invalidateQueries({ queryKey: ['refresh-history'] })
-      qc.invalidateQueries({ queryKey: ['summary'] })
-      const id = task.id
-      setTimeout(() => removeTask(id), 5000)
-    }
-    // else: 락 미획득(시작 대기) — 계속 폴링한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusQuery.data, statusQuery.dataUpdatedAt])
 
