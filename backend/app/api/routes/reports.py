@@ -259,6 +259,9 @@ async def update_report(report_id: int, body: ReportUpdate, db: SessionDep, op=D
                        resource_type="report", resource_id=str(report_id),
                        meta={"report_id": report_id})
     await db.commit()
+    # onupdate(func.now()) 컬럼(updated_at)은 커밋 후 만료되므로, async 세션에서
+    # _to_response가 동기 lazy-load(→ MissingGreenlet 500)를 하지 않도록 명시적으로 재로딩한다.
+    await db.refresh(report)
     return _to_response(report)
 
 @router.patch("/{report_id}/visibility", response_model=ReportResponse)
@@ -273,6 +276,9 @@ async def change_visibility(report_id: int, body: VisibilityUpdate, db: SessionD
                        resource_type="report", resource_id=str(report_id),
                        meta={"report_id": report_id, "after": "public" if body.is_published else "private"})
     await db.commit()
+    # onupdate(func.now()) 컬럼(updated_at)은 커밋 후 만료되므로, async 세션에서
+    # _to_response가 동기 lazy-load(→ MissingGreenlet 500)를 하지 않도록 명시적으로 재로딩한다.
+    await db.refresh(report)
     return _to_response(report)
 
 @router.patch("/{report_id}/folder", response_model=ReportResponse)
@@ -287,6 +293,9 @@ async def move_folder(report_id: int, body: FolderMoveRequest, db: SessionDep, o
                        resource_type="report", resource_id=str(report_id),
                        meta={"report_id": report_id, "folder_id": body.folder_id})
     await db.commit()
+    # onupdate(func.now()) 컬럼(updated_at)은 커밋 후 만료되므로, async 세션에서
+    # _to_response가 동기 lazy-load(→ MissingGreenlet 500)를 하지 않도록 명시적으로 재로딩한다.
+    await db.refresh(report)
     return _to_response(report)
 
 
