@@ -91,7 +91,12 @@ async def delete_folder(folder_id: int, db: SessionDep, op=Depends(_require_oper
 
 @router.get("/tree", response_model=list[FolderTreeNode])
 async def folder_tree(db: SessionDep, current=Depends(get_current_user)):
-    """폴더 트리 + 사용자가 VIEW 권한 가진 레포트만 노출(R41.4)."""
+    """폴더 트리 + 사용자가 VIEW 권한 가진 레포트만 노출(R41.4).
+
+    운영자(System_Operator/로컬 관리자)는 관리 목적상 레포트 유무와 무관하게
+    전체 폴더 구조를 본다(빈 폴더 포함). 일반 사용자는 하위(자기 포함)에 조회권
+    레포트가 없는 폴더를 숨긴다(R41.7).
+    """
     folders = (await db.execute(select(ReportFolder).order_by(ReportFolder.sort_order, ReportFolder.id))).scalars().all()
     reports = (await db.execute(select(Report))).scalars().all()
 
@@ -119,7 +124,15 @@ async def folder_tree(db: SessionDep, current=Depends(get_current_user)):
         else:
             roots.append(nodes[f.id])
 
-    # 하위(자기 포함)에 조회권 있는 레포트가 하나도 없는 폴더는 숨긴다(R41.4/R41.7).
+    # 운영자(System_Operator/로컬 관리자)는 레포트 유무와 무관하게 전체 폴더 구조를 본다.
+    is_operator = (
+        RoleCode.SYSTEM_OPERATOR.value in current.get("roles", [])
+        or bool(current.get("is_local_admin"))
+    )
+    if is_operator:
+        return roots
+
+    # (일반 사용자) 하위(자기 포함)에 조회권 있는 레포트가 하나도 없는 폴더는 숨긴다(R41.4/R41.7).
     # 레포트 조회 권한이 없으면 그 레포트가 속한 상위 폴더도 보이지 않아야 한다.
     def _keep(node: FolderTreeNode) -> bool:
         node.children = [c for c in node.children if _keep(c)]
