@@ -253,8 +253,11 @@ backend/app/
 | POST | `/api/requests/{id}/comments` | 댓글 작성(요청자/운영자) | 소유자/O | R17.7 |
 | GET | `/api/audit-logs` | 기간/주체/행위 종류 필터 조회 | O | R35.3 |
 | GET | `/api/stats/reports` | 통계 조회 가능 레포트 목록(드롭다운): O=전체, Super_User=VIEW_STATS 부여분 | 통계 접근권 | R18.4 |
-| GET | `/api/stats/overview` | 접속/조회/새로고침/메일/실패Job 집계(기간 필터, report_id 지정 시 해당 레포트만) | 통계 접근권(O) | R18.1, R18.5 |
-| GET | `/api/stats/usage` | 인기 리포트 TOP10·부서별/월별 리포트 수·사용자별 조회·Export/Refresh 실패·미사용 리포트(기간 필터, report_id 지정 가능) | 통계 접근권(O) | R18.2, R18.3, R18.5 |
+| GET | `/api/stats/overview` | 접속자(고유/전체)·총·신규 레포트·접속 레포트·총 뷰 + 새로고침/메일/실패Job 집계(기간·계열사·report_id 필터) | 통계 접근권(O) | R18.1, R18.5 |
+| GET | `/api/stats/usage` | 인기 리포트 TOP10·계열사별/부서별/월별 리포트 수·시간대별(0~23시 KST)·사용자별 조회·미사용 리포트(기간·계열사·report_id 필터) | 통계 접근권(O) | R18.2, R18.3, R18.5 |
+| GET | `/api/stats/companies` | 계열사(최상위 폴더) 목록(필터 드롭다운). 운영자 전용 | 통계 접근권(O) | R18 |
+| GET | `/api/stats/trends` | 주별/월별 추이: 접속자·누적 레포트·조회 수(granularity=week\|month, 기간·계열사 필터, KST 버킷) | 통계 접근권(O) | R18 |
+| GET | `/api/stats/report-detail` | 레포트/계열사별 부서 조회 상세: 조회수·고유 사용자·최근 접속(기간 필터) | 통계 접근권(O) | R18 |
 | GET | `/api/health` | 시스템 가용 상태 | 익명 | R36.1 |
 | GET | `/api/monitoring/status` | DB/Redis/Worker/최근 작업 결과 지표 | O | R36.2, R36.3 |
 

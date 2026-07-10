@@ -606,6 +606,15 @@
   - 비동기 흐름: 클릭 → ExportJob 생성/enqueue(202) → 우측 상단 BackgroundTaskDock가 `GET /api/exports/{id}` 폴링(kind 'export') → 완료 시 `/api/exports/{id}/file` 자동 다운로드(1회) → 실패 시 오류 표시. useTaskStore 'export' kind + exportJobId/downloaded
   - _Requirements: R9.6, R9.7, R8_
 
+- [x] 76. 통계 대시보드 고도화 (메인 KPI·계열사·시간대별 / 주월 추이 / 레포트별 상세)
+  - 백엔드 stats_service/stats.py 확장:
+    - overview: 고유 접속자(unique_visitors)·전체 접속(total_visits=로그인 총건)·총 레포트(total_reports)+기간내 신규(new_reports)·접속 레포트 수(viewed_reports=distinct report_view)·총 뷰(report_view_count). 스코프(계열사/Super_User)에선 접속자=조회 고유 사용자로 대체하고 전역 지표(refresh/mail)는 숨김
+    - usage: 계열사(최상위 폴더)별 레포트 수(reports_by_company — SAMCHULLY→"SCL" 라벨·그룹공통 포함, 레포트→루트 폴더 매핑), 시간대별(hourly 0~23시 **KST**: 조회수/고유 사용자)
+    - 신규 `GET /api/stats/companies`(계열사 목록, 운영자 전용), `GET /api/stats/trends`(granularity=week|month: 접속자·누적 레포트·조회 수 시계열, KST 버킷), `GET /api/stats/report-detail`(부서별 조회수·고유 사용자·최근 접속; report_id/계열사/기간 필터)
+    - overview/usage에 company 필터 파라미터 추가, 캐시키에 company/granularity 반영. KST 보정은 occurred_at_utc/created_at + `interval '9 hours'`(월=YYYY-MM, 주=IYYY-"W"IW)
+  - 프런트 StatsDashboardPage 3탭(recharts): [메인] KPI 카드 + 계열사별 레포트 수 카드 + 조회수 TOP10(가로 막대) + 시간대별(막대=조회, 선=사용자, ComposedChart) / [추이] 주·월 토글(막대=조회, 선=접속자·누적 레포트) / [상세] 계열사·레포트·기간 필터 → 부서별 표 + CSV(BOM). 운영자=전역 3탭+계열사 필터, Super_User=VIEW_STATS 레포트 스코프 단일 뷰. dashboardApi 옵션객체(StatsQuery)로 리팩터 + companies/trends/reportDetail 추가
+  - _Requirements: R18_
+
 ## v1.1+ (범위 외 - 참고)
 
 - [ ] 48. Job_Context 다중 부서 선택 (R1.7)

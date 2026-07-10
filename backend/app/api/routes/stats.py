@@ -41,10 +41,13 @@ async def _stats_report_ids(db, current: dict) -> set[int] | None:
     )
 
 
-async def _resolve_scope(db, current: dict, report_id: int | None) -> tuple[set[int] | None, str]:
+async def _resolve_scope(
+    db, current: dict, report_id: int | None = None, company_id: int | None = None,
+) -> tuple[set[int] | None, str]:
     """요청 스코프 계산.
 
     - report_id 지정: 그 레포트로 한정(운영자 아니면 VIEW_STATS 보유 검증).
+    - company_id 지정(운영자 전용): 그 계열사(최상위 폴더) 하위 레포트로 한정.
     - 미지정: 운영자=전체(None), 그 외=VIEW_STATS 부여분 전체.
     """
     allowed = await _stats_report_ids(db, current)  # None=all(operator)
@@ -52,6 +55,9 @@ async def _resolve_scope(db, current: dict, report_id: int | None) -> tuple[set[
         if allowed is not None and report_id not in allowed:
             raise PermissionDeniedError("해당 레포트의 통계를 조회할 권한이 없습니다.")
         return {report_id}, f"r{report_id}"
+    if company_id is not None and allowed is None:
+        ids = await stats_service.company_report_ids(db, company_id)
+        return ids, f"c{company_id}"
     if allowed is None:
         return None, "all"
     return allowed, f"u{current['user_id']}"
@@ -82,13 +88,14 @@ async def stats_overview(
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = Query(default=None),
     report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
     *,
     db: SessionDep,
     redis: RedisDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """기본 운영 통계. report_id 지정 시 그 레포트만; Super_User는 전역 지표 숨김."""
-    scope, scope_key = await _resolve_scope(db, current, report_id)
+    """기본 운영 통계. report_id/계열사 지정 시 그 범위만; Super_User는 전역 지표 숨김."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
     key = _cache_key("overview", from_, to, scope_key)
     cached = await cache_get_json(redis, key)
     if cached is not None:
@@ -103,17 +110,77 @@ async def stats_usage(
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = Query(default=None),
     report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
     *,
     db: SessionDep,
     redis: RedisDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """사용 통계. report_id 지정 시 그 레포트로 스코프."""
-    scope, scope_key = await _resolve_scope(db, current, report_id)
+    """사용 통계. report_id/계열사 지정 시 그 범위로 스코프."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
     key = _cache_key("usage", from_, to, scope_key)
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
     data = await stats_service.get_usage(db, from_, to, scope)
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+@router.get("/api/stats/companies")
+async def stats_companies(
+    *,
+    db: SessionDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """계열사(최상위 폴더) 목록 — 필터 드롭다운용. 계열사 필터는 운영자 전용."""
+    if not _is_operator(current):
+        return []
+    return await stats_service.list_companies(db)
+
+
+@router.get("/api/stats/trends")
+async def stats_trends(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    granularity: str = Query(default="month"),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """주별/월별 추이: 접속자 수·누적 레포트 수·조회 수."""
+    if granularity not in ("week", "month"):
+        granularity = "month"
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key(f"trends:{granularity}", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_trends(db, from_, to, granularity, scope)
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+@router.get("/api/stats/report-detail")
+async def stats_report_detail(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """레포트별(또는 계열사별) 부서 조회 상세: 조회수·고유 사용자·최근 접속일."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key("report-detail", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_report_detail(db, from_, to, scope)
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
