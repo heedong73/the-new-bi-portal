@@ -202,7 +202,7 @@ export default function ReportsPage() {
     }
     return (
       <div key={r.id}
-        className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_minmax(0,1.4fr)_280px] items-center gap-3 rounded-md py-2 pr-2 text-sm hover:bg-slate-50">
+        className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_130px_minmax(0,1.4fr)_280px] items-center gap-3 rounded-md py-2 pr-2 text-sm hover:bg-slate-50">
         <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: depth * 20 + 4 }}>
           <FileBarChart className="h-4 w-4 shrink-0 text-blue-500" />
           <span className="truncate text-slate-800" title={name}>{name}</span>
@@ -210,6 +210,7 @@ export default function ReportsPage() {
         <span className="truncate font-mono text-xs text-slate-500" title={r.report_id}>{r.report_id}</span>
         <span className="text-slate-500">{r.created_at ? r.created_at.slice(0, 10) : '-'}</span>
         <span className="truncate text-slate-500" title={r.created_by_label ?? ''}>{r.created_by_label || '알 수 없음'}</span>
+        <span className="truncate text-slate-500" title={r.author_label ?? ''}>{r.author_label || '-'}</span>
         <span className="truncate text-slate-500" title={r.description ?? ''}>{r.description || '-'}</span>
         <div className="flex shrink-0 items-center justify-end gap-1 whitespace-nowrap">
           <button type="button" disabled={isFirst} onClick={() => moveReport(-1)}
@@ -340,11 +341,12 @@ export default function ReportsPage() {
       {/* 트리 */}
       <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
         {/* 컬럼 헤더 */}
-        <div className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_minmax(0,1.4fr)_280px] items-center gap-3 border-b border-slate-200 px-2 py-2.5 text-sm font-semibold text-slate-500">
+        <div className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_130px_minmax(0,1.4fr)_280px] items-center gap-3 border-b border-slate-200 px-2 py-2.5 text-sm font-semibold text-slate-500">
           <span className="pl-1">레포트명</span>
           <span>레포트 ID</span>
           <span>등록일</span>
           <span>생성자</span>
+          <span>작성자</span>
           <span>설명</span>
           <span className="text-right">관리</span>
         </div>

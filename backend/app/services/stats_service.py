@@ -488,6 +488,76 @@ async def _unused_reports(db: AsyncSession, report_ids: set[int] | None = None) 
     ]
 
 
+async def get_highlights(
+    db: AsyncSession,
+    report_ids: set[int] | None = None,
+) -> dict:
+    """기간 필터와 무관한 상시 지표: 오늘/어제 접속(중복 미제거), 최근 접속 시각,
+    미사용 레포트 수. 통계 화면 상단 기간 필터를 어떻게 바꿔도 항상 '오늘 vs 어제'
+    기준을 유지한다(작성자 대시보드 KPI/인사이트용).
+
+    report_ids 지정 시(Super_User) 그 범위로 한정. None이면 전체(운영자).
+    """
+    if report_ids is not None and not report_ids:
+        return {
+            "today_views": 0, "yesterday_views": 0, "pct_change": None, "is_new": False,
+            "last_access": None, "unused_count": 0,
+        }
+    scope_str = {str(i) for i in report_ids} if report_ids is not None else None
+
+    kst = timezone(timedelta(hours=9))
+    now_kst = datetime.now(kst)
+    today_start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_start_kst = today_start_kst - timedelta(days=1)
+    tomorrow_start_kst = today_start_kst + timedelta(days=1)
+
+    def _to_naive_utc(dt: datetime) -> datetime:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+    today_start = _to_naive_utc(today_start_kst)
+    tomorrow_start = _to_naive_utc(tomorrow_start_kst)
+    yesterday_start = _to_naive_utc(yesterday_start_kst)
+
+    def _view_stmt():
+        stmt = select(func.count()).select_from(AuditLog).where(
+            AuditLog.action == AuditAction.REPORT_VIEW,
+        )
+        if scope_str is not None:
+            stmt = stmt.where(AuditLog.resource_id.in_(scope_str))
+        return stmt
+
+    today_views = await _count(db, _view_stmt().where(
+        AuditLog.occurred_at_utc >= today_start, AuditLog.occurred_at_utc < tomorrow_start,
+    ))
+    yesterday_views = await _count(db, _view_stmt().where(
+        AuditLog.occurred_at_utc >= yesterday_start, AuditLog.occurred_at_utc < today_start,
+    ))
+
+    is_new = yesterday_views == 0 and today_views > 0
+    pct_change = None if yesterday_views == 0 else round(
+        (today_views - yesterday_views) / yesterday_views * 100, 1
+    )
+
+    last_stmt = select(func.max(AuditLog.occurred_at_utc)).where(
+        AuditLog.action == AuditAction.REPORT_VIEW
+    )
+    if scope_str is not None:
+        last_stmt = last_stmt.where(AuditLog.resource_id.in_(scope_str))
+    last = await db.scalar(last_stmt)
+    last_access = last.replace(tzinfo=timezone.utc).isoformat() if last else None
+
+    unused = await _unused_reports(db, report_ids)
+
+    return {
+        "today_views": today_views,
+        "yesterday_views": yesterday_views,
+        "pct_change": pct_change,
+        "is_new": is_new,
+        "last_access": last_access,
+        "unused_count": len(unused),
+    }
+
+
 async def get_trends(
     db: AsyncSession,
     from_dt: datetime | None,
@@ -618,6 +688,111 @@ async def get_report_detail(
             "department": dept or "(부서 없음)",
             "views": int(views),
             "unique_users": int(users),
+            "last_access": last_iso,
+        })
+    return result
+
+
+async def get_hourly(
+    db: AsyncSession,
+    from_dt: datetime | None,
+    to_dt: datetime | None,
+    report_ids: set[int] | None = None,
+    *,
+    department: str | None = None,
+    user_id: int | None = None,
+) -> list[dict]:
+    """시간대별(0~23시, KST) 레포트 조회 수 / 고유 사용자 수.
+
+    상세 조회 탭에서 특정 부서 또는 사용자를 선택했을 때, 그 부서/사용자로
+    한정한 시간대별 추이를 보기 위한 드릴다운용(usage.hourly는 필터 없는 전체
+    기준). department/user_id는 상호 배타적으로 쓰되 동시 지정도 AND로 허용한다.
+    """
+    if report_ids is not None and not report_ids:
+        return [{"hour": h, "views": 0, "users": 0} for h in range(24)]
+    nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
+    scope_str = {str(i) for i in report_ids} if report_ids is not None else None
+
+    hour_expr = func.extract("hour", _kst(AuditLog.occurred_at_utc))
+    stmt = (
+        select(
+            hour_expr.label("hour"),
+            func.count().label("views"),
+            func.count(distinct(AuditLog.actor_user_id)).label("users"),
+        )
+        .select_from(AuditLog)
+        .where(AuditLog.action == AuditAction.REPORT_VIEW)
+    )
+    if department is not None or user_id is not None:
+        stmt = stmt.join(User, User.id == AuditLog.actor_user_id)
+        if department is not None:
+            stmt = stmt.outerjoin(Department, Department.id == User.department_id).where(
+                Department.name == department if department != "(부서 없음)" else Department.id.is_(None)
+            )
+        if user_id is not None:
+            stmt = stmt.where(User.id == user_id)
+    if scope_str is not None:
+        stmt = stmt.where(AuditLog.resource_id.in_(scope_str))
+    if nf is not None:
+        stmt = stmt.where(AuditLog.occurred_at_utc >= nf)
+    if nt is not None:
+        stmt = stmt.where(AuditLog.occurred_at_utc <= nt)
+    stmt = stmt.group_by(hour_expr)
+
+    rows = (await db.execute(stmt)).all()
+    hmap = {int(h): (int(v), int(u)) for h, v, u in rows}
+    return [
+        {"hour": h, "views": hmap.get(h, (0, 0))[0], "users": hmap.get(h, (0, 0))[1]}
+        for h in range(24)
+    ]
+
+
+async def get_report_detail_users(
+    db: AsyncSession,
+    from_dt: datetime | None,
+    to_dt: datetime | None,
+    report_ids: set[int] | None = None,
+) -> list[dict]:
+    """레포트별 조회 상세 — 사용자별 조회수/부서/최근 접속.
+
+    부서별 집계(get_report_detail)와 짝을 이루는 사용자 단위 상세. report_ids
+    지정 시 그 집합으로 한정(단일 레포트 또는 계열사 전체). None이면 전체 대상.
+    """
+    if report_ids is not None and not report_ids:
+        return []
+    nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
+    scope_str = {str(i) for i in report_ids} if report_ids is not None else None
+
+    stmt = (
+        select(
+            User.id.label("user_id"),
+            User.name.label("user_name"),
+            Department.name.label("dept"),
+            func.count().label("views"),
+            func.max(AuditLog.occurred_at_utc).label("last"),
+        )
+        .select_from(AuditLog)
+        .join(User, User.id == AuditLog.actor_user_id)
+        .outerjoin(Department, Department.id == User.department_id)
+        .where(AuditLog.action == AuditAction.REPORT_VIEW)
+    )
+    if scope_str is not None:
+        stmt = stmt.where(AuditLog.resource_id.in_(scope_str))
+    if nf is not None:
+        stmt = stmt.where(AuditLog.occurred_at_utc >= nf)
+    if nt is not None:
+        stmt = stmt.where(AuditLog.occurred_at_utc <= nt)
+    stmt = stmt.group_by(User.id, User.name, Department.name).order_by(func.count().desc())
+
+    rows = (await db.execute(stmt)).all()
+    result: list[dict] = []
+    for user_id, user_name, dept, views, last in rows:
+        last_iso = last.replace(tzinfo=timezone.utc).isoformat() if last else None
+        result.append({
+            "user_id": user_id,
+            "user_name": user_name or f"#{user_id}",
+            "department": dept or "(부서 없음)",
+            "views": int(views),
             "last_access": last_iso,
         })
     return result

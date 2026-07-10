@@ -127,6 +127,26 @@ async def stats_usage(
     return data
 
 
+@router.get("/api/stats/highlights")
+async def stats_highlights(
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """기간 필터와 무관한 상시 지표(오늘/어제 접속·최근 접속·미사용 레포트 수)."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = f"bip:cache:stats:highlights:{scope_key}"
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_highlights(db, scope)
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
 @router.get("/api/stats/companies")
 async def stats_companies(
     *,
@@ -182,5 +202,53 @@ async def stats_report_detail(
     if cached is not None:
         return cached
     data = await stats_service.get_report_detail(db, from_, to, scope)
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+@router.get("/api/stats/hourly")
+async def stats_hourly(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    department: str | None = Query(default=None),
+    user_id: int | None = Query(default=None),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """시간대별(0~23시 KST) 조회 수·사용자 수. 부서/사용자 선택 시 그 범위로 드릴다운."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key(f"hourly:{department or '-'}:{user_id or '-'}", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_hourly(
+        db, from_, to, scope, department=department, user_id=user_id,
+    )
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+@router.get("/api/stats/report-detail-users")
+async def stats_report_detail_users(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """레포트별(또는 계열사별) 사용자 조회 상세: 사용자명·부서·조회수·최근 접속일."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key("report-detail-users", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_report_detail_users(db, from_, to, scope)
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data

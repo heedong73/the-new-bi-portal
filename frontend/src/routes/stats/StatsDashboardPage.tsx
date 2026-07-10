@@ -7,12 +7,12 @@
  *   - 상세: 계열사/레포트/기간별 부서 조회 상세(조회수·고유 사용자·최근 접속) + CSV.
  * - Super_User: 관리자가 VIEW_STATS를 부여한 레포트만 선택해 조회(스코프).
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { startOfDay, endOfDay, subDays } from 'date-fns'
-import { Users, UserCheck, Eye, FileText, FolderOpen, Download } from 'lucide-react'
+import { Users, UserCheck, Eye, FileText, FolderOpen, Download, CalendarClock, FileBarChart } from 'lucide-react'
 import {
-  ResponsiveContainer, ComposedChart, BarChart, Bar, Line,
+  ResponsiveContainer, ComposedChart, BarChart, Bar, Line, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
 
@@ -20,7 +20,7 @@ import { statsApi } from '@/api/dashboardApi'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { BOM, escapeCsvField } from '@/utils/csv'
 import type {
-  CompanyReports, HourlyPoint, ReportDetailRow, StatsOverview, TopReport, TrendPoint,
+  CompanyReports, HourlyPoint, ReportDetailRow, ReportDetailUserRow, StatsHighlights, StatsOverview, TopReport, TrendPoint,
 } from '@/types/dashboard'
 
 // ── 기간 프리셋/유틸 ─────────────────────────────────────────────────────────
@@ -67,17 +67,19 @@ function KpiCard({ label, value, delta, Icon, tone = 'slate' }: {
   tone?: keyof typeof TONE_CLS
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className={`mb-2 inline-flex h-9 w-9 items-center justify-center rounded-lg ${TONE_CLS[tone]}`}>
-        <Icon className="h-5 w-5" />
+    <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+      <div className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${TONE_CLS[tone]}`}>
+        <Icon className="h-3.5 w-3.5" />
       </div>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-2xl font-bold text-slate-800">{value.toLocaleString()}</span>
-        {delta != null && delta > 0 && (
-          <span className="text-sm font-semibold text-green-600">(+{delta.toLocaleString()})</span>
-        )}
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-1">
+          <span className="text-lg font-bold leading-tight text-slate-800">{value.toLocaleString()}</span>
+          {delta != null && delta > 0 && (
+            <span className="text-xs font-semibold text-green-600">(+{delta.toLocaleString()})</span>
+          )}
+        </div>
+        <div className="truncate text-xs leading-tight text-slate-500">{label}</div>
       </div>
-      <div className="text-xs text-slate-500">{label}</div>
     </div>
   )
 }
@@ -142,10 +144,51 @@ function PeriodFilter({ fromDate, toDate, onChange }: {
   )
 }
 
-// ── 차트 ─────────────────────────────────────────────────────────────────────
-function HourlyChart({ data }: { data: HourlyPoint[] }) {
+/** 필터 바 카드 공통 래퍼: 아이콘 배지 + 라벨 + 컨트롤을 한 줄에 배치. */
+function FilterCard({ icon: Icon, label, children }: {
+  icon: typeof CalendarClock; label: string; children: React.ReactNode
+}) {
   return (
-    <div className="h-72 w-full">
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
+      <div className="flex items-center gap-1.5 text-slate-500">
+        <Icon className="h-4 w-4" />
+        <span className="text-xs font-medium">{label}</span>
+      </div>
+      <div className="h-5 w-px bg-slate-200" />
+      {children}
+    </div>
+  )
+}
+
+/** 작성자 대시보드용 심플 기간 필터: 프리셋 버튼 없이 시작~종료 날짜 선택만. */
+function SimplePeriodFilter({ fromDate, toDate, onChange }: {
+  fromDate: string; toDate: string; onChange: (from: string, to: string) => void
+}) {
+  return (
+    <FilterCard icon={CalendarClock} label="기간">
+      <div className="flex items-center gap-1.5">
+        <input type="date" value={fromDate} max={toDate || undefined}
+          onChange={(e) => onChange(e.target.value, toDate)} aria-label="시작일"
+          className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700" />
+        <span className="text-slate-400">~</span>
+        <input type="date" value={toDate} min={fromDate || undefined}
+          onChange={(e) => onChange(fromDate, e.target.value)} aria-label="종료일"
+          className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700" />
+        {(fromDate || toDate) && (
+          <button type="button" onClick={() => onChange('', '')}
+            className="ml-1 text-xs text-slate-400 underline hover:text-slate-600">
+            전체
+          </button>
+        )}
+      </div>
+    </FilterCard>
+  )
+}
+
+// ── 차트 ─────────────────────────────────────────────────────────────────────
+function HourlyChart({ data, height = 240 }: { data: HourlyPoint[]; height?: number }) {
+  return (
+    <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: -8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -154,7 +197,7 @@ function HourlyChart({ data }: { data: HourlyPoint[] }) {
           <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} />
           <Tooltip labelFormatter={(h) => `${h}시`} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar yAxisId="left" dataKey="views" name="조회 페이지수" fill="#93c5fd" radius={[3, 3, 0, 0]} />
+          <Bar yAxisId="left" dataKey="views" name="레포트 조회 수" fill="#93c5fd" radius={[3, 3, 0, 0]} />
           <Line yAxisId="right" dataKey="users" name="사용자 수" stroke="#7c3aed" strokeWidth={2} dot={{ r: 2 }} />
         </ComposedChart>
       </ResponsiveContainer>
@@ -162,22 +205,58 @@ function HourlyChart({ data }: { data: HourlyPoint[] }) {
   )
 }
 
-function TopReportsBar({ data }: { data: TopReport[] }) {
+function TopReportsBar({ data, selectedReportId, onSelect, height = 240 }: {
+  data: TopReport[]
+  selectedReportId?: number | null
+  onSelect?: (reportId: number | null) => void
+  height?: number
+}) {
   const rows = data.map((r) => ({
+    id: r.report_id,
     name: r.report_name ?? `#${r.report_id}`,
     count: r.count,
   }))
   if (rows.length === 0) return <p className="text-sm text-slate-400">데이터 없음</p>
   return (
-    <div style={{ height: Math.max(160, rows.length * 34) }} className="w-full">
+    <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+        <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 28, bottom: 4, left: 0 }} barCategoryGap="30%" maxBarSize={22}>
+          <defs>
+            <linearGradient id="topReportBarGradient" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#93c5fd" />
+              <stop offset="100%" stopColor="#3b82f6" />
+            </linearGradient>
+            <linearGradient id="topReportBarGradientActive" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#3b82f6" />
+              <stop offset="100%" stopColor="#1d4ed8" />
+            </linearGradient>
+          </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-          <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
-          <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 11 }}
-            tickFormatter={(v: string) => (v.length > 16 ? `${v.slice(0, 16)}…` : v)} />
-          <Tooltip />
-          <Bar dataKey="count" name="조회수" fill="#60a5fa" radius={[0, 3, 3, 0]} />
+          <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
+            tickFormatter={(v: string) => (v.length > 11 ? `${v.slice(0, 11)}…` : v)} />
+          <Tooltip cursor={{ fill: '#f8fafc' }} />
+          <Bar
+            dataKey="count" name="조회수" radius={[0, 6, 6, 0]}
+            cursor={onSelect ? 'pointer' : undefined}
+            onClick={(d: { id?: string }) => {
+              if (!onSelect || !d?.id) return
+              const rid = Number(d.id)
+              if (!Number.isFinite(rid)) return
+              onSelect(selectedReportId === rid ? null : rid)
+            }}
+          >
+            {rows.map((r) => {
+              const active = selectedReportId != null && String(selectedReportId) === r.id
+              return (
+                <Cell
+                  key={r.id}
+                  fill={active ? 'url(#topReportBarGradientActive)' : 'url(#topReportBarGradient)'}
+                />
+              )
+            })}
+            <LabelList dataKey="count" position="right" style={{ fontSize: 11, fill: '#475569', fontWeight: 600 }} />
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -234,7 +313,12 @@ function CompanyCards({ data, selected, onSelect }: {
   )
 }
 
-function DetailTable({ rows, onExport }: { rows: ReportDetailRow[]; onExport: () => void }) {
+function DetailTable({ rows, onExport, selectedDepartment, onSelectDepartment }: {
+  rows: ReportDetailRow[]
+  onExport: () => void
+  selectedDepartment?: string | null
+  onSelectDepartment?: (department: string | null) => void
+}) {
   return (
     <SectionCard
       title="부서별 조회 상세"
@@ -249,6 +333,9 @@ function DetailTable({ rows, onExport }: { rows: ReportDetailRow[]; onExport: ()
         </button>
       }
     >
+      {onSelectDepartment && (
+        <p className="mb-2 text-xs text-slate-400">부서를 클릭하면 시간대별 추이가 그 부서로 필터링됩니다.</p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -263,19 +350,123 @@ function DetailTable({ rows, onExport }: { rows: ReportDetailRow[]; onExport: ()
             {rows.length === 0 && (
               <tr><td colSpan={4} className="py-6 text-center text-slate-400">데이터 없음</td></tr>
             )}
-            {rows.map((r) => (
-              <tr key={r.department} className="border-b border-slate-50">
-                <td className="py-2 pr-3 text-slate-700">{r.department}</td>
-                <td className="py-2 pr-3 text-right font-medium text-slate-600">{r.views.toLocaleString()}</td>
-                <td className="py-2 pr-3 text-right text-slate-600">{r.unique_users.toLocaleString()}</td>
-                <td className="py-2 text-slate-500">{fmtDateTime(r.last_access)}</td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const active = selectedDepartment === r.department
+              return (
+                <tr key={r.department}
+                  className={`border-b border-slate-50 ${active ? 'bg-blue-50' : ''}`}>
+                  <td className="py-1">
+                    {onSelectDepartment ? (
+                      <button type="button"
+                        onClick={() => onSelectDepartment(active ? null : r.department)}
+                        className={`w-full rounded px-2 py-1 text-left transition hover:bg-blue-100 ${active ? 'font-semibold text-blue-700' : 'text-slate-700'}`}>
+                        {r.department}
+                      </button>
+                    ) : (
+                      <span className="px-2 py-1 text-slate-700">{r.department}</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 text-right font-medium text-slate-600">{r.views.toLocaleString()}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{r.unique_users.toLocaleString()}</td>
+                  <td className="py-2 text-slate-500">{fmtDateTime(r.last_access)}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
     </SectionCard>
   )
+}
+
+function UserDetailTable({ rows, onExport, selectedUserId, onSelectUser }: {
+  rows: ReportDetailUserRow[]
+  onExport: () => void
+  selectedUserId?: number | null
+  onSelectUser?: (user: { id: number; name: string } | null) => void
+}) {
+  return (
+    <SectionCard
+      title="사용자별 조회 상세"
+      action={
+        <button
+          type="button"
+          onClick={onExport}
+          disabled={rows.length === 0}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+        >
+          <Download className="h-3.5 w-3.5" /> CSV
+        </button>
+      }
+    >
+      {onSelectUser && (
+        <p className="mb-2 text-xs text-slate-400">사용자를 클릭하면 시간대별 추이가 그 사용자로 필터링됩니다.</p>
+      )}
+      <div className="max-h-96 overflow-y-auto overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-white">
+            <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+              <th className="py-2 pr-3 font-medium">사용자</th>
+              <th className="py-2 pr-3 font-medium">부서</th>
+              <th className="py-2 pr-3 text-right font-medium">조회수</th>
+              <th className="py-2 font-medium">최근 접속</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={4} className="py-6 text-center text-slate-400">데이터 없음</td></tr>
+            )}
+            {rows.map((r) => {
+              const active = selectedUserId === r.user_id
+              return (
+                <tr key={r.user_id} className={`border-b border-slate-50 ${active ? 'bg-blue-50' : ''}`}>
+                  <td className="py-1">
+                    {onSelectUser ? (
+                      <button type="button"
+                        onClick={() => onSelectUser(active ? null : { id: r.user_id, name: r.user_name })}
+                        className={`w-full rounded px-2 py-1 text-left transition hover:bg-blue-100 ${active ? 'font-semibold text-blue-700' : 'text-slate-700'}`}>
+                        {r.user_name}
+                      </button>
+                    ) : (
+                      <span className="px-2 py-1 text-slate-700">{r.user_name}</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 text-slate-500">{r.department}</td>
+                  <td className="py-2 pr-3 text-right font-medium text-slate-600">{r.views.toLocaleString()}</td>
+                  <td className="py-2 text-slate-500">{fmtDateTime(r.last_access)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  )
+}
+
+function exportUserDetailCsv(rows: ReportDetailUserRow[], filename: string) {
+  const header = ['사용자', '부서', '조회수', '최근 접속']
+  const lines = [header.map(escapeCsvField).join(',')]
+  for (const r of rows) {
+    lines.push([
+      r.user_name,
+      r.department,
+      r.views,
+      r.last_access ? fmtDateTime(r.last_access) : '',
+    ].map(escapeCsvField).join(','))
+  }
+  const content = BOM + lines.join('\r\n')
+  if (typeof document === 'undefined' || typeof URL === 'undefined') return
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 function exportDetailCsv(rows: ReportDetailRow[], filename: string) {
@@ -342,12 +533,16 @@ function OperatorStats() {
   const [companyId, setCompanyId] = useState<number | null>(null)
   const [granularity, setGranularity] = useState<'week' | 'month'>('month')
   const [detailReportId, setDetailReportId] = useState<number | null>(null)
+  // 상세 조회 탭: 부서/사용자 선택(상호 배타) → 시간대별 차트 드릴다운
+  const [detailDept, setDetailDept] = useState<string | null>(null)
+  const [detailUser, setDetailUser] = useState<{ id: number; name: string } | null>(null)
 
   const fromParam = fromDate ? startOfDay(parseYmd(fromDate)).toISOString() : undefined
   const toParam = toDate ? endOfDay(parseYmd(toDate)).toISOString() : undefined
   const periodActive = !!(fromDate || toDate)
-  const base = { companyId: companyId ?? undefined, from: fromParam, to: toParam }
-  const pk = [companyId ?? 'all', fromParam ?? '', toParam ?? ''] as const
+  // 레포트를 특정 선택하면(reportId) 계열사 선택과 무관하게 그 레포트로 전 탭이 스코프된다(백엔드 우선순위).
+  const base = { companyId: companyId ?? undefined, reportId: detailReportId ?? undefined, from: fromParam, to: toParam }
+  const pk = [companyId ?? 'all', detailReportId ?? 'all', fromParam ?? '', toParam ?? ''] as const
 
   const companiesQuery = useQuery({
     queryKey: ['stats-companies'],
@@ -383,6 +578,29 @@ function OperatorStats() {
     enabled: tab === 'detail',
     staleTime: 60_000,
   })
+  const detailUsersQuery = useQuery({
+    queryKey: ['stats-detail-users', detailReportId ?? 'none', ...pk],
+    queryFn: ({ signal }) =>
+      statsApi.reportDetailUsers({ ...base, reportId: detailReportId ?? undefined }, signal),
+    enabled: tab === 'detail',
+    staleTime: 60_000,
+  })
+  const detailHourlyQuery = useQuery({
+    queryKey: ['stats-detail-hourly', detailDept ?? '', detailUser?.id ?? '', ...pk],
+    queryFn: ({ signal }) =>
+      statsApi.hourly({ ...base, department: detailDept ?? undefined, userId: detailUser?.id }, signal),
+    enabled: tab === 'detail',
+    staleTime: 60_000,
+  })
+
+  function selectDept(d: string | null) {
+    setDetailDept(d)
+    setDetailUser(null)
+  }
+  function selectUser(u2: { id: number; name: string } | null) {
+    setDetailUser(u2)
+    setDetailDept(null)
+  }
 
   const companies = companiesQuery.data ?? []
   const reports = reportsQuery.data ?? []
@@ -391,15 +609,33 @@ function OperatorStats() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-1">
         <h1 className="text-xl font-bold text-slate-800">통계 대시보드</h1>
-        <label className="flex items-center gap-2 text-sm text-slate-600">
+      </div>
+
+      {/* 조회 범위 선택: 레포트/계열사 드롭다운을 제목 바로 아래, 눈에 잘 띄게 크게 표시 */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-base font-medium text-slate-700">
+          레포트
+          <select
+            value={detailReportId ?? ''}
+            onChange={(e) => setDetailReportId(e.target.value ? Number(e.target.value) : null)}
+            aria-label="레포트 선택"
+            className="min-w-[220px] rounded-lg border border-slate-300 px-3 py-2 text-base font-medium text-slate-800 shadow-sm"
+          >
+            <option value="">전체 레포트</option>
+            {reports.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-base font-medium text-slate-700">
           계열사
           <select
             value={companyId ?? ''}
             onChange={(e) => setCompanyId(e.target.value ? Number(e.target.value) : null)}
             aria-label="계열사 필터"
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+            className="min-w-[160px] rounded-lg border border-slate-300 px-3 py-2 text-base font-medium text-slate-800 shadow-sm"
           >
             <option value="">전체</option>
             {companies.map((c) => (
@@ -492,32 +728,45 @@ function OperatorStats() {
       {/* ── 상세 조회 탭 ── */}
       {tab === 'detail' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <label className="flex items-center gap-2 text-sm text-slate-600">
-              레포트
-              <select
-                value={detailReportId ?? ''}
-                onChange={(e) => setDetailReportId(e.target.value ? Number(e.target.value) : null)}
-                aria-label="레포트 선택"
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
-              >
-                <option value="">전체(계열사 기준)</option>
-                {reports.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-            </label>
-            <p className="text-xs text-slate-400">
-              계열사/레포트/기간 필터 기준 부서별 조회 현황
-            </p>
-          </div>
-          {detailQuery.isLoading ? (
+          <p className="text-xs text-slate-400">
+            상단의 레포트/계열사/기간 필터 기준 조회 현황입니다. 아래 부서/사용자를 선택하면 가운데 시간대별 추이가 그 범위로 필터링됩니다.
+          </p>
+          {detailQuery.isLoading || detailUsersQuery.isLoading ? (
             <p className="text-sm text-slate-400">불러오는 중…</p>
           ) : (
-            <DetailTable
-              rows={detailQuery.data ?? []}
-              onExport={() => exportDetailCsv(detailQuery.data ?? [], 'report-detail.csv')}
-            />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)]">
+              <DetailTable
+                rows={detailQuery.data ?? []}
+                onExport={() => exportDetailCsv(detailQuery.data ?? [], 'report-detail-by-department.csv')}
+                selectedDepartment={detailDept}
+                onSelectDepartment={selectDept}
+              />
+              <SectionCard
+                title={
+                  detailDept
+                    ? `시간대별 조회 · 사용자 — ${detailDept}`
+                    : detailUser
+                      ? `시간대별 조회 · 사용자 — ${detailUser.name}`
+                      : '시간대별 조회 · 사용자 (전체)'
+                }
+                action={
+                  (detailDept || detailUser) && (
+                    <button type="button" onClick={() => { setDetailDept(null); setDetailUser(null) }}
+                      className="rounded-md border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50">
+                      선택 해제
+                    </button>
+                  )
+                }
+              >
+                <HourlyChart data={detailHourlyQuery.data ?? []} />
+              </SectionCard>
+              <UserDetailTable
+                rows={detailUsersQuery.data ?? []}
+                onExport={() => exportUserDetailCsv(detailUsersQuery.data ?? [], 'report-detail-by-user.csv')}
+                selectedUserId={detailUser?.id ?? null}
+                onSelectUser={selectUser}
+              />
+            </div>
           )}
         </div>
       )}
@@ -525,11 +774,58 @@ function OperatorStats() {
   )
 }
 
-// ── Super_User 대시보드 (VIEW_STATS 부여 레포트 스코프) ───────────────────────
+/** 작성자 KPI 5종 + 오늘 접속(전일대비%) + 파생 인사이트(평균 조회수/미조회/최근 접속). */
+function AuthorKpis({ o, h }: { o: StatsOverview; h?: StatsHighlights }) {
+  const totalReports = o.total_reports ?? 0
+  const totalVisits = o.report_view_count
+  const avgViewsPerReport = totalReports > 0 ? Math.round((totalVisits / totalReports) * 10) / 10 : 0
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <KpiCard label="총 접속(레포트 뷰)" value={totalVisits} Icon={Eye} tone="blue" />
+        <div className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+          <div className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-50 text-amber-600">
+            <CalendarClock className="h-3.5 w-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-1">
+              <span className="text-lg font-bold leading-tight text-slate-800">{(h?.today_views ?? 0).toLocaleString()}</span>
+              {h && (
+                h.is_new ? (
+                  <span className="text-xs font-semibold text-green-600">신규</span>
+                ) : h.pct_change != null && (
+                  <span className={`text-xs font-semibold ${h.pct_change >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                    {h.pct_change >= 0 ? '+' : ''}{h.pct_change}%
+                  </span>
+                )
+              )}
+            </div>
+            <div className="truncate text-xs leading-tight text-slate-500">오늘 접속(전일대비)</div>
+          </div>
+        </div>
+        <KpiCard label="총 접속자(중복제거)" value={o.unique_visitors ?? 0} Icon={UserCheck} tone="violet" />
+        <KpiCard label="총 레포트" value={totalReports} Icon={FileText} tone="green" />
+        <KpiCard label="접속 레포트(중복제거)" value={o.viewed_reports ?? 0} Icon={FolderOpen} tone="amber" />
+      </div>
+      <div className="flex flex-wrap gap-4 rounded-lg bg-slate-100/70 px-4 py-2 text-xs text-slate-500">
+        <span>레포트당 평균 조회수 <b className="text-slate-700">{avgViewsPerReport.toLocaleString()}</b></span>
+        <span>미조회 레포트 <b className="text-slate-700">{h?.unused_count ?? 0}개</b></span>
+        <span>최근 접속 <b className="text-slate-700">{fmtDateTime(h?.last_access ?? null)}</b></span>
+      </div>
+    </div>
+  )
+}
+
+// ── Super_User 대시보드 (VIEW_STATS 부여 레포트 스코프, 작성자 전체 기본) ─────
 function SuperUserStats() {
+  // null = 전체(작성자 게시 레포트 전체), 값 있으면 그 레포트만(드릴다운)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
+  // 부서/사용자 선택(상호 배타) → 시간대별 차트 드릴다운
+  const [detailDept, setDetailDept] = useState<string | null>(null)
+  const [detailUser, setDetailUser] = useState<{ id: number; name: string } | null>(null)
 
   const reportsQuery = useQuery({
     queryKey: ['stats-reports'],
@@ -537,20 +833,22 @@ function SuperUserStats() {
     staleTime: 60_000,
   })
   const statReports = reportsQuery.data ?? []
-  useEffect(() => {
-    if (selectedId === null && statReports.length > 0) setSelectedId(statReports[0].id)
-  }, [selectedId, statReports])
 
   const fromParam = fromDate ? startOfDay(parseYmd(fromDate)).toISOString() : undefined
   const toParam = toDate ? endOfDay(parseYmd(toDate)).toISOString() : undefined
-  const periodActive = !!(fromDate || toDate)
-  const canQuery = selectedId !== null
+  const canQuery = !reportsQuery.isLoading && statReports.length > 0
   const base = { reportId: selectedId ?? undefined, from: fromParam, to: toParam }
-  const pk = [selectedId ?? 'none', fromParam ?? '', toParam ?? ''] as const
+  const pk = [selectedId ?? 'all', fromParam ?? '', toParam ?? ''] as const
 
   const overviewQuery = useQuery({
     queryKey: ['stats-overview', ...pk],
     queryFn: ({ signal }) => statsApi.overview(base, signal),
+    enabled: canQuery,
+    staleTime: 60_000,
+  })
+  const highlightsQuery = useQuery({
+    queryKey: ['stats-highlights', selectedId ?? 'all'],
+    queryFn: ({ signal }) => statsApi.highlights({ reportId: selectedId ?? undefined }, signal),
     enabled: canQuery,
     staleTime: 60_000,
   })
@@ -560,36 +858,65 @@ function SuperUserStats() {
     enabled: canQuery,
     staleTime: 60_000,
   })
+  const hourlyQuery = useQuery({
+    queryKey: ['stats-hourly-main', ...pk],
+    queryFn: ({ signal }) => statsApi.hourly(base, signal),
+    enabled: canQuery,
+    staleTime: 60_000,
+  })
   const detailQuery = useQuery({
     queryKey: ['stats-detail', ...pk],
     queryFn: ({ signal }) => statsApi.reportDetail(base, signal),
     enabled: canQuery,
     staleTime: 60_000,
   })
+  const detailUsersQuery = useQuery({
+    queryKey: ['stats-detail-users', ...pk],
+    queryFn: ({ signal }) => statsApi.reportDetailUsers(base, signal),
+    enabled: canQuery,
+    staleTime: 60_000,
+  })
+  const drilldownHourlyQuery = useQuery({
+    queryKey: ['stats-detail-hourly', detailDept ?? '', detailUser?.id ?? '', ...pk],
+    queryFn: ({ signal }) =>
+      statsApi.hourly({ ...base, department: detailDept ?? undefined, userId: detailUser?.id }, signal),
+    enabled: canQuery && (!!detailDept || !!detailUser),
+    staleTime: 60_000,
+  })
+
+  function selectDept(d: string | null) {
+    setDetailDept(d)
+    setDetailUser(null)
+  }
+  function selectUser(u2: { id: number; name: string } | null) {
+    setDetailUser(u2)
+    setDetailDept(null)
+  }
+  function selectTopReport(reportId: number | null) {
+    setSelectedId(reportId)
+    setDetailDept(null)
+    setDetailUser(null)
+  }
 
   const o = overviewQuery.data
+  const h = highlightsQuery.data
   const u = usageQuery.data
+  const top5 = (u?.top_reports ?? []).slice(0, 5)
   const noStatsReports = !reportsQuery.isLoading && statReports.length === 0
+  const selectedReportName = selectedId != null ? statReports.find((r) => r.id === selectedId)?.name : null
+
+  const drilldownActive = !!detailDept || !!detailUser
+  const centerHourlyData = drilldownActive ? (drilldownHourlyQuery.data ?? []) : (hourlyQuery.data ?? [])
+  const centerHourlyTitle = detailDept
+    ? `시간대별 조회 · 사용자 — ${detailDept}`
+    : detailUser
+      ? `시간대별 조회 · 사용자 — ${detailUser.name}`
+      : '시간대별 조회 · 사용자 (0~23시)'
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4">
         <h1 className="text-xl font-bold text-slate-800">통계 대시보드</h1>
-        {statReports.length > 0 && (
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            레포트
-            <select
-              value={selectedId ?? ''}
-              onChange={(e) => setSelectedId(e.target.value ? Number(e.target.value) : null)}
-              aria-label="통계 레포트 선택"
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
-            >
-              {statReports.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
       </div>
 
       {noStatsReports ? (
@@ -598,20 +925,72 @@ function SuperUserStats() {
         </div>
       ) : (
         <div className="space-y-5">
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-            <PeriodFilter fromDate={fromDate} toDate={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
+          {/* 기간 필터 + 레포트 선택: 기본값 전체, 선택 시 그 레포트로 드릴다운. 별도 카드지만 좌측에 붙여 배치 */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <SimplePeriodFilter fromDate={fromDate} toDate={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
+            <FilterCard icon={FileBarChart} label="레포트">
+              <select
+                value={selectedId ?? ''}
+                onChange={(e) => selectTopReport(e.target.value ? Number(e.target.value) : null)}
+                aria-label="통계 레포트 선택"
+                className="min-w-[200px] rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-800"
+              >
+                <option value="">전체 레포트 ({statReports.length}개)</option>
+                {statReports.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </FilterCard>
           </div>
 
-          {o && <OverviewKpis o={o} periodActive={periodActive} />}
+          {selectedReportName && (
+            <p className="-mt-2 text-xs text-slate-500">
+              현재 보기: <span className="font-medium text-blue-700">{selectedReportName}</span>{' '}
+              <button type="button" onClick={() => selectTopReport(null)} className="ml-1 text-slate-400 underline hover:text-slate-600">
+                전체로 보기
+              </button>
+            </p>
+          )}
 
-          <SectionCard title="시간대별 조회 · 사용자 (0~23시)">
-            <HourlyChart data={u?.hourly ?? []} />
-          </SectionCard>
+          {o && <AuthorKpis o={o} h={h} />}
 
-          <DetailTable
-            rows={detailQuery.data ?? []}
-            onExport={() => exportDetailCsv(detailQuery.data ?? [], 'report-detail.csv')}
-          />
+          {/* 좌: 시간대별(넓게) / 우: TOP5(중복 미제거 조회수) */}
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <SectionCard
+              title={centerHourlyTitle}
+              action={
+                drilldownActive && (
+                  <button type="button" onClick={() => { setDetailDept(null); setDetailUser(null) }}
+                    className="rounded-md border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50">
+                    선택 해제
+                  </button>
+                )
+              }
+            >
+              <HourlyChart data={centerHourlyData} height={220} />
+            </SectionCard>
+            <SectionCard title="레포트 조회 수 TOP 5 (중복 미제거)">
+              <TopReportsBar data={top5} selectedReportId={selectedId} onSelect={selectTopReport} height={220} />
+            </SectionCard>
+          </div>
+
+          <p className="text-xs text-slate-400">
+            아래 부서/사용자를 선택하면 위 시간대별 추이가 그 범위로 필터링됩니다.
+          </p>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <DetailTable
+              rows={detailQuery.data ?? []}
+              onExport={() => exportDetailCsv(detailQuery.data ?? [], 'report-detail-by-department.csv')}
+              selectedDepartment={detailDept}
+              onSelectDepartment={selectDept}
+            />
+            <UserDetailTable
+              rows={detailUsersQuery.data ?? []}
+              onExport={() => exportUserDetailCsv(detailUsersQuery.data ?? [], 'report-detail-by-user.csv')}
+              selectedUserId={detailUser?.id ?? null}
+              onSelectUser={selectUser}
+            />
+          </div>
         </div>
       )}
     </div>

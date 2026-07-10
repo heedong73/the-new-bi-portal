@@ -90,6 +90,24 @@ export interface ReportDetailRow {
   unique_users: number
   last_access: string | null // tz-aware ISO(UTC)
 }
+/** 레포트별 상세 — 사용자별 조회 정보 한 행. */
+export interface ReportDetailUserRow {
+  user_id: number
+  user_name: string
+  department: string
+  views: number
+  last_access: string | null // tz-aware ISO(UTC)
+}
+
+/** 기간 필터와 무관한 상시 지표(오늘/어제 접속·최근 접속·미사용 레포트 수). */
+export interface StatsHighlights {
+  today_views: number
+  yesterday_views: number
+  pct_change: number | null // null=전일 0건(비교 불가)
+  is_new: boolean // 전일 0건, 오늘 발생(순증)
+  last_access: string | null // tz-aware ISO(UTC)
+  unused_count: number
+}
 
 export interface StatsUsage {
   scoped?: boolean

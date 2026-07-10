@@ -2,8 +2,11 @@
 import apiClient from '@/api/client'
 import type {
   CompanyItem,
+  HourlyPoint,
   MonitoringStatus,
   ReportDetailRow,
+  ReportDetailUserRow,
+  StatsHighlights,
   StatsOverview,
   StatsReport,
   StatsUsage,
@@ -26,6 +29,12 @@ const q = (query: StatsQuery, extra: Record<string, unknown> = {}) => ({
   ...extra,
 })
 
+/** 시간대별 조회(hourly) 드릴다운 필터. department/user_id는 상세 탭 선택 시 지정. */
+export interface HourlyQuery extends StatsQuery {
+  department?: string
+  userId?: number
+}
+
 export const statsApi = {
   /** GET /api/stats/reports — 통계를 볼 수 있는 레포트 목록(드롭다운용). */
   reports: (signal?: AbortSignal) =>
@@ -45,6 +54,18 @@ export const statsApi = {
   /** GET /api/stats/report-detail — 레포트별(또는 계열사별) 부서 조회 상세. */
   reportDetail: (query: StatsQuery = {}, signal?: AbortSignal) =>
     apiClient.get<ReportDetailRow[]>('/api/stats/report-detail', { query: q(query), signal }),
+  /** GET /api/stats/report-detail-users — 레포트별(또는 계열사별) 사용자 조회 상세. */
+  reportDetailUsers: (query: StatsQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<ReportDetailUserRow[]>('/api/stats/report-detail-users', { query: q(query), signal }),
+  /** GET /api/stats/hourly — 시간대별(0~23시) 조회/사용자. department/userId로 드릴다운. */
+  hourly: (query: HourlyQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<HourlyPoint[]>('/api/stats/hourly', {
+      query: { ...q(query), department: query.department, user_id: query.userId },
+      signal,
+    }),
+  /** GET /api/stats/highlights — 기간 필터와 무관한 상시 지표(오늘/어제 접속 등). */
+  highlights: (query: StatsQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<StatsHighlights>('/api/stats/highlights', { query: q(query), signal }),
 }
 
 export const monitoringApi = {
