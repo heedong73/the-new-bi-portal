@@ -71,15 +71,16 @@ export interface HourlyPoint {
   views: number
   users: number
 }
-/** 주별/월별 추이 한 지점. */
+/** 일별/주별/월별 추이 한 지점. */
 export interface TrendPoint {
   period: string
   unique_users: number
   views: number
+  new_reports: number // 그 버킷에 신규 등록된 레포트 수
   total_reports: number // 누적 등록 레포트 수
 }
 export interface TrendsResponse {
-  granularity: 'week' | 'month'
+  granularity: 'day' | 'week' | 'month'
   scoped: boolean
   series: TrendPoint[]
 }
@@ -97,6 +98,18 @@ export interface ReportDetailUserRow {
   department: string
   views: number
   last_access: string | null // tz-aware ISO(UTC)
+}
+
+/** 레포트 조회 로우 이벤트 한 건 — 엑셀/CSV 다운로드용 원본 단위 데이터. */
+export interface RawViewEvent {
+  occurred_at: string | null // tz-aware ISO(UTC)
+  user_emp_no: string
+  user_name: string
+  company: string | null
+  department: string
+  report_id: number | null
+  report_name: string
+  duration_seconds: number | null // 근사치, 아직 갱신 안 됐으면 null
 }
 
 /** 기간 필터와 무관한 상시 지표(오늘/어제 접속·최근 접속·미사용 레포트 수). */

@@ -46,14 +46,22 @@ async def _resolve_scope(
 ) -> tuple[set[int] | None, str]:
     """요청 스코프 계산.
 
-    - report_id 지정: 그 레포트로 한정(운영자 아니면 VIEW_STATS 보유 검증).
-    - company_id 지정(운영자 전용): 그 계열사(최상위 폴더) 하위 레포트로 한정.
+    - report_id + company_id 동시 지정(운영자 전용): 그 레포트가 실제로 그 계열사
+      소속인지 검증 후 한정. 소속이 아니면 빈 집합(결과 없음)을 반환한다 — 서로
+      다른 계열사 레포트를 고른 상태로 남는 UI 불일치를 데이터 단에서도 막는다.
+    - report_id만 지정: 그 레포트로 한정(운영자 아니면 VIEW_STATS 보유 검증).
+    - company_id만 지정(운영자 전용): 그 계열사(최상위 폴더) 하위 레포트로 한정.
     - 미지정: 운영자=전체(None), 그 외=VIEW_STATS 부여분 전체.
     """
     allowed = await _stats_report_ids(db, current)  # None=all(operator)
     if report_id is not None:
         if allowed is not None and report_id not in allowed:
             raise PermissionDeniedError("해당 레포트의 통계를 조회할 권한이 없습니다.")
+        if company_id is not None and allowed is None:
+            company_ids = await stats_service.company_report_ids(db, company_id)
+            if report_id not in company_ids:
+                return set(), f"r{report_id}c{company_id}"
+            return {report_id}, f"r{report_id}c{company_id}"
         return {report_id}, f"r{report_id}"
     if company_id is not None and allowed is None:
         ids = await stats_service.company_report_ids(db, company_id)
@@ -65,12 +73,19 @@ async def _resolve_scope(
 
 @router.get("/api/stats/reports")
 async def stats_reports(
+    company_id: int | None = Query(default=None, alias="company"),
     *,
     db: SessionDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """통계를 볼 수 있는 레포트 목록(드롭다운용). 운영자=전체, Super_User=VIEW_STATS 부여분."""
+    """통계를 볼 수 있는 레포트 목록(드롭다운용). 운영자=전체, Super_User=VIEW_STATS 부여분.
+
+    company_id 지정(운영자 전용) 시 그 계열사 소속 레포트만 반환 — 계열사 선택에
+    맞춰 레포트 드롭다운도 좁혀 서로 다른 계열사를 고른 채 남는 UI 불일치를 막는다.
+    """
     allowed = await _stats_report_ids(db, current)
+    if company_id is not None and allowed is None:
+        allowed = await stats_service.company_report_ids(db, company_id)
     stmt = select(Report.id, Report.display_name, Report.report_name, Report.report_id).order_by(Report.sort_order, Report.id)
     if allowed is not None:
         if not allowed:
@@ -171,8 +186,8 @@ async def stats_trends(
     redis: RedisDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """주별/월별 추이: 접속자 수·누적 레포트 수·조회 수."""
-    if granularity not in ("week", "month"):
+    """일별/주별/월별 추이: 접속자 수·신규/누적 레포트 수·조회 수."""
+    if granularity not in ("day", "week", "month"):
         granularity = "month"
     scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
     key = _cache_key(f"trends:{granularity}", from_, to, scope_key)
@@ -230,6 +245,25 @@ async def stats_hourly(
     )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
+
+
+@router.get("/api/stats/raw-events")
+async def stats_raw_events(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    *,
+    db: SessionDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """레포트 조회 로우 이벤트(일시/사용자/계열사/부서/레포트/체류시간) — 엑셀 다운로드용.
+
+    Redis 캐시 없이 매 요청 최신 데이터를 반환한다(다운로드 목적상 스냅샷 일관성이
+    캐시 적중률보다 중요하고, 캐시 크기가 응답에 비해 부담될 수 있어 생략).
+    """
+    scope, _ = await _resolve_scope(db, current, report_id, company_id)
+    return await stats_service.get_raw_view_events(db, from_, to, scope)
 
 
 @router.get("/api/stats/report-detail-users")

@@ -7,10 +7,10 @@
  *   - 상세: 계열사/레포트/기간별 부서 조회 상세(조회수·고유 사용자·최근 접속) + CSV.
  * - Super_User: 관리자가 VIEW_STATS를 부여한 레포트만 선택해 조회(스코프).
  */
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { startOfDay, endOfDay, subDays } from 'date-fns'
-import { Users, UserCheck, Eye, FileText, FolderOpen, Download, CalendarClock, FileBarChart } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useQuery, useMutation } from '@tanstack/react-query'
+import { startOfDay, endOfDay } from 'date-fns'
+import { Users, UserCheck, Eye, FileText, FolderOpen, Download, CalendarClock, FileBarChart, Building2, Table2 } from 'lucide-react'
 import {
   ResponsiveContainer, ComposedChart, BarChart, Bar, Line, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -20,27 +20,13 @@ import { statsApi } from '@/api/dashboardApi'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { BOM, escapeCsvField } from '@/utils/csv'
 import type {
-  CompanyReports, HourlyPoint, ReportDetailRow, ReportDetailUserRow, StatsHighlights, StatsOverview, TopReport, TrendPoint,
+  CompanyReports, HourlyPoint, RawViewEvent, ReportDetailRow, ReportDetailUserRow, StatsHighlights, StatsOverview, TopReport, TrendPoint,
 } from '@/types/dashboard'
 
-// ── 기간 프리셋/유틸 ─────────────────────────────────────────────────────────
-const PERIOD_PRESETS: { label: string; days: number | null }[] = [
-  { label: '전체', days: null },
-  { label: '최근 7일', days: 7 },
-  { label: '최근 30일', days: 30 },
-  { label: '최근 90일', days: 90 },
-]
-const pad2 = (n: number) => String(n).padStart(2, '0')
-function toYmd(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-}
+// ── 날짜 유틸 ────────────────────────────────────────────────────────────────
 function parseYmd(s: string): Date {
   const [y, m, d] = s.split('-').map(Number)
   return new Date(y, m - 1, d)
-}
-function presetRange(days: number): { from: string; to: string } {
-  const today = new Date()
-  return { from: toYmd(subDays(today, days - 1)), to: toYmd(today) }
 }
 function fmtDateTime(iso: string | null): string {
   if (!iso) return '-'
@@ -94,52 +80,6 @@ function SectionCard({ title, action, children }: {
         {action}
       </div>
       {children}
-    </div>
-  )
-}
-
-function PeriodFilter({ fromDate, toDate, onChange }: {
-  fromDate: string; toDate: string; onChange: (from: string, to: string) => void
-}) {
-  const isPresetActive = (days: number | null) => {
-    if (days === null) return !fromDate && !toDate
-    const r = presetRange(days)
-    return fromDate === r.from && toDate === r.to
-  }
-  return (
-    <div className="flex flex-wrap items-end gap-4">
-      <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium text-slate-500">기간</span>
-        <div className="flex flex-wrap gap-1">
-          {PERIOD_PRESETS.map((p) => (
-            <button
-              key={p.label}
-              type="button"
-              onClick={() => (p.days === null ? onChange('', '') : (() => { const r = presetRange(p.days!); onChange(r.from, r.to) })())}
-              className={
-                'rounded-md border px-2.5 py-1 text-xs font-medium transition ' +
-                (isPresetActive(p.days)
-                  ? 'border-blue-500 bg-blue-50 text-blue-700'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')
-              }
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium text-slate-500">직접 선택</span>
-        <div className="flex items-center gap-1.5">
-          <input type="date" value={fromDate} max={toDate || undefined}
-            onChange={(e) => onChange(e.target.value, toDate)} aria-label="시작일"
-            className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700" />
-          <span className="text-slate-400">~</span>
-          <input type="date" value={toDate} min={fromDate || undefined}
-            onChange={(e) => onChange(fromDate, e.target.value)} aria-label="종료일"
-            className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700" />
-        </div>
-      </div>
     </div>
   )
 }
@@ -205,11 +145,13 @@ function HourlyChart({ data, height = 240 }: { data: HourlyPoint[]; height?: num
   )
 }
 
-function TopReportsBar({ data, selectedReportId, onSelect, height = 240 }: {
+function TopReportsBar({ data, selectedReportId, onSelect, height = 240, nameAxisWidth = 100 }: {
   data: TopReport[]
   selectedReportId?: number | null
   onSelect?: (reportId: number | null) => void
   height?: number
+  /** Y축(레포트명) 폭. 넓힐수록 이름이 덜 잘리고 막대(그래프) 영역은 그만큼 줄어든다. */
+  nameAxisWidth?: number
 }) {
   const rows = data.map((r) => ({
     id: r.report_id,
@@ -217,6 +159,7 @@ function TopReportsBar({ data, selectedReportId, onSelect, height = 240 }: {
     count: r.count,
   }))
   if (rows.length === 0) return <p className="text-sm text-slate-400">데이터 없음</p>
+  const maxChars = Math.max(6, Math.round(nameAxisWidth / 8.5))
   return (
     <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -233,8 +176,8 @@ function TopReportsBar({ data, selectedReportId, onSelect, height = 240 }: {
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
           <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
-            tickFormatter={(v: string) => (v.length > 11 ? `${v.slice(0, 11)}…` : v)} />
+          <YAxis type="category" dataKey="name" width={nameAxisWidth} tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
+            tickFormatter={(v: string) => (v.length > maxChars ? `${v.slice(0, maxChars)}…` : v)} />
           <Tooltip cursor={{ fill: '#f8fafc' }} />
           <Bar
             dataKey="count" name="조회수" radius={[0, 6, 6, 0]}
@@ -263,6 +206,40 @@ function TopReportsBar({ data, selectedReportId, onSelect, height = 240 }: {
   )
 }
 
+const GRANULARITY_LABEL: Record<'day' | 'week' | 'month', string> = { day: '전일', week: '전주', month: '전월' }
+
+/** 마지막 포인트 vs 그 이전 포인트의 전기간 대비 변화율 배지. */
+function TrendSummaryBadges({ series, granularity }: { series: TrendPoint[]; granularity: 'day' | 'week' | 'month' }) {
+  if (series.length < 2) return null
+  const cur = series[series.length - 1]
+  const prev = series[series.length - 2]
+  const pct = (a: number, b: number): number | null => (b === 0 ? null : Math.round(((a - b) / b) * 1000) / 10)
+
+  const items: { label: string; value: number; pct: number | null }[] = [
+    { label: '조회 수', value: cur.views, pct: pct(cur.views, prev.views) },
+    { label: '접속자 수', value: cur.unique_users, pct: pct(cur.unique_users, prev.unique_users) },
+    { label: '신규 레포트', value: cur.new_reports, pct: pct(cur.new_reports, prev.new_reports) },
+  ]
+  const label = GRANULARITY_LABEL[granularity]
+
+  return (
+    <div className="mb-3 flex flex-wrap gap-4 rounded-lg bg-slate-100/70 px-4 py-2 text-xs text-slate-500">
+      {items.map((it) => (
+        <span key={it.label}>
+          {it.label} <b className="text-slate-700">{it.value.toLocaleString()}</b>{' '}
+          {it.pct == null ? (
+            <span className="text-slate-400">({label} 대비 -)</span>
+          ) : (
+            <span className={it.pct >= 0 ? 'text-green-600' : 'text-red-500'}>
+              ({label} 대비 {it.pct >= 0 ? '+' : ''}{it.pct}%)
+            </span>
+          )}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function TrendsChart({ series }: { series: TrendPoint[] }) {
   if (series.length === 0) return <p className="text-sm text-slate-400">데이터 없음</p>
   return (
@@ -275,7 +252,8 @@ function TrendsChart({ series }: { series: TrendPoint[] }) {
           <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} />
           <Tooltip />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar yAxisId="right" dataKey="views" name="조회 수" fill="#bfdbfe" radius={[3, 3, 0, 0]} />
+          <Bar yAxisId="right" dataKey="views" name="조회 수" fill="#bfdbfe" radius={[3, 3, 0, 0]} barSize={18} />
+          <Bar yAxisId="left" dataKey="new_reports" name="신규 레포트 수" fill="#bbf7d0" radius={[3, 3, 0, 0]} barSize={10} />
           <Line yAxisId="left" dataKey="unique_users" name="접속자 수" stroke="#2563eb" strokeWidth={2} dot={{ r: 2 }} />
           <Line yAxisId="left" dataKey="total_reports" name="누적 레포트 수" stroke="#16a34a" strokeWidth={2} dot={{ r: 2 }} />
         </ComposedChart>
@@ -291,7 +269,7 @@ function CompanyCards({ data, selected, onSelect }: {
 }) {
   if (data.length === 0) return <p className="text-sm text-slate-400">데이터 없음</p>
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
       {data.map((c) => {
         const active = selected != null && selected === c.company_id
         return (
@@ -300,12 +278,12 @@ function CompanyCards({ data, selected, onSelect }: {
             type="button"
             onClick={() => onSelect?.(active ? null : c.company_id)}
             className={
-              'rounded-xl border p-4 text-left shadow-sm transition ' +
+              'flex items-baseline gap-2 rounded-lg border px-3 py-2 text-left shadow-sm transition ' +
               (active ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50')
             }
           >
-            <div className="text-2xl font-bold text-slate-800">{c.count.toLocaleString()}</div>
-            <div className="truncate text-xs text-slate-500">{c.label}</div>
+            <span className="text-lg font-bold leading-tight text-slate-800">{c.count.toLocaleString()}</span>
+            <span className="truncate text-xs leading-tight text-slate-500">{c.label}</span>
           </button>
         )
       })}
@@ -469,6 +447,43 @@ function exportUserDetailCsv(rows: ReportDetailUserRow[], filename: string) {
   URL.revokeObjectURL(url)
 }
 
+function fmtDateOnly(iso: string | null): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'medium' })
+}
+
+/** 로우 이벤트를 CSV로 내보낸다(일시·사번·계열사·부서·사용자명·레포트명·레포트ID·체류시간).
+ * 사전 집계 없이 원본 단위라 엑셀에서 피벗/필터로 자유롭게 재구성할 수 있다. */
+function exportRawEventsCsv(rows: RawViewEvent[], filename: string) {
+  const header = ['일시', '사용자ID', '계열사명', '부서명', '사용자명', '레포트명', '레포트ID', '체류시간(초)']
+  const lines = [header.map(escapeCsvField).join(',')]
+  for (const r of rows) {
+    lines.push([
+      fmtDateOnly(r.occurred_at),
+      r.user_emp_no,
+      r.company ?? '',
+      r.department,
+      r.user_name,
+      r.report_name,
+      r.report_id ?? '',
+      r.duration_seconds ?? '',
+    ].map(escapeCsvField).join(','))
+  }
+  const content = BOM + lines.join('\r\n')
+  if (typeof document === 'undefined' || typeof URL === 'undefined') return
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 function exportDetailCsv(rows: ReportDetailRow[], filename: string) {
   const header = ['부서', '조회수', '고유 사용자', '최근 접속']
   const lines = [header.map(escapeCsvField).join(',')]
@@ -522,8 +537,8 @@ function OverviewKpis({ o, periodActive }: { o: StatsOverview; periodActive: boo
 type Tab = 'main' | 'trends' | 'detail'
 const TABS: { key: Tab; label: string }[] = [
   { key: 'main', label: '메인' },
-  { key: 'trends', label: '추이' },
   { key: 'detail', label: '상세 조회' },
+  { key: 'trends', label: '추이' },
 ]
 
 function OperatorStats() {
@@ -531,7 +546,7 @@ function OperatorStats() {
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [companyId, setCompanyId] = useState<number | null>(null)
-  const [granularity, setGranularity] = useState<'week' | 'month'>('month')
+  const [granularity, setGranularity] = useState<'day' | 'week' | 'month'>('month')
   const [detailReportId, setDetailReportId] = useState<number | null>(null)
   // 상세 조회 탭: 부서/사용자 선택(상호 배타) → 시간대별 차트 드릴다운
   const [detailDept, setDetailDept] = useState<string | null>(null)
@@ -549,11 +564,18 @@ function OperatorStats() {
     queryFn: ({ signal }) => statsApi.companies(signal),
     staleTime: 5 * 60_000,
   })
+  // 계열사를 고르면 레포트 드롭다운도 그 계열사 소속으로 좁힌다(서로 다른 계열사를
+  // 고른 채 남는 UI 불일치 방지). 계열사 변경 시 맞지 않는 선택은 아래 useEffect로 해제.
   const reportsQuery = useQuery({
-    queryKey: ['stats-reports'],
-    queryFn: ({ signal }) => statsApi.reports(signal),
+    queryKey: ['stats-reports', companyId ?? 'all'],
+    queryFn: ({ signal }) => statsApi.reports(companyId ?? undefined, signal),
     staleTime: 60_000,
   })
+  useEffect(() => {
+    if (detailReportId == null || !reportsQuery.data) return
+    if (!reportsQuery.data.some((r) => r.id === detailReportId)) setDetailReportId(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId, reportsQuery.data])
   const overviewQuery = useQuery({
     queryKey: ['stats-overview', ...pk],
     queryFn: ({ signal }) => statsApi.overview(base, signal),
@@ -592,6 +614,11 @@ function OperatorStats() {
     enabled: tab === 'detail',
     staleTime: 60_000,
   })
+  // 로우 이벤트 다운로드: 데이터가 클 수 있어 버튼 클릭 시점에만 조회한다.
+  const rawEventsMutation = useMutation({
+    mutationFn: () => statsApi.rawEvents(base),
+    onSuccess: (rows) => exportRawEventsCsv(rows, 'report-view-raw-events.csv'),
+  })
 
   function selectDept(d: string | null) {
     setDetailDept(d)
@@ -609,40 +636,8 @@ function OperatorStats() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
-      <div className="mb-1">
+      <div className="mb-4">
         <h1 className="text-xl font-bold text-slate-800">통계 대시보드</h1>
-      </div>
-
-      {/* 조회 범위 선택: 레포트/계열사 드롭다운을 제목 바로 아래, 눈에 잘 띄게 크게 표시 */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-base font-medium text-slate-700">
-          레포트
-          <select
-            value={detailReportId ?? ''}
-            onChange={(e) => setDetailReportId(e.target.value ? Number(e.target.value) : null)}
-            aria-label="레포트 선택"
-            className="min-w-[220px] rounded-lg border border-slate-300 px-3 py-2 text-base font-medium text-slate-800 shadow-sm"
-          >
-            <option value="">전체 레포트</option>
-            {reports.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-base font-medium text-slate-700">
-          계열사
-          <select
-            value={companyId ?? ''}
-            onChange={(e) => setCompanyId(e.target.value ? Number(e.target.value) : null)}
-            aria-label="계열사 필터"
-            className="min-w-[160px] rounded-lg border border-slate-300 px-3 py-2 text-base font-medium text-slate-800 shadow-sm"
-          >
-            <option value="">전체</option>
-            {companies.map((c) => (
-              <option key={String(c.company_id)} value={c.company_id ?? ''}>{c.label}</option>
-            ))}
-          </select>
-        </label>
       </div>
 
       {/* 탭 */}
@@ -664,9 +659,39 @@ function OperatorStats() {
         ))}
       </div>
 
-      {/* 필터 바 */}
-      <div className="mb-5 rounded-xl border border-slate-200 bg-white px-4 py-3">
-        <PeriodFilter fromDate={fromDate} toDate={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
+      {/* 필터 바: 기간 + 계열사 + 레포트 (작성자 화면과 동일한 스타일, 좌측 정렬).
+          계열사를 먼저 골라야 레포트 목록이 그 계열사로 좁혀지므로 계열사를 앞에 둔다. */}
+      <div className="mb-5 flex flex-wrap items-center gap-2.5">
+        <SimplePeriodFilter fromDate={fromDate} toDate={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
+        <FilterCard icon={Building2} label="계열사">
+          <select
+            value={companyId ?? ''}
+            onChange={(e) => {
+              setCompanyId(e.target.value ? Number(e.target.value) : null)
+              setDetailReportId(null)
+            }}
+            aria-label="계열사 필터"
+            className="min-w-[140px] rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-800"
+          >
+            <option value="">전체</option>
+            {companies.map((c) => (
+              <option key={String(c.company_id)} value={c.company_id ?? ''}>{c.label}</option>
+            ))}
+          </select>
+        </FilterCard>
+        <FilterCard icon={FileBarChart} label="레포트">
+          <select
+            value={detailReportId ?? ''}
+            onChange={(e) => setDetailReportId(e.target.value ? Number(e.target.value) : null)}
+            aria-label="레포트 선택"
+            className="min-w-[200px] rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-800"
+          >
+            <option value="">전체 레포트</option>
+            {reports.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        </FilterCard>
       </div>
 
       {/* ── 메인 탭 ── */}
@@ -684,10 +709,10 @@ function OperatorStats() {
 
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             <SectionCard title="레포트 조회수 TOP 10">
-              <TopReportsBar data={u?.top_reports ?? []} />
+              <TopReportsBar data={u?.top_reports ?? []} height={280} nameAxisWidth={190} />
             </SectionCard>
             <SectionCard title="시간대별 조회 · 사용자 (0~23시)">
-              <HourlyChart data={u?.hourly ?? []} />
+              <HourlyChart data={u?.hourly ?? []} height={280} />
             </SectionCard>
           </div>
         </div>
@@ -696,10 +721,10 @@ function OperatorStats() {
       {/* ── 추이 탭 ── */}
       {tab === 'trends' && (
         <SectionCard
-          title="주별/월별 추이 (접속자 · 누적 레포트 · 조회 수)"
+          title="일별/주별/월별 추이 (접속자 · 신규/누적 레포트 · 조회 수)"
           action={
             <div className="flex gap-1">
-              {(['week', 'month'] as const).map((g) => (
+              {(['day', 'week', 'month'] as const).map((g) => (
                 <button
                   key={g}
                   type="button"
@@ -711,7 +736,7 @@ function OperatorStats() {
                       : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')
                   }
                 >
-                  {g === 'week' ? '주별' : '월별'}
+                  {g === 'day' ? '일별' : g === 'week' ? '주별' : '월별'}
                 </button>
               ))}
             </div>
@@ -720,7 +745,10 @@ function OperatorStats() {
           {trendsQuery.isLoading || !trendsQuery.data ? (
             <p className="text-sm text-slate-400">불러오는 중…</p>
           ) : (
-            <TrendsChart series={trendsQuery.data.series} />
+            <>
+              <TrendSummaryBadges series={trendsQuery.data.series} granularity={granularity} />
+              <TrendsChart series={trendsQuery.data.series} />
+            </>
           )}
         </SectionCard>
       )}
@@ -728,9 +756,24 @@ function OperatorStats() {
       {/* ── 상세 조회 탭 ── */}
       {tab === 'detail' && (
         <div className="space-y-4">
-          <p className="text-xs text-slate-400">
-            상단의 레포트/계열사/기간 필터 기준 조회 현황입니다. 아래 부서/사용자를 선택하면 가운데 시간대별 추이가 그 범위로 필터링됩니다.
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-400">
+              상단의 레포트/계열사/기간 필터 기준 조회 현황입니다. 아래 부서/사용자를 선택하면 가운데 시간대별 추이가 그 범위로 필터링됩니다.
+            </p>
+            <button
+              type="button"
+              onClick={() => rawEventsMutation.mutate()}
+              disabled={rawEventsMutation.isPending}
+              title="일시·사용자ID·계열사명·부서명·사용자명·레포트명·레포트ID·체류시간 원본 데이터를 CSV로 내보냅니다"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Table2 className="h-3.5 w-3.5" />
+              {rawEventsMutation.isPending ? '내보내는 중…' : '로우 데이터 다운로드(CSV)'}
+            </button>
+          </div>
+          {rawEventsMutation.isError && (
+            <p role="alert" className="text-xs text-red-600">로우 데이터를 불러오지 못했습니다. 다시 시도해 주세요.</p>
+          )}
           {detailQuery.isLoading || detailUsersQuery.isLoading ? (
             <p className="text-sm text-slate-400">불러오는 중…</p>
           ) : (
@@ -829,7 +872,7 @@ function SuperUserStats() {
 
   const reportsQuery = useQuery({
     queryKey: ['stats-reports'],
-    queryFn: ({ signal }) => statsApi.reports(signal),
+    queryFn: ({ signal }) => statsApi.reports(undefined, signal),
     staleTime: 60_000,
   })
   const statReports = reportsQuery.data ?? []
@@ -882,6 +925,11 @@ function SuperUserStats() {
       statsApi.hourly({ ...base, department: detailDept ?? undefined, userId: detailUser?.id }, signal),
     enabled: canQuery && (!!detailDept || !!detailUser),
     staleTime: 60_000,
+  })
+  // 로우 이벤트 다운로드: 데이터가 클 수 있어 버튼 클릭 시점에만 조회한다.
+  const rawEventsMutation = useMutation({
+    mutationFn: () => statsApi.rawEvents(base),
+    onSuccess: (rows) => exportRawEventsCsv(rows, 'report-view-raw-events.csv'),
   })
 
   function selectDept(d: string | null) {
@@ -974,9 +1022,24 @@ function SuperUserStats() {
             </SectionCard>
           </div>
 
-          <p className="text-xs text-slate-400">
-            아래 부서/사용자를 선택하면 위 시간대별 추이가 그 범위로 필터링됩니다.
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-400">
+              아래 부서/사용자를 선택하면 위 시간대별 추이가 그 범위로 필터링됩니다.
+            </p>
+            <button
+              type="button"
+              onClick={() => rawEventsMutation.mutate()}
+              disabled={rawEventsMutation.isPending}
+              title="일시·사용자ID·계열사명·부서명·사용자명·레포트명·레포트ID·체류시간 원본 데이터를 CSV로 내보냅니다"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Table2 className="h-3.5 w-3.5" />
+              {rawEventsMutation.isPending ? '내보내는 중…' : '로우 데이터 다운로드(CSV)'}
+            </button>
+          </div>
+          {rawEventsMutation.isError && (
+            <p role="alert" className="text-xs text-red-600">로우 데이터를 불러오지 못했습니다. 다시 시도해 주세요.</p>
+          )}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <DetailTable
               rows={detailQuery.data ?? []}

@@ -4,6 +4,7 @@ import type {
   CompanyItem,
   HourlyPoint,
   MonitoringStatus,
+  RawViewEvent,
   ReportDetailRow,
   ReportDetailUserRow,
   StatsHighlights,
@@ -36,9 +37,9 @@ export interface HourlyQuery extends StatsQuery {
 }
 
 export const statsApi = {
-  /** GET /api/stats/reports — 통계를 볼 수 있는 레포트 목록(드롭다운용). */
-  reports: (signal?: AbortSignal) =>
-    apiClient.get<StatsReport[]>('/api/stats/reports', { signal }),
+  /** GET /api/stats/reports — 통계를 볼 수 있는 레포트 목록(드롭다운용). companyId 지정 시 그 계열사 소속만. */
+  reports: (companyId?: number, signal?: AbortSignal) =>
+    apiClient.get<StatsReport[]>('/api/stats/reports', { query: { company: companyId }, signal }),
   /** GET /api/stats/companies — 계열사(최상위 폴더) 목록. 운영자 전용. */
   companies: (signal?: AbortSignal) =>
     apiClient.get<CompanyItem[]>('/api/stats/companies', { signal }),
@@ -48,8 +49,8 @@ export const statsApi = {
   /** GET /api/stats/usage — 사용 통계(계열사별/시간대별/TOP10 등). */
   usage: (query: StatsQuery = {}, signal?: AbortSignal) =>
     apiClient.get<StatsUsage>('/api/stats/usage', { query: q(query), signal }),
-  /** GET /api/stats/trends — 주별/월별 추이. */
-  trends: (granularity: 'week' | 'month', query: StatsQuery = {}, signal?: AbortSignal) =>
+  /** GET /api/stats/trends — 일별/주별/월별 추이. */
+  trends: (granularity: 'day' | 'week' | 'month', query: StatsQuery = {}, signal?: AbortSignal) =>
     apiClient.get<TrendsResponse>('/api/stats/trends', { query: q(query, { granularity }), signal }),
   /** GET /api/stats/report-detail — 레포트별(또는 계열사별) 부서 조회 상세. */
   reportDetail: (query: StatsQuery = {}, signal?: AbortSignal) =>
@@ -66,6 +67,9 @@ export const statsApi = {
   /** GET /api/stats/highlights — 기간 필터와 무관한 상시 지표(오늘/어제 접속 등). */
   highlights: (query: StatsQuery = {}, signal?: AbortSignal) =>
     apiClient.get<StatsHighlights>('/api/stats/highlights', { query: q(query), signal }),
+  /** GET /api/stats/raw-events — 레포트 조회 로우 이벤트(엑셀/CSV 다운로드용). */
+  rawEvents: (query: StatsQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<RawViewEvent[]>('/api/stats/raw-events', { query: q(query), signal }),
 }
 
 export const monitoringApi = {

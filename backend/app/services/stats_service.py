@@ -565,10 +565,11 @@ async def get_trends(
     granularity: str = "month",
     report_ids: set[int] | None = None,
 ) -> dict:
-    """주별/월별 추이 (KST 버킷): 접속자 수·누적 레포트 수·조회 수.
+    """일별/주별/월별 추이 (KST 버킷): 접속자 수·누적 레포트 수·신규 레포트 수·조회 수.
 
     - unique_users: 전역=로그인 고유 사용자, 스코프=해당 레포트 조회 고유 사용자
     - views: report_view 건수
+    - new_reports: 그 버킷에 새로 등록된 레포트 수
     - total_reports: 각 버킷 끝까지의 누적 등록 레포트 수
     표시 버킷은 조회/로그인 활동이 있는 버킷의 합집합(기간 필터 반영)이며,
     누적 레포트 수는 전체 히스토리를 사전식 비교로 합산한다(라벨 zero-pad라 정합).
@@ -576,8 +577,13 @@ async def get_trends(
     nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
     scoped = report_ids is not None
     scope_str = {str(i) for i in report_ids} if scoped else None
-    # ISO 주(IYYY-Www) 또는 월(YYYY-MM). 주는 2자리 zero-pad라 사전식 비교 정합.
-    fmt = 'IYYY-"W"IW' if granularity == "week" else "YYYY-MM"
+    # 일(YYYY-MM-DD) / ISO 주(IYYY-Www) / 월(YYYY-MM). 주는 2자리 zero-pad라 사전식 비교 정합.
+    if granularity == "day":
+        fmt = "YYYY-MM-DD"
+    elif granularity == "week":
+        fmt = 'IYYY-"W"IW'
+    else:
+        fmt = "YYYY-MM"
 
     def _occurred_range(stmt):
         if nf is not None:
@@ -626,18 +632,21 @@ async def get_trends(
     r_rows = (await db.execute(r_stmt.group_by(r_label))).all()
     new_by = {b: int(c) for b, c in r_rows}
 
-    # 표시 버킷 = 조회/로그인 버킷의 합집합(기간 반영), 정렬
-    buckets = sorted(set(views_by) | set(login_users_by))
+    # 표시 버킷 = 조회/로그인/신규등록 버킷의 합집합, 정렬.
+    # 신규등록 버킷은 그 시점에 조회/로그인이 없어도 등록 사실 자체를 보여주기 위해 항상 포함한다.
+    buckets = sorted(set(views_by) | set(login_users_by) | set(new_by))
 
     series = []
     for b in buckets:
         views, vusers = views_by.get(b, (0, 0))
         users = vusers if scoped else login_users_by.get(b, 0)
+        new_count = new_by.get(b, 0)
         cumulative = sum(c for lbl, c in new_by.items() if lbl <= b)
         series.append({
             "period": b,
             "unique_users": users,
             "views": views,
+            "new_reports": new_count,
             "total_reports": cumulative,
         })
     return {"granularity": granularity, "scoped": scoped, "series": series}
@@ -794,5 +803,80 @@ async def get_report_detail_users(
             "department": dept or "(부서 없음)",
             "views": int(views),
             "last_access": last_iso,
+        })
+    return result
+
+
+async def get_raw_view_events(
+    db: AsyncSession,
+    from_dt: datetime | None,
+    to_dt: datetime | None,
+    report_ids: set[int] | None = None,
+    *,
+    limit: int = 50_000,
+) -> list[dict]:
+    """레포트 조회(report_view) 로우 이벤트 — 일시·사용자·계열사·부서·레포트·체류시간.
+
+    한 행 = 한 번의 조회(Embed Token 발급) 이벤트. 작성자/운영자가 "레포트별로
+    누가, 언제, 얼마나 봤는지"를 엑셀에서 자유롭게 피벗/필터링할 수 있도록 사전
+    집계 없이 원본 단위로 내려준다. report_ids 지정 시 그 범위로 한정(None=전체).
+
+    duration_seconds는 프런트가 탭 이탈 시점에 갱신하는 근사치이며, 아직 갱신되지
+    않은(현재 보고 있거나 갱신 실패) 행은 None으로 내려간다.
+    """
+    if report_ids is not None and not report_ids:
+        return []
+    nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
+
+    parent, folder_names = await _load_folder_parents(db)
+    reports = {r.id: r for r in (await db.execute(select(Report))).scalars().all()}
+
+    stmt = (
+        select(
+            AuditLog.id,
+            AuditLog.occurred_at_utc,
+            AuditLog.resource_id,
+            AuditLog.duration_seconds,
+            User.external_id,
+            User.name.label("user_name"),
+            Department.name.label("dept_name"),
+        )
+        .select_from(AuditLog)
+        .join(User, User.id == AuditLog.actor_user_id)
+        .outerjoin(Department, Department.id == User.department_id)
+        .where(AuditLog.action == AuditAction.REPORT_VIEW)
+    )
+    if report_ids is not None:
+        stmt = stmt.where(AuditLog.resource_id.in_({str(i) for i in report_ids}))
+    if nf is not None:
+        stmt = stmt.where(AuditLog.occurred_at_utc >= nf)
+    if nt is not None:
+        stmt = stmt.where(AuditLog.occurred_at_utc <= nt)
+    stmt = stmt.order_by(AuditLog.occurred_at_utc.desc()).limit(limit)
+
+    rows = (await db.execute(stmt)).all()
+    result: list[dict] = []
+    for log_id, occurred, resource_id, duration, emp_no, user_name, dept_name in rows:
+        try:
+            rid = int(resource_id) if resource_id is not None else None
+        except (TypeError, ValueError):
+            rid = None
+        report = reports.get(rid) if rid is not None else None
+        report_name = None
+        company_label = None
+        if report is not None:
+            report_name = report.display_name or report.report_name or report.report_id
+            root = _root_folder_id(report.folder_id, parent)
+            company_label = _company_label(folder_names.get(root) if root else None)
+        occurred_iso = occurred.replace(tzinfo=timezone.utc).isoformat() if occurred else None
+        result.append({
+            "occurred_at": occurred_iso,
+            "user_emp_no": emp_no,
+            "user_name": user_name,
+            "company": company_label,
+            "department": dept_name or "(부서 없음)",
+            "report_id": rid,
+            "report_name": report_name or "(알 수 없음)",
+            "duration_seconds": duration,
         })
     return result
