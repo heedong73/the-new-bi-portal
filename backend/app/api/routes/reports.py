@@ -19,6 +19,7 @@ from app.core.deps import SessionDep, require_menu, require_report_permission, g
 from app.core.errors import NotFoundError, ConflictError, ValidationError, PermissionDeniedError
 from app.models.report import Report, Workspace, ReportFavorite, ReportPermission
 from app.models.mail import MailSchedule
+from app.models.log import AuditLog
 from app.workers.celery_app import celery_app
 from app.workers.tasks.pbix_import import pbix_import as pbix_import_task
 from app.schemas.report import (
@@ -394,9 +395,11 @@ async def get_embed(
         token_service, report.workspace_id, report.report_id, report.dataset_id
     )
 
-    await append_audit(db, action=AuditAction.REPORT_VIEW, result="success",
-                       actor_user_id=current["user_id"], actor_label=current["emp_no"],
-                       resource_type="report", resource_id=str(report_id))
+    audit_log_id = await append_audit(
+        db, action=AuditAction.REPORT_VIEW, result="success",
+        actor_user_id=current["user_id"], actor_label=current["emp_no"],
+        resource_type="report", resource_id=str(report_id),
+    )
     await db.commit()
 
     return {
@@ -405,7 +408,37 @@ async def get_embed(
         "embedToken": info.embed_token,
         "expiry": info.expiry,
         "defaultViewState": report.default_view_state,
+        # 프런트가 탭 이탈/전환 시 이 조회 세션의 체류 시간을 갱신할 때 사용.
+        "viewLogId": audit_log_id,
     }
+
+@router.post("/{report_id}/view-duration", status_code=204)
+async def report_view_duration(
+    report_id: int,
+    body: dict,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """조회 세션(embed 발급 시 남긴 report_view 로그)의 체류 시간을 갱신한다.
+
+    프런트가 탭 이탈/전환(visibilitychange, pagehide) 시점에 `navigator.sendBeacon`
+    또는 fetch로 호출한다. 새 로그를 만들지 않고 embed 발급 시점 로그의
+    duration_seconds만 갱신한다(근사치 — 브라우저 강제 종료/네트워크 단절 시 마지막
+    값이 못 반영될 수 있음). 본인이 남긴 로그만 갱신 가능(actor_user_id 일치 검증).
+    """
+    audit_log_id = body.get("audit_log_id")
+    duration_seconds = body.get("duration_seconds")
+    if not isinstance(audit_log_id, int) or not isinstance(duration_seconds, (int, float)):
+        raise ValidationError("audit_log_id/duration_seconds가 필요합니다.")
+
+    log = await db.scalar(select(AuditLog).where(AuditLog.id == audit_log_id))
+    if log is None or log.actor_user_id != current["user_id"] or log.resource_id != str(report_id):
+        # 존재하지 않거나 본인 로그가 아니면 조용히 무시(악의적 위조 방지, 굳이 오류 노출 불필요)
+        return
+    # 음수/비정상적으로 큰 값(예: 하루 이상 방치) 방어. 하루=86400초.
+    log.duration_seconds = max(0, min(int(duration_seconds), 86400))
+    await db.commit()
+
 
 # ===== 새로고침 상태 (T-21) =====
 from app.services.refresh_query import get_refresh_status

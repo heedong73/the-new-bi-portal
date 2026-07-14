@@ -83,6 +83,50 @@ export default function ReportViewPage() {
     staleTime: 5_000,
   })
 
+  // 조회 체류 시간(근사치) 추적: embed 발급 시 받은 viewLogId를 기준으로, 이 화면을
+  // "보고 있던" 시간을 누적해 탭 전환/이탈 시점에 서버로 갱신 전송한다.
+  // - visibilitychange(탭 숨김): 지금까지 누적분 전송, 다시 보이면 기준 시각 재설정
+  // - pagehide(새로고침/닫기/뒤로가기 등 페이지 이탈): 최종 전송
+  // - 언마운트(다른 레포트로 라우트 이동): 최종 전송
+  // fetch(keepalive: true)로 보내 페이지가 언로드돼도 요청이 유지되게 한다.
+  const viewLogId = embedQuery.data?.viewLogId ?? null
+  useEffect(() => {
+    if (viewLogId == null) return
+    const logId = viewLogId
+    let visibleSinceMs: number | null = document.visibilityState === 'visible' ? Date.now() : null
+    let accumulatedSec = 0
+
+    function flush(finalCall: boolean) {
+      if (visibleSinceMs != null) {
+        accumulatedSec += (Date.now() - visibleSinceMs) / 1000
+        visibleSinceMs = finalCall ? null : Date.now()
+      }
+      if (accumulatedSec < 1) return
+      const toSend = accumulatedSec
+      accumulatedSec = 0
+      reportsApi.reportViewDuration(reportDbId, logId, toSend).catch(() => { /* best-effort */ })
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        flush(false)
+      } else {
+        visibleSinceMs = Date.now()
+      }
+    }
+    function onPageHide() {
+      flush(true)
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pagehide', onPageHide)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('pagehide', onPageHide)
+      flush(true) // 다른 레포트로 이동 등 컴포넌트 언마운트 시에도 최종 전송
+    }
+  }, [reportDbId, viewLogId])
+
   // 새로고침 실패 알림: 진행 중(true) → 종료(false) 전환 시 실패 상태면 토스트
   const [refreshFailed, setRefreshFailed] = useState<string | null>(null)
   // 데이터 반영 안내: 사용자가 이미 반영/닫은 end_time (재노출 방지)

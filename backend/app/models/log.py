@@ -26,6 +26,8 @@ class AuditLog(Base):
     result: Mapped[str] = mapped_column(String(16), nullable=False)
     occurred_at_utc: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # report_view 전용: 프런트가 탭 전환/이탈 시점에 갱신하는 체류 시간(초, 근사치).
+    duration_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class Request(Base):
     __tablename__ = "requests"

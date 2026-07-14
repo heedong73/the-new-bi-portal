@@ -90,6 +90,12 @@ export interface RequestOptions {
   body?: unknown;
   /** AbortSignal (TanStack Query가 주입) */
   signal?: AbortSignal;
+  /**
+   * true면 페이지 언로드/탭 전환 중에도 요청을 유지한다(체류 시간 갱신 등
+   * "beacon성" 요청용). credentials: 'include'는 keepalive와 함께 유지되어
+   * sendBeacon과 달리 cross-origin dev 환경에서도 세션 쿠키가 안정적으로 전송된다.
+   */
+  keepalive?: boolean;
 }
 
 /** path와 query를 결합하여 최종 요청 URL 문자열을 만든다. */
@@ -127,7 +133,7 @@ async function parseErrorBody(response: Response): Promise<ApiErrorBody> {
  * - 네트워크 오류/JSON 파싱 실패도 `ApiError`(status 0 / 502)로 표준화하여 throw.
  */
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", query, body, signal } = options;
+  const { method = "GET", query, body, signal, keepalive } = options;
   const url = buildUrl(path, query);
 
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -150,6 +156,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       body: bodyInit,
       signal,
       credentials: "include", // 세션 쿠키(bip_session) 송수신
+      ...(keepalive ? { keepalive: true } : {}),
     });
   } catch (err) {
     // 네트워크 오류(서버 미기동, CORS, 연결 끊김 등) 또는 abort

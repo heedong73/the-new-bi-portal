@@ -48,8 +48,9 @@ async def append_audit(
     resource_type: str | None = None,
     resource_id: str | None = None,
     meta: dict | None = None,
-) -> None:
-    """감사 로그 1건 기록. 시크릿은 _sanitize_meta로 차단."""
+) -> int:
+    """감사 로그 1건 기록. 시크릿은 _sanitize_meta로 차단. 생성된 로그 id를 반환한다
+    (호출부 대부분은 무시하지만, report_view는 체류시간 갱신을 위해 필요로 한다)."""
     entry = AuditLog(
         actor_user_id=actor_user_id,
         actor_label=actor_label,
@@ -61,6 +62,7 @@ async def append_audit(
     )
     db.add(entry)
     await db.flush()
+    return entry.id
 
 
 async def record_powerbi_failure(

@@ -66,16 +66,24 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-slate-950">
-      {/* 레터박스 여백을 흐린 이미지로 메움(보조 배경, 잘려도 무방) */}
+      {/* 레터박스 여백을 흐린 이미지로 메움(보조 배경, 잘려도 무방).
+          우클릭 시 브라우저 기본 이미지 저장/복사 메뉴가 뜨지 않도록 컨텍스트 메뉴 차단. */}
       <div
         className="absolute inset-0 scale-110 bg-cover bg-center blur-2xl"
         style={{ backgroundImage: "url('/login-bg.png')" }}
         aria-hidden="true"
+        onContextMenu={(e) => e.preventDefault()}
       />
       {/* 비율 유지 전체 이미지(절대 잘리지 않음) + 우측 유리창 위 카드 */}
       <div className="relative flex min-h-screen items-center justify-center">
         <div className="relative max-h-screen">
-          <img src="/login-bg.png" alt="" className="block max-h-screen w-auto max-w-full select-none" />
+          <img
+            src="/login-bg.png"
+            alt=""
+            draggable={false}
+            onContextMenu={(e) => e.preventDefault()}
+            className="block max-h-screen w-auto max-w-full select-none [-webkit-user-drag:none]"
+          />
           {/* 카드: 우측 파란 유리창 중앙 (이미지 비율에 맞춰 같이 축소) */}
           <div className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: '82.5%', top: '50%', width: 'clamp(240px, 30%, 380px)' }}>
             <div className="w-full rounded-2xl border border-white/60 bg-white p-6 shadow-2xl shadow-blue-950/40 ring-1 ring-black/5">

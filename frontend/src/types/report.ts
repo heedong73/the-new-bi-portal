@@ -56,6 +56,8 @@ export interface EmbedInfo {
   expiry?: string | null
   /** 공통 기본 뷰 상태(Power BI 북마크 state). 있으면 로드 시 적용. */
   defaultViewState?: string | null
+  /** 이 조회 세션의 audit_logs.id. 체류 시간 갱신(view-duration) 시 사용. */
+  viewLogId?: number | null
 }
 
 /** 레포트 새로고침 상태 (GET /api/reports/{id}/refresh-status). */

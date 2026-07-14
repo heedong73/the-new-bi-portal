@@ -73,6 +73,17 @@ export const reportsApi = {
     apiClient.post<{ export_job_id: number; status: string }>(
       `/api/reports/${reportDbId}/export`, { export_format: format },
     ),
+
+  /**
+   * POST /api/reports/{id}/view-duration — 조회 세션 체류 시간 갱신(근사치).
+   * 탭 이탈/전환 시점에 keepalive fetch로 호출한다(페이지가 언로드되어도 요청 유지).
+   */
+  reportViewDuration: (reportDbId: number, viewLogId: number, durationSeconds: number) =>
+    apiClient.post<void>(
+      `/api/reports/${reportDbId}/view-duration`,
+      { audit_log_id: viewLogId, duration_seconds: Math.round(durationSeconds) },
+      { keepalive: true },
+    ),
 }
 
 export const exportsApi = {
