@@ -14,6 +14,8 @@ import ko from "@/i18n/ko";
 import { AXIS_HEIGHT, LABEL_WIDTH, timeToX } from "./ganttGeometry";
 
 /** 현재 시각(ms)을 주기적으로 갱신하는 훅. */
+// 이 모듈은 타이머 훅과 그 값을 표시하는 컴포넌트를 의도적으로 함께 제공한다.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useNow(intervalMs = 30_000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

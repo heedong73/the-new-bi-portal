@@ -71,6 +71,8 @@ export function HeaderActionsProvider({ children }: { children: ReactNode }) {
 }
 
 /** App(Header/ErrorBanner)이 현재 등록된 액션을 읽기 위한 훅 */
+// Provider와 전용 hooks를 한 모듈에서 제공하는 Context API 모듈이다.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useHeaderActions(): HeaderActions {
   const ctx = useContext(HeaderActionsContext);
   return ctx?.actions ?? {};
@@ -80,6 +82,7 @@ export function useHeaderActions(): HeaderActions {
  * 페이지가 자신의 헤더 액션을 등록하는 훅.
  * deps가 바뀔 때마다 최신 핸들러로 갱신하고, 언마운트 시 초기화한다.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useRegisterHeaderActions(
   actions: HeaderActions,
   deps: readonly unknown[]

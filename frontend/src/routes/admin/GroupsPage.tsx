@@ -108,7 +108,8 @@ export default function GroupsPage() {
   function toggle(deptId: string) {
     setExpanded((prev) => {
       const next = new Set(prev)
-      next.has(deptId) ? next.delete(deptId) : next.add(deptId)
+      if (next.has(deptId)) next.delete(deptId)
+      else next.add(deptId)
       return next
     })
   }

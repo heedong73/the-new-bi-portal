@@ -57,8 +57,8 @@ describe('StatsDashboardPage', () => {
   it('운영 통계 카드와 사용 통계를 렌더링한다', async () => {
     wrap(<StatsDashboardPage />)
     expect(await screen.findByText('340')).toBeInTheDocument() // 조회 수
-    expect(await screen.findByText(/월간 매출/)).toBeInTheDocument()
-    expect(await screen.findByText('영업부')).toBeInTheDocument()
+    expect(await screen.findByText('월간 매출', { selector: 'tspan' })).toBeInTheDocument()
+    expect(screen.getByText('시간대별 조회 · 사용자 (0~23시)')).toBeInTheDocument()
   })
 })
 

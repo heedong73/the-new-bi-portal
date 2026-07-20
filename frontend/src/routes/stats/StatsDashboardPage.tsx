@@ -573,6 +573,8 @@ function OperatorStats() {
   })
   useEffect(() => {
     if (detailReportId == null || !reportsQuery.data) return
+    // 비동기로 갱신된 레포트 선택지에서 사라진 기존 선택을 상태와 동기화한다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!reportsQuery.data.some((r) => r.id === detailReportId)) setDetailReportId(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, reportsQuery.data])

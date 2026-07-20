@@ -39,7 +39,8 @@ export default function ReportPickerTree({ value, onChange }: Props) {
   const openSet = open ?? new Set<number>(folders.map((f) => f.id))
   const toggle = (id: number) => {
     const next = new Set(openSet)
-    next.has(id) ? next.delete(id) : next.add(id)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
     setOpen(next)
   }
 

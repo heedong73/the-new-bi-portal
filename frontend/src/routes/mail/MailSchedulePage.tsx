@@ -210,7 +210,8 @@ export default function MailSchedulePage() {
   function toggleWeekday(v: number, checked: boolean) {
     setForm((f) => {
       const cur = new Set(f.schedule_days ?? [])
-      checked ? cur.add(v) : cur.delete(v)
+      if (checked) cur.add(v)
+      else cur.delete(v)
       return { ...f, schedule_days: [...cur].sort((a, b) => a - b) }
     })
   }
