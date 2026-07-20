@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login Concept — Midnight Minimal</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; min-height: 100%; }
+    body {
+      overflow: hidden;
+      background: #040b14;
+      color: #edf6fb;
+      font-family: Pretendard, "Noto Sans KR", "Segoe UI", sans-serif;
+    }
+    .page {
+      position: relative;
+      isolation: isolate;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 485px;
+      width: 100vw;
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 60% 45%, rgba(20,106,146,.14), transparent 27%),
+        radial-gradient(circle at 2% 100%, rgba(12,87,132,.2), transparent 28%),
+        linear-gradient(135deg, #071522 0%, #040b14 68%, #06101b 100%);
+    }
+    .page::before {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      content: "";
+      opacity: .19;
+      background-image:
+        linear-gradient(rgba(103,193,224,.09) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(103,193,224,.09) 1px, transparent 1px);
+      background-size: 82px 82px;
+      mask-image: linear-gradient(90deg, #000, transparent 67%);
+    }
+    .page::after {
+      position: absolute;
+      top: 10%;
+      bottom: 10%;
+      left: calc(100% - 485px);
+      width: 1px;
+      content: "";
+      background: linear-gradient(transparent, rgba(104,200,229,.19) 20%, rgba(104,200,229,.08) 80%, transparent);
+    }
+    .brand {
+      position: absolute;
+      top: 46px;
+      left: 67px;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+    .brand-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid rgba(138,218,239,.13);
+      border-radius: 13px;
+      background: rgba(255,255,255,.96);
+      box-shadow: 0 14px 36px rgba(0,0,0,.3);
+    }
+    .brand-mark img { width: 30px; height: 30px; object-fit: cover; }
+    .brand-copy { display: flex; flex-direction: column; gap: 3px; }
+    .brand-copy small { color: rgba(181,216,229,.45); font-size: 8px; font-weight: 700; letter-spacing: .23em; }
+    .brand-copy strong { color: #f1f8fb; font-size: 14px; font-weight: 750; letter-spacing: .12em; }
+    .hero {
+      position: relative;
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      justify-content: center;
+      padding: 145px 80px 78px 82px;
+    }
+    .coordinate {
+      position: absolute;
+      top: 143px;
+      right: 65px;
+      color: rgba(143,189,207,.27);
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 8px;
+      letter-spacing: .16em;
+    }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin: 0 0 25px;
+      color: #60cce6;
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before {
+      width: 7px;
+      height: 7px;
+      border: 1px solid #5dd5ec;
+      border-radius: 50%;
+      content: "";
+      box-shadow: 0 0 14px rgba(74,205,233,.45);
+    }
+    h1 {
+      max-width: 620px;
+      margin: 0;
+      color: #f5fafc;
+      font-size: clamp(43px, 3.7vw, 56px);
+      font-weight: 620;
+      letter-spacing: -.06em;
+      line-height: 1.2;
+    }
+    h1 em { color: #72d5e8; font-style: normal; font-weight: 650; }
+    .description {
+      margin: 27px 0 0;
+      color: rgba(203,225,234,.5);
+      font-size: 13px;
+      line-height: 1.9;
+    }
+    .system-line {
+      display: flex;
+      width: min(585px, 92%);
+      align-items: center;
+      margin-top: 54px;
+    }
+    .system-line span:first-child { width: 8px; height: 8px; border: 1px solid rgba(94,205,230,.7); border-radius: 50%; }
+    .system-line i { height: 1px; flex: 1; margin: 0 14px; background: linear-gradient(90deg, rgba(94,205,230,.5), rgba(94,205,230,.04)); }
+    .system-line small { color: rgba(147,189,205,.33); font-family: ui-monospace, Consolas, monospace; font-size: 8px; letter-spacing: .15em; }
+    .metrics {
+      display: flex;
+      gap: 48px;
+      margin-top: 17px;
+      color: rgba(171,209,222,.34);
+      font-size: 8px;
+      font-weight: 650;
+      letter-spacing: .14em;
+    }
+    .form-area {
+      position: relative;
+      display: grid;
+      place-items: center;
+      background: rgba(3,11,20,.16);
+    }
+    .form {
+      width: 344px;
+      padding: 38px 0 30px;
+      border-top: 1px solid rgba(123,207,230,.16);
+      border-bottom: 1px solid rgba(123,207,230,.1);
+    }
+    .form::before {
+      display: block;
+      width: 24px;
+      height: 2px;
+      margin-bottom: 25px;
+      background: #55c9e4;
+      box-shadow: 0 0 18px rgba(70,197,225,.45);
+      content: "";
+    }
+    .form h2 {
+      margin: 0;
+      color: #f5fafc;
+      font-size: 30px;
+      font-weight: 620;
+      letter-spacing: -.045em;
+    }
+    .form-intro { margin: 10px 0 29px; color: rgba(195,220,230,.42); font-size: 11px; line-height: 1.6; }
+    label { display: block; margin: 0 0 8px 1px; color: rgba(212,234,241,.68); font-size: 9px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+    .field { position: relative; margin-bottom: 17px; }
+    input {
+      width: 100%;
+      height: 51px;
+      padding: 0 43px 0 15px;
+      border: 1px solid rgba(157,207,224,.13);
+      border-radius: 3px;
+      outline: 0;
+      background: rgba(213,242,250,.035);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.25);
+      color: #edf8fb;
+      font: inherit;
+      font-size: 12px;
+    }
+    input::placeholder { color: rgba(166,202,215,.28); }
+    .field-icon { position: absolute; right: 15px; bottom: 17px; color: rgba(128,195,214,.42); font-size: 12px; }
+    .login-button {
+      display: flex;
+      width: 100%;
+      height: 51px;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+      padding: 0 17px;
+      border: 1px solid rgba(157,233,247,.18);
+      border-radius: 3px;
+      background: linear-gradient(135deg, #63d3e7, #329bc5);
+      box-shadow: 0 15px 35px rgba(20,126,170,.18);
+      color: #031522;
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: .12em;
+    }
+    .security { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 22px 0 0; color: rgba(165,202,216,.3); font-size: 8px; }
+    .copyright { position: absolute; right: 0; bottom: 36px; left: 0; color: rgba(164,195,207,.24); font-size: 8px; letter-spacing: .09em; text-align: center; }
+    .concept { position: absolute; bottom: 36px; left: 68px; color: rgba(135,182,199,.27); font-family: ui-monospace, Consolas, monospace; font-size: 8px; letter-spacing: .17em; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="brand">
+      <span class="brand-mark"><img src="../public/logo.png" alt="" /></span>
+      <span class="brand-copy"><small>SAMCHULLY GROUP</small><strong>SCL BI PORTAL</strong></span>
+    </header>
+    <section class="hero">
+      <span class="coordinate">37.5472° N / 126.9915° E</span>
+      <p class="eyebrow">Business Intelligence Workspace</p>
+      <h1>데이터가<br /><em>더 나은 결정</em>이 되는 곳.</h1>
+      <p class="description">하나의 공간에서 리포트를 발견하고 공유하며,<br />비즈니스의 다음 인사이트를 연결하세요.</p>
+      <div class="system-line"><span></span><i></i><small>CONNECTED / INTERNAL NETWORK</small></div>
+      <div class="metrics"><span>DATASETS</span><span>REPORTS</span><span>INSIGHTS</span><span>DECISIONS</span></div>
+      <span class="concept">Concept 02 · Midnight Minimal</span>
+    </section>
+    <aside class="form-area">
+      <section class="form">
+        <h2>SCL BI Portal</h2>
+        <p class="form-intro">사번과 그룹웨어 비밀번호로 로그인해 주세요.</p>
+        <label for="midnight-id">ID</label>
+        <div class="field"><input id="midnight-id" placeholder="사번을 입력해 주세요" /><span class="field-icon">●</span></div>
+        <label for="midnight-password">Password</label>
+        <div class="field"><input id="midnight-password" type="password" placeholder="그룹웨어 비밀번호" /><span class="field-icon">◉</span></div>
+        <button class="login-button"><span>LOGIN</span><span>→</span></button>
+        <p class="security"><span>◆</span> 안전한 사내망 내에서만 접속 가능합니다.</p>
+      </section>
+      <p class="copyright">© 2026 Samchully Group. All rights reserved.</p>
+    </aside>
+  </div>
+</body>
+</html>

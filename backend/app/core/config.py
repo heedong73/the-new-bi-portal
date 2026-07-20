@@ -36,6 +36,8 @@ class Settings(BaseSettings):
 
     # HR Auth
     HR_PWD_HASH_ROUNDS: int = 3
+    # HR 로그인 시 System_Operator 역할을 자동 부여할 사번(콤마 구분).
+    SYSTEM_OPERATOR_EMP_NOS: str = ""
 
     # SMTP
     SMTP_HOST: str = "localhost"

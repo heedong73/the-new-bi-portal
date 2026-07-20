@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — Ivory Editorial</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; min-height: 100%; }
+    body {
+      overflow: hidden;
+      background: #eeece5;
+      color: #182d3d;
+      font-family: Pretendard, "Noto Sans KR", "Segoe UI", sans-serif;
+    }
+    .page {
+      position: relative;
+      isolation: isolate;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 525px;
+      width: 100vw;
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 61% 12%, rgba(255,255,255,.84), transparent 28%),
+        linear-gradient(120deg, #f6f3ec 0 65%, #ebe7de 65% 100%);
+    }
+    .page::before {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      content: "";
+      opacity: .42;
+      background-image:
+        linear-gradient(rgba(22,52,73,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(22,52,73,.045) 1px, transparent 1px);
+      background-size: 68px 68px;
+      mask-image: linear-gradient(90deg, #000, transparent 71%);
+    }
+    .page::after {
+      position: absolute;
+      top: -360px;
+      left: 43%;
+      z-index: -1;
+      width: 610px;
+      height: 610px;
+      border: 1px solid rgba(19,91,126,.08);
+      border-radius: 50%;
+      content: "";
+      box-shadow: 0 0 0 82px rgba(19,91,126,.025), 0 0 0 164px rgba(19,91,126,.018);
+    }
+    .brand {
+      position: absolute;
+      top: 46px;
+      left: 66px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+    .brand-mark {
+      display: grid;
+      width: 43px;
+      height: 43px;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid rgba(17,64,91,.09);
+      border-radius: 13px;
+      background: #fff;
+      box-shadow: 0 10px 28px rgba(25,45,57,.09);
+    }
+    .brand-mark img { width: 31px; height: 31px; object-fit: cover; }
+    .brand-copy { display: flex; flex-direction: column; gap: 3px; }
+    .brand-copy small { color: #888b86; font-size: 8px; font-weight: 700; letter-spacing: .23em; }
+    .brand-copy strong { color: #173f57; font-size: 14px; font-weight: 760; letter-spacing: .12em; }
+    .editorial {
+      position: relative;
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      justify-content: center;
+      padding: 150px 76px 76px 78px;
+    }
+    .edition {
+      position: absolute;
+      top: 150px;
+      right: 58px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #8d8d86;
+      font-family: Georgia, serif;
+      font-size: 10px;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .edition::before { width: 44px; height: 1px; background: #b4b2aa; content: ""; }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 24px;
+      color: #075d83;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .19em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before { width: 29px; height: 1px; background: #075d83; content: ""; }
+    h1 {
+      max-width: 680px;
+      margin: 0;
+      color: #182d3d;
+      font-family: Georgia, "Noto Serif KR", serif;
+      font-size: 53px;
+      font-weight: 500;
+      letter-spacing: -.052em;
+      line-height: 1.18;
+    }
+    h1 em { color: #075d83; font-style: normal; font-weight: 600; }
+    .description {
+      margin: 27px 0 0 42px;
+      color: #6f7778;
+      font-size: 14px;
+      line-height: 1.9;
+    }
+    .data-line {
+      position: relative;
+      width: min(590px, 92%);
+      height: 112px;
+      margin-top: 43px;
+      border-bottom: 1px solid rgba(26,72,94,.15);
+    }
+    .data-line svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    .data-line::after {
+      position: absolute;
+      right: 0;
+      bottom: -5px;
+      width: 9px;
+      height: 9px;
+      border: 2px solid #087fa9;
+      border-radius: 50%;
+      background: #f6f3ec;
+      content: "";
+    }
+    .data-caption {
+      display: flex;
+      width: min(590px, 92%);
+      justify-content: space-between;
+      margin-top: 13px;
+      color: #8e8f89;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    .panel {
+      position: relative;
+      display: grid;
+      place-items: center;
+      border-left: 1px solid rgba(27,63,80,.09);
+      background: rgba(246,243,236,.58);
+      box-shadow: -24px 0 70px rgba(42,48,47,.035);
+    }
+    .panel::before {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 5px;
+      height: 100%;
+      background: #1888b4;
+      content: "";
+    }
+    .card {
+      position: relative;
+      left: -16px;
+      width: 354px;
+      padding: 36px 35px 28px;
+      border: 1px solid rgba(37,73,91,.11);
+      border-radius: 4px;
+      background: rgba(255,255,255,.82);
+      box-shadow: 0 30px 70px rgba(39,48,51,.1), inset 0 1px 0 #fff;
+      backdrop-filter: blur(18px);
+    }
+    .card h2 {
+      margin: 0;
+      color: #173144;
+      font-family: inherit;
+      font-size: 29px;
+      font-weight: 650;
+      letter-spacing: -.04em;
+    }
+    .card-intro { margin: 9px 0 25px; color: #858883; font-size: 11px; line-height: 1.55; }
+    label { display: block; margin: 0 0 8px 1px; color: #455963; font-size: 9px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+    .field { position: relative; margin-bottom: 15px; }
+    input {
+      width: 100%;
+      height: 46px;
+      padding: 0 42px 0 15px;
+      border: 1px solid #d8d7d1;
+      border-radius: 3px;
+      outline: 0;
+      background: rgba(250,249,246,.9);
+      color: #243b49;
+      font: inherit;
+      font-size: 12px;
+    }
+    input::placeholder { color: #aaa9a2; }
+    .field-icon { position: absolute; right: 15px; bottom: 15px; color: #98a2a4; font-size: 12px; }
+    .login-button {
+      display: flex;
+      width: 100%;
+      height: 46px;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 2px;
+      padding: 0 16px;
+      border: 0;
+      border-radius: 3px;
+      background: #153f57;
+      box-shadow: 0 12px 24px rgba(19,58,81,.14);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .11em;
+    }
+    .security { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 20px 0 0; color: #a1a29d; font-size: 8px; }
+    .copyright { position: absolute; right: 0; bottom: 35px; left: 0; color: #9b9a94; font-size: 8px; letter-spacing: .08em; text-align: center; }
+  </style>
+  <style>
+    /* Final 70/30 composition, expanded chart, and readable card type. */
+    .page {
+      grid-template-columns: 70% 30%;
+      background:
+        radial-gradient(circle at 70% 12%, rgba(255,255,255,.84), transparent 28%),
+        linear-gradient(120deg, #f6f3ec 0 70%, #ebe7de 70% 100%);
+    }
+    .editorial { padding-right: 48px; }
+    .eyebrow {
+      font-size: 14px;
+      letter-spacing: .17em;
+    }
+    .eyebrow::before { width: 34px; }
+    .data-line,
+    .data-caption {
+      width: calc(100% - 20px);
+      max-width: 860px;
+      margin-left: 20px;
+    }
+    .data-line {
+      height: 210px;
+      margin-top: 46px;
+    }
+    .data-caption { font-size: 9.5px; }
+    .card {
+      padding-top: 44px;
+      padding-bottom: 38px;
+    }
+    .card-intro {
+      margin-top: 11px;
+      margin-bottom: 30px;
+      font-size: 15.6px;
+      line-height: 1.6;
+    }
+    label { font-size: 10.8px; }
+    .field { margin-bottom: 17px; }
+    input { font-size: 14.4px; }
+    .login-button { font-size: 12px; }
+    .security {
+      gap: 7px;
+      margin-top: 26px;
+      color: #8b8d89;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .copyright {
+      position: static;
+      left: -16px;
+      margin: 16px 0 0;
+      font-size: 8.5px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="brand">
+      <span class="brand-mark"><img src="../public/logo.png" alt="" /></span>
+      <span class="brand-copy"><small>SAMCHULLY GROUP</small><strong>SCL BI PORTAL</strong></span>
+    </header>
+    <section class="editorial">
+      <span class="edition">FROM DATA TO DECISIONS</span>
+      <p class="eyebrow">Business Intelligence Workspace</p>
+      <h1>데이터가<br /><em>더 나은 결정</em>이 되는 곳.</h1>
+      <p class="description">하나의 공간에서 리포트를 발견하고 공유하며,<br />비즈니스의 다음 인사이트를 연결하세요.</p>
+      <div class="data-line">
+        <svg viewBox="0 0 600 120" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0 96 C58 82 78 93 128 67 S212 72 258 48 S345 70 397 36 S486 44 530 18 S572 26 600 6" fill="none" stroke="#087fa9" stroke-width="1.5" />
+          <path d="M0 107 H600 M0 70 H600 M0 33 H600" fill="none" stroke="rgba(26,75,91,.09)" stroke-width="1" />
+        </svg>
+      </div>
+      <div class="data-caption"><span>DATASETS</span><span>REPORTS</span><span>INSIGHTS</span><span>DECISIONS</span></div>
+    </section>
+    <aside class="panel">
+      <section class="card">
+        <h2>SCL BI Portal</h2>
+        <p class="card-intro">사번과 그룹웨어 비밀번호로 로그인해 주세요.</p>
+        <label for="ivory-id">ID</label>
+        <div class="field"><input id="ivory-id" placeholder="사번을 입력해 주세요" /><span class="field-icon">●</span></div>
+        <label for="ivory-password">Password</label>
+        <div class="field"><input id="ivory-password" type="password" placeholder="그룹웨어 비밀번호" /><span class="field-icon">◉</span></div>
+        <button class="login-button"><span>LOGIN</span><span>→</span></button>
+        <p class="security"><span>◆</span> 안전한 사내망 내에서만 접속 가능합니다.</p>
+      </section>
+      <p class="copyright">© 2026 Samchully Group. All rights reserved.</p>
+    </aside>
+  </div>
+</body>
+</html>

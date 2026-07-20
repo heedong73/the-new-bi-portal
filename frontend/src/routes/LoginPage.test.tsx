@@ -15,7 +15,7 @@ vi.mock('react-router-dom', async (orig) => {
 })
 
 vi.mock('@/api/authApi', () => ({
-  authApi: { login: vi.fn(), localLogin: vi.fn() },
+  authApi: { login: vi.fn() },
 }))
 
 function renderPage() {
@@ -52,10 +52,10 @@ describe('LoginPage', () => {
     expect(pw.type).toBe('password')
   })
 
-  it('로컬 관리자 모드로 전환하면 Admin ID 라벨이 보인다', () => {
+  it('HR 로그인만 제공하고 사내망 접속 안내를 표시한다', () => {
     renderPage()
-    fireEvent.click(screen.getByRole('button', { name: /로컬 관리자로 로그인/ }))
-    expect(screen.getByLabelText('Admin ID')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /로컬 관리자로 로그인/ })).not.toBeInTheDocument()
+    expect(screen.getByText('안전한 사내망 내에서만 접속 가능합니다.')).toBeInTheDocument()
   })
 
   it('로그인 성공 시 사용자 저장 + "/"로 이동한다', async () => {

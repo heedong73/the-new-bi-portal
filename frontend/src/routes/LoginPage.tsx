@@ -1,193 +1,217 @@
-/**
- * 로그인 화면 (T-35).
- *
- * - BI 일러스트 배경 이미지(/login-bg.png). 우측 흰 영역 위에 밝은 로그인 카드 배치.
- * - 사번(Employee ID)/비밀번호 입력, 비밀번호 표시/숨김 토글
- * - 로컬 관리자 로그인 보조 링크(모드 전환)
- * - 401 등 실패 시 한국어 오류 표시
- * 요구사항: R1, R2, R28
- *
- * 배경 이미지: frontend/public/login-bg.png. 파일이 없으면 밝은 배경으로 fallback.
- */
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
-import { Eye, EyeOff, Lock, User, Cloud } from 'lucide-react'
+import {
+  ArrowRight,
+  Eye,
+  EyeOff,
+  LoaderCircle,
+  Lock,
+  User,
+} from 'lucide-react'
 
 import { authApi } from '@/api/authApi'
 import { ApiError } from '@/api/client'
+import AnalyticsBackground from '@/components/login/AnalyticsBackground'
 import { useAuthStore } from '@/stores/useAuthStore'
 import type { LoginResponse } from '@/types/auth'
-
-type Mode = 'hr' | 'local'
+import './LoginPage.css'
 
 function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    return error.errorDescription ?? error.message
+  const fallback = '로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.'
+
+  if (!(error instanceof ApiError)) return fallback
+
+  if (error.status === 0 || error.errorCode === 'NETWORK_ERROR') {
+    return '로그인 서비스에 연결할 수 없습니다. 사내망 연결 상태를 확인한 후 다시 시도해 주세요.'
   }
-  return '로그인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'
+
+  if (error.status === 401) {
+    // 인증 API에서 의도적으로 내려준 사용자용 메시지(잘못된 인증 정보, 비활성 계정)는 유지한다.
+    return error.errorCode === 'UNAUTHENTICATED' && error.errorDescription
+      ? error.errorDescription
+      : '사번 또는 비밀번호가 올바르지 않습니다.'
+  }
+
+  if (error.status === 403) {
+    return '로그인이 허용되지 않은 계정입니다. 관리자에게 문의해 주세요.'
+  }
+
+  if (error.status === 400 || error.status === 422 || error.errorCode === 'VALIDATION_ERROR') {
+    return '입력하신 사번과 비밀번호를 다시 확인해 주세요.'
+  }
+
+  if (error.status === 429) {
+    return '로그인 시도가 많습니다. 잠시 후 다시 시도해 주세요.'
+  }
+
+  if (error.status === 404) {
+    return '로그인 서비스를 찾을 수 없습니다. 관리자에게 문의해 주세요.'
+  }
+
+  if (error.status >= 500 || error.errorCode === 'PARSE_ERROR') {
+    return '로그인 서비스를 일시적으로 이용할 수 없습니다. 잠시 후 다시 시도해 주세요.'
+  }
+
+  return fallback
 }
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const setUser = useAuthStore((s) => s.setUser)
+  const setUser = useAuthStore((state) => state.setUser)
 
-  const [mode, setMode] = useState<Mode>('hr')
-  const [identifier, setIdentifier] = useState('') // 사번 또는 관리자 아이디
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
   const mutation = useMutation<LoginResponse, unknown, void>({
-    mutationFn: () =>
-      mode === 'hr'
-        ? authApi.login({ emp_no: identifier.trim(), password })
-        : authApi.localLogin({ username: identifier.trim(), password }),
+    mutationFn: () => authApi.login({ emp_no: identifier.trim(), password }),
     onSuccess: (data) => {
       setUser(data.user)
       navigate('/', { replace: true })
     },
   })
 
-  const isHr = mode === 'hr'
   const canSubmit = identifier.trim().length > 0 && password.length > 0 && !mutation.isPending
-  const idLabel = isHr ? 'ID' : 'Admin ID'
-  const idPlaceholder = isHr ? '사번' : '관리자 아이디'
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault()
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
     if (!canSubmit) return
     mutation.mutate()
   }
 
-  function switchMode(next: Mode) {
-    setMode(next)
-    mutation.reset()
-  }
-
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-slate-950">
-      {/* 레터박스 여백을 흐린 이미지로 메움(보조 배경, 잘려도 무방).
-          우클릭 시 브라우저 기본 이미지 저장/복사 메뉴가 뜨지 않도록 컨텍스트 메뉴 차단. */}
-      <div
-        className="absolute inset-0 scale-110 bg-cover bg-center blur-2xl"
-        style={{ backgroundImage: "url('/login-bg.png')" }}
-        aria-hidden="true"
-        onContextMenu={(e) => e.preventDefault()}
-      />
-      {/* 비율 유지 전체 이미지(절대 잘리지 않음) + 우측 유리창 위 카드 */}
-      <div className="relative flex min-h-screen items-center justify-center">
-        <div className="relative max-h-screen">
-          <img
-            src="/login-bg.png"
-            alt=""
-            draggable={false}
-            onContextMenu={(e) => e.preventDefault()}
-            className="block max-h-screen w-auto max-w-full select-none [-webkit-user-drag:none]"
-          />
-          {/* 카드: 우측 파란 유리창 중앙 (이미지 비율에 맞춰 같이 축소) */}
-          <div className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: '82.5%', top: '50%', width: 'clamp(240px, 30%, 380px)' }}>
-            <div className="w-full rounded-2xl border border-white/60 bg-white p-6 shadow-2xl shadow-blue-950/40 ring-1 ring-black/5">
-          {/* 헤더 */}
-          <div className="mb-7 text-center">
-            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 shadow-lg shadow-blue-600/30">
-              <Cloud className="h-7 w-7 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold tracking-wide text-slate-800">SCL BI PORTAL</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              삼천리 BI Portal에서 레포트를<br />공유하고 인사이트를 얻어보세요
-            </p>
+    <div className="login-page">
+      <AnalyticsBackground />
+
+      <header className="login-brand" aria-label="SCL BI Portal">
+        <span className="login-brand__mark">
+          <img src="/logo.png" alt="삼천리 로고" />
+        </span>
+        <span className="login-brand__copy">
+          <small>SAMCHULLY GROUP</small>
+          <strong>SCL BI PORTAL</strong>
+        </span>
+      </header>
+
+      <section className="login-story" aria-label="SCL BI Portal 소개">
+        <span className="login-story__edition">FROM DATA TO DECISIONS</span>
+        <p className="login-story__eyebrow">
+          <span /> Business Intelligence Workspace
+        </p>
+        <h2>
+          데이터가
+          <br />
+          <em>더 나은 결정</em>이 되는 곳.
+        </h2>
+        <p className="login-story__description">
+          하나의 공간에서 리포트를 발견하고 공유하며,
+          <br />
+          비즈니스의 다음 인사이트를 연결하세요.
+        </p>
+
+        <div className="login-data-flow" aria-hidden="true">
+          <div className="login-data-flow__chart">
+            <svg viewBox="0 0 600 120" preserveAspectRatio="none">
+              <path
+                d="M0 96 C58 82 78 93 128 67 S212 72 258 48 S345 70 397 36 S486 44 530 18 S572 26 600 6"
+                fill="none"
+                stroke="#087fa9"
+                strokeWidth="1.5"
+              />
+              <path
+                d="M0 107 H600 M0 70 H600 M0 33 H600"
+                fill="none"
+                stroke="#1a4b5b"
+                strokeOpacity="0.09"
+              />
+            </svg>
+          </div>
+          <div className="login-data-flow__labels">
+            <span>Datasets</span>
+            <span>Reports</span>
+            <span>Insights</span>
+            <span>Decisions</span>
+          </div>
+        </div>
+      </section>
+
+      <main className="login-main">
+        <section className="login-card" aria-labelledby="login-heading">
+          <div className="login-card__heading">
+            <h1 id="login-heading">SCL BI Portal</h1>
+            <span>사번과 그룹웨어 비밀번호로 로그인해 주세요.</span>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-            {/* 아이디/사번 */}
-            <div>
-              <label htmlFor="identifier" className="mb-1.5 block text-sm font-medium text-slate-700">
-                {idLabel}
-              </label>
-              <div className="relative">
-                <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <form
+            className="login-form"
+            onSubmit={handleSubmit}
+            noValidate
+            aria-busy={mutation.isPending}
+          >
+            <div className="login-field">
+              <label htmlFor="identifier">ID</label>
+              <div className="login-field__control">
+                <User aria-hidden="true" />
                 <input
                   id="identifier"
                   name="identifier"
                   type="text"
                   autoComplete="username"
                   value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder={idPlaceholder}
-                  className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
+                  onChange={(event) => setIdentifier(event.target.value)}
+                  placeholder="사번을 입력해 주세요"
                 />
               </div>
             </div>
 
-            {/* 비밀번호 + 표시/숨김 토글 */}
-            <div>
-              <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-slate-700">
-                Password
-              </label>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <div className="login-field">
+              <label htmlFor="password">Password</label>
+              <div className="login-field__control">
+                <Lock aria-hidden="true" />
                 <input
                   id="password"
                   name="password"
                   type={showPassword ? 'text' : 'password'}
                   autoComplete="current-password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(event) => setPassword(event.target.value)}
                   placeholder="그룹웨어 비밀번호"
-                  className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-10 pr-11 text-slate-900 placeholder-slate-400 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
                 />
                 <button
+                  className="login-password-toggle"
                   type="button"
-                  onClick={() => setShowPassword((v) => !v)}
+                  onClick={() => setShowPassword((visible) => !visible)}
                   aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 표시'}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-600"
                 >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
                 </button>
               </div>
             </div>
 
-            {/* 오류 메시지 */}
             {mutation.isError && (
-              <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+              <p role="alert" className="login-error">
                 {errorMessage(mutation.error)}
               </p>
             )}
 
-            {/* 로그인 버튼 */}
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="w-full rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 py-2.5 font-semibold text-white shadow-lg shadow-blue-600/25 transition hover:from-blue-500 hover:to-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {mutation.isPending ? '로그인 중…' : 'Login'}
+            <button className="login-submit" type="submit" disabled={!canSubmit}>
+              <span>
+                {mutation.isPending && <LoaderCircle className="login-submit__spinner" aria-hidden="true" />}
+                {mutation.isPending ? '로그인 중…' : 'Login'}
+              </span>
+              {!mutation.isPending && <ArrowRight aria-hidden="true" />}
             </button>
           </form>
 
-          {/* 모드 전환 보조 링크 */}
-          <div className="mt-5 text-center">
-            {isHr ? (
-              <button
-                type="button"
-                onClick={() => switchMode('local')}
-                className="text-sm text-slate-500 underline-offset-4 transition hover:text-blue-600 hover:underline"
-              >
-                로컬 관리자로 로그인
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => switchMode('hr')}
-                className="text-sm text-slate-500 underline-offset-4 transition hover:text-blue-600 hover:underline"
-              >
-                사번 로그인으로 돌아가기
-              </button>
-            )}
-          </div>
-            </div>
-          </div>
-        </div>
-      </div>
+          <p className="login-card__security">
+            <Lock aria-hidden="true" />
+            안전한 사내망 내에서만 접속 가능합니다.
+          </p>
+        </section>
+
+        <p className="login-copyright">© 2026 Samchully Group. All rights reserved.</p>
+      </main>
     </div>
   )
 }

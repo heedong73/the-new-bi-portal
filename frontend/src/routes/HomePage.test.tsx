@@ -41,21 +41,22 @@ describe('HomePage', () => {
     vi.mocked(reportsApi.removeFavorite).mockResolvedValue(undefined as never)
   })
 
-  it('기본 진입 시 레포트 선택 안내 랜딩을 표시한다', async () => {
+  it('기본 진입 시 즐겨찾기를 표시하고 레포트 선택 안내를 노출하지 않는다', async () => {
     renderPage()
-    expect(await screen.findByText('레포트를 선택하세요')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '즐겨찾기 리포트' })).toBeInTheDocument()
+    expect(screen.queryByText('레포트를 선택하세요')).not.toBeInTheDocument()
   })
 
-  it('즐겨찾기가 있으면 기본 화면에 즐겨찾기 섹션을 렌더링한다', async () => {
+  it('즐겨찾기가 있으면 기본 화면에 즐겨찾기 카드를 렌더링한다', async () => {
     vi.mocked(reportsApi.favorites).mockResolvedValue([FAV])
     renderPage()
-    expect(await screen.findByText('즐겨찾기 레포트')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '즐겨찾기 레포트 열기' })).toBeInTheDocument()
   })
 
   it('즐겨찾기 보기에서 카드 클릭 시 단일 레포트 상세로 이동한다', async () => {
     vi.mocked(reportsApi.favorites).mockResolvedValue([FAV])
     renderPage('/?fav=1')
-    fireEvent.click(await screen.findByText('즐겨찾기 레포트'))
+    fireEvent.click(await screen.findByRole('button', { name: '즐겨찾기 레포트 열기' }))
     expect(navigateMock).toHaveBeenCalledWith('/reports/99')
   })
 
@@ -67,7 +68,7 @@ describe('HomePage', () => {
   it('별 토글 클릭 시 즐겨찾기 해제를 호출한다', async () => {
     vi.mocked(reportsApi.favorites).mockResolvedValue([FAV])
     renderPage('/?fav=1')
-    await screen.findByText('즐겨찾기 레포트')
+    await screen.findByRole('button', { name: '즐겨찾기 레포트 열기' })
     fireEvent.click(screen.getByRole('button', { name: '즐겨찾기 해제' }))
     await waitFor(() => expect(reportsApi.removeFavorite).toHaveBeenCalledWith(99))
   })

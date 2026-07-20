@@ -545,7 +545,7 @@ export default function ReportViewPage() {
           </div>
         </div>
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-1.5">
           <RefreshStatusBadge status={badgeStatus} isLoading={statusQuery.isLoading} />
 
           {/* 갱신 예정 (예약 새로고침이 활성일 때) */}
@@ -557,9 +557,9 @@ export default function ReportViewPage() {
                 aria-haspopup="dialog"
                 aria-expanded={schedOpen}
                 title="예약 새로고침 상세 보기"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-0.5 text-[12.5px] leading-[18px] text-slate-600 transition hover:bg-slate-50"
               >
-                <Clock className="h-3.5 w-3.5 text-slate-400" />
+                <Clock className="h-3 w-3 text-slate-400" />
                 갱신 예정: {fmtLocal(live.schedule.next_scheduled_local)}
               </button>
               {schedOpen && (
@@ -571,15 +571,15 @@ export default function ReportViewPage() {
                     className="fixed inset-0 z-10 cursor-default"
                     onClick={() => setSchedOpen(false)}
                   />
-                  <div role="dialog" aria-label="예약 새로고침" className="absolute right-0 z-20 mt-1 w-60 rounded-lg border border-slate-200 bg-white p-3 text-xs shadow-lg">
-                    <p className="mb-1.5 font-semibold text-slate-700">예약 새로고침</p>
+                  <div role="dialog" aria-label="예약 새로고침" className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white p-2 text-[12.5px] leading-[18px] shadow-lg">
+                    <p className="mb-1 font-semibold text-slate-700">예약 새로고침</p>
                     <p className="text-slate-500">
                       요일: <span className="text-slate-700">{live.schedule.days.map(weekdayKo).join(', ') || '-'}</span>
                     </p>
                     <p className="text-slate-500">
                       시간: <span className="text-slate-700">{live.schedule.times.join(', ') || '-'}</span>
                     </p>
-                    <p className="mt-1.5 border-t border-slate-100 pt-1.5 text-slate-500">
+                    <p className="mt-1 border-t border-slate-100 pt-1 text-slate-500">
                       다음 갱신: <span className="font-medium text-blue-700">{fmtLocal(live.schedule.next_scheduled_local)}</span>
                     </p>
                   </div>
@@ -594,7 +594,7 @@ export default function ReportViewPage() {
               value={activePageName}
               onChange={(e) => selectPage(e.target.value)}
               aria-label="페이지 선택"
-              className="max-w-[14rem] rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="max-w-[11rem] rounded-md border border-slate-300 px-2 py-0.5 text-[12.5px] font-medium leading-[18px] text-slate-700 transition hover:bg-slate-50"
             >
               {pages.map((p) => (
                 <option key={p.name} value={p.name}>{p.displayName}</option>
@@ -609,11 +609,11 @@ export default function ReportViewPage() {
               onClick={() => setViewMenuOpen((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={viewMenuOpen}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-0.5 text-[12.5px] font-medium leading-[18px] text-slate-700 transition hover:bg-slate-50"
             >
-              <Monitor className="h-4 w-4" />
+              <Monitor className="h-3 w-3" />
               보기 옵션
-              <ChevronDown className="h-3.5 w-3.5" />
+              <ChevronDown className="h-2.5 w-2.5" />
             </button>
             {viewMenuOpen && (
               <>
@@ -624,29 +624,29 @@ export default function ReportViewPage() {
                   className="fixed inset-0 z-10 cursor-default"
                   onClick={() => setViewMenuOpen(false)}
                 />
-                <div role="menu" className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                <div role="menu" className="absolute right-0 z-20 mt-1 w-[12.5rem] overflow-hidden rounded-lg border border-slate-200 bg-white py-0.5 shadow-lg">
                   <button type="button" role="menuitem" onClick={applyFullscreen}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                    <Maximize2 className="h-4 w-4 text-slate-500" /> 전체 화면
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">
+                    <Maximize2 className="h-3 w-3 text-slate-500" /> 전체 화면
                   </button>
                   <button type="button" role="menuitem" onClick={() => applyDisplayOption(models.DisplayOption.FitToPage)}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                    <Monitor className="h-4 w-4 text-slate-500" /> 페이지 맞춤
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">
+                    <Monitor className="h-3 w-3 text-slate-500" /> 페이지 맞춤
                   </button>
                   <button type="button" role="menuitem" onClick={() => applyDisplayOption(models.DisplayOption.ActualSize)}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                    <ScanLine className="h-4 w-4 text-slate-500" /> 실제 크기
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">
+                    <ScanLine className="h-3 w-3 text-slate-500" /> 실제 크기
                   </button>
                   {report?.can_manage && (
                     <>
-                      <div className="my-1 border-t border-slate-100" />
+                      <div className="my-0.5 border-t border-slate-100" />
                       <button type="button" role="menuitem" onClick={saveCurrentAsDefault} disabled={defaultViewMutation.isPending}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                        <Save className="h-4 w-4 text-slate-500" /> 현재 뷰를 기본값으로 저장
+                        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                        <Save className="h-3 w-3 text-slate-500" /> 현재 뷰를 기본값으로 저장
                       </button>
                       <button type="button" role="menuitem" onClick={clearDefaultView} disabled={defaultViewMutation.isPending}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-50 disabled:opacity-50">
-                        <RotateCcw className="h-4 w-4 text-slate-400" /> 기본 뷰 초기화
+                        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+                        <RotateCcw className="h-3 w-3 text-slate-400" /> 기본 뷰 초기화
                       </button>
                     </>
                   )}
@@ -664,11 +664,11 @@ export default function ReportViewPage() {
                 aria-haspopup="menu"
                 aria-expanded={downloadMenuOpen}
                 disabled={exportMutation.isPending}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-0.5 text-[12.5px] font-medium leading-[18px] text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
               >
-                <Download className="h-4 w-4" />
+                <Download className="h-3 w-3" />
                 다운로드
-                <ChevronDown className="h-3.5 w-3.5" />
+                <ChevronDown className="h-2.5 w-2.5" />
               </button>
               {downloadMenuOpen && (
                 <>
@@ -679,18 +679,18 @@ export default function ReportViewPage() {
                     className="fixed inset-0 z-10 cursor-default"
                     onClick={() => setDownloadMenuOpen(false)}
                   />
-                  <div role="menu" className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                    <p className="px-3 py-1.5 text-xs font-medium text-slate-400">렌더링 파일</p>
+                  <div role="menu" className="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-0.5 shadow-lg">
+                    <p className="px-2 py-0.5 text-[10.5px] font-medium text-slate-400">렌더링 파일</p>
                     <button type="button" role="menuitem" onClick={() => requestExport('PDF')}
-                      className="flex w-full items-center px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">PDF</button>
+                      className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PDF</button>
                     <button type="button" role="menuitem" onClick={() => requestExport('PPTX')}
-                      className="flex w-full items-center px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
+                      className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
                     <button type="button" role="menuitem" onClick={() => requestExport('PNG')}
-                      className="flex w-full items-center px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">이미지 (PNG)</button>
-                    <div className="my-1 border-t border-slate-100" />
-                    <p className="px-3 py-1.5 text-xs font-medium text-slate-400">원본 파일</p>
+                      className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">이미지 (PNG)</button>
+                    <div className="my-0.5 border-t border-slate-100" />
+                    <p className="px-2 py-0.5 text-[10.5px] font-medium text-slate-400">원본 파일</p>
                     <button type="button" role="menuitem" onClick={() => requestExport('PBIX')}
-                      className="flex w-full items-center px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">Power BI 원본 (.pbix)</button>
+                      className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">Power BI 원본 (.pbix)</button>
                   </div>
                 </>
               )}
@@ -701,9 +701,9 @@ export default function ReportViewPage() {
             <button
               type="button"
               onClick={() => { setReplaceFile(null); replaceMutation.reset(); setReplaceOpen(true) }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-600 px-3 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+              className="inline-flex items-center gap-1 rounded-md border border-blue-600 px-2 py-0.5 text-[12.5px] font-medium leading-[18px] text-blue-600 transition hover:bg-blue-50"
             >
-              <Upload className="h-4 w-4" />
+              <Upload className="h-3 w-3" />
               레포트 업데이트(교체)
             </button>
           )}
