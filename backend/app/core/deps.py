@@ -35,9 +35,12 @@ TokenServiceDep = Annotated[TokenServiceProtocol, Depends(get_token_service)]
 
 async def get_powerbi_client(
     token_service: TokenServiceDep,
+    redis: RedisDep,
 ) -> PowerBIClient:
     if settings.APP_MODE == "mock":
-        return MockPowerBIClient()
+        # redis를 넘겨 수동 트리거/취소된 refresh를 상태 있게 시뮬레이션한다(중지 버튼이
+        # mock 모드에서도 실제로 Unknown -> Cancelled 흐름을 거치게 함).
+        return MockPowerBIClient(redis=redis)
     return LivePowerBIClient(settings=settings, token_service=token_service)
 
 PowerBIClientDep = Annotated[PowerBIClient, Depends(get_powerbi_client)]

@@ -96,6 +96,7 @@ class AuditAction(StrEnum):
     PERMISSION_CHANGE = "permission_change"
     GROUP_CHANGE = "group_change"
     REFRESH_TRIGGER = "refresh_trigger"
+    REFRESH_CANCEL = "refresh_cancel"
     COLLECT_NOW = "collect_now"
     ADMIN_SETTING_CHANGE = "admin_setting_change"
     POWERBI_API_FAILURE = "powerbi_api_failure"

@@ -14,6 +14,7 @@ import { models, type Report } from 'powerbi-client'
 import {
   ArrowLeft, RefreshCw, Upload, X, AlertTriangle, Star,
   Maximize2, Monitor, ScanLine, ChevronDown, Clock, Save, RotateCcw, Download,
+  Square,
 } from 'lucide-react'
 
 import { datasetsApi, reportsApi } from '@/api/portalApi'
@@ -24,7 +25,7 @@ import { useBeforeUnload } from '@/hooks/useBeforeUnload'
 import PowerBIEmbed from '@/components/embed/PowerBIEmbed'
 import RefreshStatusBadge from '@/components/refresh/RefreshStatusBadge'
 
-const REFRESH_TERMINAL_FAIL = ['Failed', 'Cancelled', 'Disabled']
+const REFRESH_TERMINAL_FAIL = ['Failed', 'Disabled']
 
 /** 다운로드 포맷 표시 라벨. */
 const EXPORT_FORMAT_LABEL: Record<ExportFormat, string> = {
@@ -48,6 +49,14 @@ function fmtLocal(iso?: string | null): string | undefined {
   if (!iso) return undefined
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? undefined : d.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+function latestUpdateLabel(refreshEnd?: string | null, reportUpdated?: string | null): string | null {
+  const candidates = [refreshEnd, reportUpdated]
+    .map((value) => value ? new Date(value).getTime() : Number.NaN)
+    .filter((value) => !Number.isNaN(value))
+  if (candidates.length === 0) return null
+  return fmtLocal(new Date(Math.max(...candidates)).toISOString()) ?? null
 }
 
 export default function ReportViewPage() {
@@ -132,21 +141,29 @@ export default function ReportViewPage() {
   // 데이터 반영 안내: 사용자가 이미 반영/닫은 end_time (재노출 방지)
   const [appliedEndTime, setAppliedEndTime] = useState<string | null>(null)
   // 임베드가 렌더된 시각(ms). 이 시점 이후 완료된 새로고침만 "새 데이터"로 간주.
-  const renderedAtRef = useRef<number | null>(null)
+  const [renderedAt, setRenderedAt] = useState<number | null>(null)
   const prevInProgress = useRef(false)
   useEffect(() => {
     const ip = !!statusQuery.data?.in_progress
+    let showTimer: number | undefined
+    let clearTimer: number | undefined
     if (prevInProgress.current && !ip) {
       const st = statusQuery.data?.status ?? ''
       if (REFRESH_TERMINAL_FAIL.includes(st)) {
-        setRefreshFailed(`새로고침 실패 (${st})`)
-        window.setTimeout(() => setRefreshFailed(null), 8000)
+        showTimer = window.setTimeout(() => setRefreshFailed(`새로고침 실패 (${st})`), 0)
+        clearTimer = window.setTimeout(() => setRefreshFailed(null), 8000)
       }
     }
     prevInProgress.current = ip
+    return () => {
+      if (showTimer !== undefined) window.clearTimeout(showTimer)
+      if (clearTimer !== undefined) window.clearTimeout(clearTimer)
+    }
   }, [statusQuery.data])
 
   const addTask = useTaskStore((s) => s.addTask)
+  const updateTask = useTaskStore((s) => s.updateTask)
+  const markCancelling = useTaskStore((s) => s.markCancelling)
   const tasks = useTaskStore((s) => s.tasks)
 
   // 임베드된 Report 인스턴스 (보기 옵션 제어용)
@@ -185,7 +202,7 @@ export default function ReportViewPage() {
 
   function handleReport(r: Report | null) {
     reportRef.current = r
-    if (renderedAtRef.current == null) renderedAtRef.current = Date.now()
+    if (r) setRenderedAt((current) => current ?? Date.now())
     if (!r) return
     // 기본 보기를 '실제 크기'로 확실히 적용 (초기 embedConfig만으론 미적용되는 경우 대비)
     const applyFit = () => {
@@ -331,9 +348,41 @@ export default function ReportViewPage() {
         kind: 'refresh',
         status: 'pending',
         reportId: reportDbId,
+        datasetId: report?.dataset_id ?? undefined,
         startedAt: Date.now(),
       })
       queryClient.invalidateQueries({ queryKey: ['live-refresh', reportDbId] })
+    },
+  })
+
+  const cancelRefreshMutation = useMutation({
+    mutationFn: () => {
+      if (!report?.dataset_id) {
+        throw new Error('이 레포트에는 연결된 데이터셋이 없습니다.')
+      }
+      return datasetsApi.cancelRefresh(report.dataset_id)
+    },
+    onMutate: () => {
+      for (const task of useTaskStore.getState().tasks) {
+        if (task.kind === 'refresh' && task.reportId === reportDbId && task.status === 'pending') {
+          markCancelling(task.id, '중지 요청 중…')
+        }
+      }
+    },
+    onSuccess: () => {
+      for (const task of useTaskStore.getState().tasks) {
+        if (task.kind === 'refresh' && task.reportId === reportDbId && task.status === 'cancelling') {
+          updateTask(task.id, { message: '중지 처리 중…' })
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ['live-refresh', reportDbId] })
+    },
+    onError: (error) => {
+      for (const task of useTaskStore.getState().tasks) {
+        if (task.kind === 'refresh' && task.reportId === reportDbId && task.status === 'cancelling') {
+          updateTask(task.id, { status: 'pending', message: `중지 실패: ${cancelRefreshErrorMessage(error)}` })
+        }
+      }
     },
   })
 
@@ -383,12 +432,35 @@ export default function ReportViewPage() {
     return '새로고침 요청에 실패했습니다.'
   }
 
+  function cancelRefreshErrorMessage(error: unknown): string {
+    if (error instanceof ApiError) {
+      if (error.status === 403) return '새로고침을 중지할 권한이 없습니다.'
+      if (error.status === 409) {
+        return error.errorDescription ?? '이미 종료되었거나 중지할 수 없는 새로고침입니다.'
+      }
+      return error.errorDescription ?? '새로고침 중지 요청에 실패했습니다.'
+    }
+    if (error instanceof Error) return error.message
+    return '새로고침 중지 요청에 실패했습니다.'
+  }
+
   const title = report ? reportDisplayName(report) : '레포트'
   const canRefresh = Boolean(report?.dataset_id)
-  // 새로고침 진행 중: 트리거 POST 중 / PBI가 진행중 보고 / 도크 작업 진행 중
+  const currentRefreshTask = tasks.find(
+    (task) => task.kind === 'refresh'
+      && task.reportId === reportDbId
+      && (task.status === 'pending' || task.status === 'cancelling'),
+  )
+  // 새로고침 진행 중: 트리거 POST 중 / PBI가 진행중 보고 / 도크 작업 진행·취소 중
   const live = statusQuery.data
-  const refreshing = refreshMutation.isPending || !!live?.in_progress || tasks.some(
-    (t) => t.kind === 'refresh' && t.reportId === reportDbId && t.status === 'pending',
+  const refreshing = refreshMutation.isPending || !!live?.in_progress || Boolean(currentRefreshTask)
+  const cancelling = currentRefreshTask?.status === 'cancelling' || cancelRefreshMutation.isPending
+  // 이 버전에서 시작한 enhanced refresh(datasetId가 저장된 task)만 중지 버튼을 노출한다.
+  // Power BI 이력에서 실제 진행을 한 번 확인한 뒤 활성화해 enqueue 직후의 레이스를 피한다.
+  const canCancelRefresh = Boolean(
+    currentRefreshTask?.datasetId
+    && currentRefreshTask.status === 'pending'
+    && (live?.in_progress || currentRefreshTask.seenRunning),
   )
   // 배지용 상태 (라이브 PBI 기준)
   const badgeStatus: RefreshStatus = live && live.has_history
@@ -401,19 +473,7 @@ export default function ReportViewPage() {
 
   // 마지막 업데이트 = max(라이브 새로고침 end_time, report.updated_at)
   // PBIX 교체는 새로고침 이력에 안 남을 수 있으므로 updated_at도 함께 고려한다.
-  const lastUpdateLabel = useMemo(() => {
-    const candidates: number[] = []
-    if (live?.end_time) {
-      const t = new Date(live.end_time).getTime()
-      if (!Number.isNaN(t)) candidates.push(t)
-    }
-    if (report?.updated_at) {
-      const t = new Date(report.updated_at).getTime()
-      if (!Number.isNaN(t)) candidates.push(t)
-    }
-    if (candidates.length === 0) return null
-    return fmtLocal(new Date(Math.max(...candidates)).toISOString())
-  }, [live?.end_time, report?.updated_at])
+  const lastUpdateLabel = latestUpdateLabel(live?.end_time, report?.updated_at)
 
   const isFavorite = !!report?.is_favorite
 
@@ -423,8 +483,8 @@ export default function ReportViewPage() {
   const newDataAvailable = Boolean(
     newDataEndTime
     && !refreshing
-    && renderedAtRef.current != null
-    && new Date(newDataEndTime).getTime() > renderedAtRef.current
+    && renderedAt != null
+    && new Date(newDataEndTime).getTime() > renderedAt
     && newDataEndTime !== appliedEndTime,
   )
 
@@ -452,7 +512,7 @@ export default function ReportViewPage() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-slate-50">
+    <div className="editorial-report-view flex h-full flex-col bg-slate-50">
       {/* 헤더 */}
       <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3">
         <button
@@ -648,15 +708,33 @@ export default function ReportViewPage() {
             </button>
           )}
           {canRefresh && (
-            <button
-              type="button"
-              onClick={() => refreshMutation.mutate()}
-              disabled={refreshing}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-              {refreshing ? '새로고침 중…' : '새로고침'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  cancelRefreshMutation.reset()
+                  refreshMutation.mutate()
+                }}
+                disabled={refreshing}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing ? '새로고침 중…' : '새로고침'}
+              </button>
+              {currentRefreshTask?.datasetId && (
+                <button
+                  type="button"
+                  aria-label="새로고침 중지"
+                  onClick={() => cancelRefreshMutation.mutate()}
+                  disabled={!canCancelRefresh || cancelling}
+                  title={canCancelRefresh ? '진행 중인 새로고침 중지' : 'Power BI에서 시작 상태를 확인하는 중입니다.'}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                  {cancelling ? '중지 중…' : '중지'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </header>
@@ -667,9 +745,19 @@ export default function ReportViewPage() {
           {refreshErrorMessage(refreshMutation.error)}
         </div>
       )}
-      {refreshMutation.isSuccess && (
+      {refreshMutation.isSuccess && !cancelRefreshMutation.isSuccess && (
         <div className="bg-green-50 px-5 py-2 text-sm text-green-700">
           새로고침을 요청했습니다. 잠시 후 상태가 갱신됩니다.
+        </div>
+      )}
+      {cancelRefreshMutation.isError && (
+        <div role="alert" className="bg-red-50 px-5 py-2 text-sm text-red-600">
+          {cancelRefreshErrorMessage(cancelRefreshMutation.error)}
+        </div>
+      )}
+      {cancelRefreshMutation.isSuccess && refreshing && (
+        <div role="status" className="bg-amber-50 px-5 py-2 text-sm text-amber-700">
+          새로고침 중지를 요청했습니다. Power BI에서 작업을 종료하고 있습니다.
         </div>
       )}
       {refreshFailed && (

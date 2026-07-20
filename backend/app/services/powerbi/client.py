@@ -143,3 +143,17 @@ class PowerBIClient(Protocol):
     ) -> list[ReportPageDTO]:
         """Return the report's pages (``GET .../reports/{id}/pages``)."""
         ...
+
+    async def cancel_refresh(
+        self, workspace_id: str, dataset_id: str, refresh_id: str
+    ) -> None:
+        """Cancel an in-progress refresh (``DELETE .../refreshes/{refreshId}``).
+
+        Only refresh operations triggered via the enhanced refresh API (i.e.
+        with a non-empty request body) can be cancelled this way; Power BI
+        rejects cancellation of a "standard" refresh (empty-body POST) with
+        ``MethodNotAllowed``. Callers must have already confirmed the refresh
+        is in progress and obtained its ``refresh_id`` (``request_id`` from
+        :meth:`list_refreshes`).
+        """
+        ...

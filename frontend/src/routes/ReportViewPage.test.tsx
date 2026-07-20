@@ -11,7 +11,7 @@ import type { EmbedInfo, RefreshStatus, ReportSummary } from '@/types/report'
 
 vi.mock('@/api/portalApi', () => ({
   reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn(), liveRefreshStatus: vi.fn(), replacePbix: vi.fn(), favorites: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn() },
-  datasetsApi: { triggerRefresh: vi.fn() },
+  datasetsApi: { triggerRefresh: vi.fn(), cancelRefresh: vi.fn() },
 }))
 
 // powerbi-client-react 는 jsdom 에서 실제 임베드가 불가하므로 더미로 대체
@@ -59,6 +59,9 @@ describe('ReportViewPage', () => {
       start_time: '2026-06-24T00:00:00Z', end_time: '2026-06-24T00:05:00Z',
     })
     vi.mocked(datasetsApi.triggerRefresh).mockResolvedValue({ status: 'enqueued', dataset_id: 'ds-1' })
+    vi.mocked(datasetsApi.cancelRefresh).mockResolvedValue({
+      status: 'cancellation_requested', dataset_id: 'ds-1', refresh_id: 'refresh-1',
+    })
   })
 
   it('레포트 임베드와 제목, 새로고침 상태를 렌더링한다', async () => {
@@ -73,6 +76,27 @@ describe('ReportViewPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /새로고침/ }))
     await waitFor(() => expect(datasetsApi.triggerRefresh).toHaveBeenCalledWith('ds-1'))
     expect(await screen.findByText(/새로고침을 요청했습니다/)).toBeInTheDocument()
+  })
+
+  it('진행이 확인된 enhanced refresh를 중지한다', async () => {
+    vi.mocked(reportsApi.liveRefreshStatus).mockResolvedValue({
+      has_history: true, status: 'Unknown', in_progress: true,
+      start_time: '2026-06-24T00:00:00Z', end_time: null,
+    })
+    useTaskStore.setState({
+      tasks: [{
+        id: 'refresh-10', label: '월간 매출', kind: 'refresh', status: 'pending',
+        reportId: 10, datasetId: 'ds-1', seenRunning: true, startedAt: Date.now(),
+      }],
+    })
+
+    renderAt()
+    const stopButton = await screen.findByRole('button', { name: '새로고침 중지' })
+    await waitFor(() => expect(stopButton).toBeEnabled())
+    fireEvent.click(stopButton)
+
+    await waitFor(() => expect(datasetsApi.cancelRefresh).toHaveBeenCalledWith('ds-1'))
+    expect(await screen.findByText(/새로고침 중지를 요청했습니다/)).toBeInTheDocument()
   })
 
   it('새로고침 403 시 권한 없음 안내를 표시한다', async () => {

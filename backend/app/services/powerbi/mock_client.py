@@ -33,10 +33,15 @@ layer (stage 2.6 / 3.x), not here.
 
 from __future__ import annotations
 
+import json
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from dateutil.parser import isoparse
+from redis.asyncio import Redis
+
+from app.core.errors import PowerBIUpstreamError
 from app.services.powerbi.client import (
     DatasetDTO,
     PowerBIClient,
@@ -110,6 +115,110 @@ _SCHEDULE_VARIANTS: list[dict[str, Any]] = [
 
 # Base seed for the deterministic distribution (status mix / counts / durations).
 _BASE_SEED = 0x9E3779B1
+
+# --- Stateful simulated refresh (trigger/cancel round-trip) ----------------
+#
+# The generated history above is read-only flavour text. To let the manual
+# refresh "trigger -> observe progress -> stop -> Cancelled" flow be exercised
+# end-to-end in mock mode (the app's default), a single in-flight refresh per
+# dataset is tracked in Redis by ``refresh_trigger``/``cancel_refresh`` calling
+# ``register_mock_refresh``/``cancel_refresh`` below. It starts as ``"Unknown"``
+# (in-progress) and, unless cancelled first, auto-completes after
+# ``_MOCK_REFRESH_RUNNING_SEC`` seconds — long enough for the UI to observe
+# "in progress" and enable the stop button, short enough not to block manual
+# testing. ``refresh_type`` is always ``"ViaEnhancedApi"`` since only enhanced
+# refresh (our trigger path) is cancellable.
+_MOCK_REFRESH_RUNNING_SEC = 20
+_MOCK_REFRESH_RECORD_TTL_SEC = 24 * 60 * 60  # mirrors the real requestId TTL.
+_MOCK_TERMINAL_STATUSES = frozenset({"Completed", "Failed", "Disabled", "Cancelled"})
+_MOCK_ENHANCED_REFRESH_TYPE = "ViaEnhancedApi"
+
+
+def _mock_refresh_key(dataset_id: str) -> str:
+    """Redis key holding the single tracked simulated refresh for a dataset."""
+    return f"bip:mockrefresh:{dataset_id}"
+
+
+async def register_mock_refresh(redis: Redis, dataset_id: str, request_id: str) -> None:
+    """Persist a fresh in-progress simulated refresh for ``dataset_id``.
+
+    Called by ``refresh_trigger`` (mock branch) right after it mints
+    ``request_id`` so ``MockPowerBIClient.list_refreshes``/``cancel_refresh``
+    (used by the live-status and cancel routes) observe the same
+    "Unknown -> Completed/Cancelled" lifecycle a real enhanced refresh has.
+    This lets the stop button be exercised end-to-end without a live Power BI
+    capacity. Best-effort: a Redis failure here just means the mock reports
+    "no history" on the next read, matching the previous stateless behaviour.
+    """
+    record = {
+        "request_id": request_id,
+        "status": "Unknown",
+        "start_time": _iso_utc(datetime.now(timezone.utc)),
+        "end_time": None,
+    }
+    try:
+        await redis.set(
+            _mock_refresh_key(dataset_id), json.dumps(record), ex=_MOCK_REFRESH_RECORD_TTL_SEC
+        )
+    except Exception:
+        pass
+
+
+async def _load_mock_refresh(redis: Redis | None, dataset_id: str) -> dict[str, Any] | None:
+    """Load the tracked simulated refresh record for ``dataset_id``, if any."""
+    if redis is None:
+        return None
+    try:
+        raw = await redis.get(_mock_refresh_key(dataset_id))
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mock_refresh_to_dto(record: dict[str, Any], dataset_id: str) -> RefreshRunDTO:
+    """Map a tracked simulated-refresh record to a raw :class:`RefreshRunDTO`.
+
+    Auto-completes an ``"Unknown"`` (in-progress) record to ``"Completed"``
+    once ``_MOCK_REFRESH_RUNNING_SEC`` has elapsed since ``start_time`` — this
+    is computed on read (not written back), so it is deterministic regardless
+    of how many times/when it is observed. A record already terminated
+    (``Cancelled`` via :meth:`MockPowerBIClient.cancel_refresh``, or a prior
+    auto-completion) is returned as-is.
+    """
+    start_time = isoparse(record["start_time"])
+    status = record["status"]
+    end_time_raw = record.get("end_time")
+    end_time = isoparse(end_time_raw) if end_time_raw else None
+
+    if status == "Unknown" and end_time is None:
+        elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+        if elapsed >= _MOCK_REFRESH_RUNNING_SEC:
+            status = "Completed"
+            end_time = start_time + timedelta(seconds=_MOCK_REFRESH_RUNNING_SEC)
+
+    raw: dict[str, Any] = {
+        "requestId": record["request_id"],
+        "refreshType": _MOCK_ENHANCED_REFRESH_TYPE,
+        "startTime": _iso_utc(start_time),
+        "status": status,
+    }
+    if end_time is not None:
+        raw["endTime"] = _iso_utc(end_time)
+
+    return RefreshRunDTO(
+        dataset_id=dataset_id,
+        refresh_type=_MOCK_ENHANCED_REFRESH_TYPE,
+        status=status,
+        start_time=start_time,
+        end_time=end_time,
+        request_id=record["request_id"],
+        raw_json=raw,
+    )
 
 
 def _weighted_status(rng: random.Random) -> str:
@@ -192,7 +301,18 @@ class MockPowerBIClient:
     Satisfies the ``PowerBIClient`` Protocol structurally (no inheritance
     needed). All methods ignore ``workspace_id`` for filtering since the mock
     represents a single workspace, but accept it to match the Protocol.
+
+    Args:
+        redis: optional Redis client used to look up/mutate the single
+            tracked simulated refresh registered by
+            :func:`register_mock_refresh` (manual trigger/cancel round-trip,
+            R13/R37). When omitted (e.g. the module-level Protocol sanity
+            check below), ``list_refreshes``/``cancel_refresh`` fall back to
+            the previous stateless behaviour (fixtures only / no-op cancel).
     """
+
+    def __init__(self, redis: Redis | None = None) -> None:
+        self._redis = redis
 
     async def list_reports(self, workspace_id: str) -> list[ReportDTO]:
         """Return all mock reports (includes the paginated, dataset-less one)."""
@@ -218,7 +338,11 @@ class MockPowerBIClient:
         """Return up to ``top`` raw refresh entries for ``dataset_id``.
 
         Unknown dataset ids yield an empty list (mirrors Power BI returning no
-        history). Entries are newest-first, like the real API.
+        history). Entries are newest-first, like the real API. If a manual
+        refresh was triggered for this dataset (:func:`register_mock_refresh`),
+        its current simulated state is prepended so the live-status/cancel
+        routes observe a real in-progress -> terminal transition instead of
+        the static fixture noise (Requirement R13/R37).
         """
         seed_offset = next(
             (i for i, d in enumerate(_DATASETS) if d["dataset_id"] == dataset_id), None
@@ -228,6 +352,12 @@ class MockPowerBIClient:
         runs = _build_refreshes_for_dataset(dataset_id, seed_offset * 0x1000)
         # Newest first (Power BI orders refreshes by startTime DESC).
         runs.sort(key=lambda r: r.start_time, reverse=True)
+
+        record = await _load_mock_refresh(self._redis, dataset_id)
+        if record is not None:
+            tracked = _mock_refresh_to_dto(record, dataset_id)
+            runs = [tracked, *(r for r in runs if r.request_id != tracked.request_id)]
+
         return runs[:top]
 
     async def get_refresh_schedule(
@@ -267,6 +397,40 @@ class MockPowerBIClient:
             ReportPageDTO(name=name, display_name=display, order=i)
             for i, (name, display) in enumerate(sample)
         ]
+
+    async def cancel_refresh(
+        self, workspace_id: str, dataset_id: str, refresh_id: str
+    ) -> None:
+        """Mock 취소: 추적 중인 시뮬레이션 refresh를 실제로 Cancelled 상태로 전이한다.
+
+        ``refresh_id``가 현재 추적 중인 레코드와 일치하지 않거나 이미 종료된 경우,
+        실제 Power BI DELETE API가 반환하는 400(MethodNotAllowed)을 재현해 라우트가
+        표준 409 처리로 매핑하도록 한다. 이렇게 해야 mock 모드에서도 "이미 끝난
+        작업/표준 refresh 취소 시도" 오류 경로를 그대로 검증할 수 있다.
+        """
+        record = await _load_mock_refresh(self._redis, dataset_id)
+        if record is None or record["request_id"] != refresh_id:
+            raise PowerBIUpstreamError(
+                "Power BI 새로고침 취소가 실패했습니다 (HTTP 400).",
+                details={"http_status": 400},
+            )
+        dto = _mock_refresh_to_dto(record, dataset_id)
+        if dto.status in _MOCK_TERMINAL_STATUSES:
+            raise PowerBIUpstreamError(
+                "Power BI 새로고침 취소가 실패했습니다 (HTTP 400).",
+                details={"http_status": 400},
+            )
+        if self._redis is not None:
+            record["status"] = "Cancelled"
+            record["end_time"] = _iso_utc(datetime.now(timezone.utc))
+            try:
+                await self._redis.set(
+                    _mock_refresh_key(dataset_id),
+                    json.dumps(record),
+                    ex=_MOCK_REFRESH_RECORD_TTL_SEC,
+                )
+            except Exception:
+                pass
 
 
 # Structural-typing sanity check: MockPowerBIClient must satisfy the Protocol.

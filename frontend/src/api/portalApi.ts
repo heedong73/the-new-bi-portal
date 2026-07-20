@@ -95,9 +95,15 @@ export const exportsApi = {
 }
 
 export const datasetsApi = {
-  /** POST /api/datasets/{datasetId}/refresh — 수동 새로고침 (REFRESH 권한). */
+  /** POST /api/datasets/{datasetId}/refresh — 수동 enhanced refresh (REFRESH 권한). */
   triggerRefresh: (datasetId: string) =>
     apiClient.post<{ status: string; taskId?: string; dataset_id: string }>(
+      `/api/datasets/${encodeURIComponent(datasetId)}/refresh`,
+    ),
+
+  /** DELETE /api/datasets/{datasetId}/refresh — 진행 중인 enhanced refresh 취소. */
+  cancelRefresh: (datasetId: string) =>
+    apiClient.del<{ status: string; dataset_id: string; refresh_id: string }>(
       `/api/datasets/${encodeURIComponent(datasetId)}/refresh`,
     ),
 }

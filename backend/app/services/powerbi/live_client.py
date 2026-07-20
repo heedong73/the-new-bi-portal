@@ -271,6 +271,79 @@ class LivePowerBIClient:
         pages.sort(key=lambda p: (p.order is None, p.order or 0))
         return pages
 
+    async def cancel_refresh(
+        self, workspace_id: str, dataset_id: str, refresh_id: str
+    ) -> None:
+        """Cancel an in-progress enhanced refresh (``DELETE .../refreshes/{id}``).
+
+        Applies the same auth-retry (401) policy as ``_get`` but issues a
+        ``DELETE`` with no response body expected. Power BI returns 200 on
+        success. A 400/``MethodNotAllowed`` is raised by Power BI when the
+        target refresh was not triggered via the enhanced refresh API
+        (standard refreshes cannot be cancelled) — surfaced here as
+        :class:`PowerBIUpstreamError` so the route can map it to a Korean
+        message rather than a raw upstream body.
+        """
+        url = f"{self._base_url}/groups/{workspace_id}/datasets/{dataset_id}/refreshes/{refresh_id}"
+        auth_retries = 0
+        retry_count = 0
+
+        while True:
+            token = await self._token_service.get_token()
+            headers = {"Authorization": f"Bearer {token}"}
+
+            started = asyncio.get_event_loop().time()
+            try:
+                if self._http_client is not None:
+                    response = await self._http_client.delete(
+                        url, headers=headers, timeout=_TIMEOUT
+                    )
+                else:
+                    async with httpx.AsyncClient(
+                        timeout=_TIMEOUT, verify=self._settings.POWERBI_VERIFY_SSL
+                    ) as client:
+                        response = await client.delete(url, headers=headers)
+            except httpx.HTTPError as exc:
+                raise PowerBIUpstreamError(
+                    "Power BI API에 연결할 수 없습니다.", details={"url": url},
+                ) from exc
+            elapsed_ms = round((asyncio.get_event_loop().time() - started) * 1000, 1)
+
+            _log.info(
+                "powerbi_request",
+                method="DELETE",
+                url=url,
+                status_code=response.status_code,
+                elapsed_ms=elapsed_ms,
+                retry_count=retry_count,
+            )
+
+            if response.status_code < 400:
+                return
+
+            if response.status_code == 401:
+                if auth_retries < _MAX_AUTH_RETRIES:
+                    await self._token_service.invalidate()
+                    auth_retries += 1
+                    retry_count += 1
+                    continue
+                raise PowerBIAuthError(
+                    "Power BI 인증에 실패했습니다 (HTTP 401).", details={"url": url},
+                )
+
+            if response.status_code == 403:
+                raise PowerBIForbiddenError(
+                    "Power BI 리소스에 접근할 권한이 없습니다 (HTTP 403).", details={"url": url},
+                )
+
+            # 400 (e.g. MethodNotAllowed for a standard/non-cancellable refresh)
+            # and any other 4xx/5xx surface as a generic upstream error; the
+            # route layer decides the user-facing Korean message.
+            raise PowerBIUpstreamError(
+                f"Power BI 새로고침 취소가 실패했습니다 (HTTP {response.status_code}).",
+                details={"url": url, "http_status": response.status_code},
+            )
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
