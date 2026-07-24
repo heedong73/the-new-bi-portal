@@ -12,6 +12,23 @@ export interface UserListItem {
   roles: string[]
   groups?: { id: number; name: string }[]
   is_active: boolean
+  /** true면 관리자가 만든 로컬 계정(HR 미연동). */
+  is_local?: boolean
+}
+
+/** 로컬 사용자 생성 요청. login_id는 users.external_id로 저장되는 자유 문자열. */
+export interface LocalUserCreatePayload {
+  login_id: string
+  name: string
+  email?: string | null
+  password: string
+  role_code?: string
+}
+
+/** 로컬 사용자 이름·이메일 수정. */
+export interface LocalUserUpdatePayload {
+  name?: string
+  email?: string | null
 }
 
 /** 그룹. */
@@ -132,4 +149,60 @@ export interface GroupTreeNode {
 export interface GroupTreeResponse {
   tree: GroupTreeNode[]
   ungrouped: GroupResponse[]
+}
+
+/** 메뉴별 접근 주체 조회 항목('메뉴 관리' 탭). source=group이면 그룹 권한으로 얻은 사용자. */
+export interface MenuSubjectItem {
+  subject_type: 'user' | 'group'
+  subject_id: number
+  label: string
+  source: 'direct' | 'group'
+}
+
+/** 그룹의 허용 계열사(최상위 폴더) 스코프 항목. */
+export interface GroupCompanyScopeItem {
+  root_folder_id: number
+  root_folder_name: string
+}
+
+/** 그룹/역할에서 상속된 메뉴 접근(읽기 전용). */
+export interface InheritedMenuItem {
+  menu_key: string
+  label: string
+  source_type: 'role' | 'group'
+  source_label: string
+}
+
+/** 사용자에게 직접 부여된 레포트 권한(회수 가능). */
+export interface DirectReportPermission {
+  permission_id: number
+  report_id: number
+  report_name: string
+  folder_name?: string | null
+  permission: string
+}
+
+/** 그룹/역할/부서/계열사 스코프로 상속된 레포트 권한(읽기 전용). */
+export interface InheritedReportPermission {
+  report_id: number
+  report_name: string
+  folder_name?: string | null
+  permission: string
+  source_type: 'group' | 'role' | 'dept' | 'scope'
+  source_label: string
+}
+
+/** 개인별 권한 화면 — 한 사용자의 직접·상속 권한 총람. */
+export interface UserEffectivePermissions {
+  user_id: number
+  emp_no: string
+  name: string
+  department_name?: string | null
+  is_operator: boolean
+  roles: string[]
+  groups: { id: number; name: string }[]
+  direct_menu_keys: string[]
+  inherited_menus: InheritedMenuItem[]
+  direct_reports: DirectReportPermission[]
+  inherited_reports: InheritedReportPermission[]
 }

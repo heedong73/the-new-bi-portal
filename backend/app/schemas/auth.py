@@ -1,6 +1,8 @@
 """인증 도메인 I/O 스키마 (Pydantic v2)."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 class LoginRequest(BaseModel):
@@ -20,8 +22,12 @@ class UserSummary(BaseModel):
     name: str
     email: str | None = None
     department_id: int | None = None
+    department_name: str | None = None
     roles: list[str] = Field(default_factory=list)
     allowed_menus: list[str] = Field(default_factory=list)
+    # 직전 로그인 성공 시각(UTC). 이번 로그인으로 갱신되기 "전" 값을 보여준다
+    # (방금 로그인한 시각이 아니라 "마지막으로 접속했던 때"가 의미 있으므로).
+    last_login_at: datetime | None = None
 
 class LoginResponse(BaseModel):
     """로그인 성공 응답."""

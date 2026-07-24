@@ -48,7 +48,7 @@ PowerBIClientDep = Annotated[PowerBIClient, Depends(get_powerbi_client)]
 
 # ===== 인증/권한 의존성 (T-12) =====
 from fastapi import Cookie, Request
-from sqlalchemy import select
+from sqlalchemy import select, text
 from app.core.errors import UnauthenticatedError, PermissionDeniedError
 from app.core.constants import RoleCode, ALL_MENU_KEYS, ROLE_MENUS
 from app.models.auth import User, UserRole, Role
@@ -67,6 +67,35 @@ def _allowed_menus_for_roles(role_codes: list[str]) -> list[str]:
     return [k for k in ALL_MENU_KEYS if k in menus]
 
 
+async def _granted_menu_keys(db: AsyncSession, user_id: int) -> set[str]:
+    """사용자/소속 그룹에 개별 부여된 메뉴 권한(menu_permissions) 합집합.
+
+    권한 관리 개편(그룹 중심) — 역할 고정 매핑(ROLE_MENUS)에 더해 관리자가
+    그룹 또는 사용자 단위로 통계 등 메뉴 접근을 추가 부여할 수 있다.
+    """
+    rows = await db.execute(text(
+        """
+        SELECT menu_key FROM bip.menu_permissions
+        WHERE (subject_type = 'user' AND subject_id = :user_id)
+           OR (subject_type = 'group' AND subject_id IN (
+                  SELECT group_id FROM bip.user_group_members WHERE user_id = :user_id))
+        """
+    ), {"user_id": user_id})
+    return {r[0] for r in rows.all()}
+
+
+async def _compute_allowed_menus(db: AsyncSession, user_id: int, role_codes: list[str]) -> list[str]:
+    """role_codes(이미 조회된 역할)로부터 최종 메뉴 권한 합집합을 계산.
+
+    역할 고정 매핑 ∪ 사용자/그룹 개별 부여(menu_permissions). System_Operator는 항상 전체.
+    """
+    if RoleCode.SYSTEM_OPERATOR.value in role_codes:
+        return list(ALL_MENU_KEYS)
+    menus = set(_allowed_menus_for_roles(role_codes))
+    menus.update(await _granted_menu_keys(db, user_id))
+    return [k for k in ALL_MENU_KEYS if k in menus]
+
+
 async def allowed_menus_for_user(db: AsyncSession, user_id: int) -> list[str]:
     """user_id의 메뉴 권한 합집합 (로그인 응답 등에서 사용)."""
     codes = (await db.execute(
@@ -74,7 +103,7 @@ async def allowed_menus_for_user(db: AsyncSession, user_id: int) -> list[str]:
         .join(UserRole, UserRole.role_id == Role.id)
         .where(UserRole.user_id == user_id)
     )).scalars().all()
-    return _allowed_menus_for_roles(list(codes))
+    return await _compute_allowed_menus(db, user_id, list(codes))
 
 
 async def get_current_user(
@@ -100,6 +129,7 @@ async def get_current_user(
             "allowed_menus": list(ALL_MENU_KEYS),
             "is_active": True,
             "is_local_admin": True,
+            "last_login_at": session.get("last_login_at"),
         }
 
     user_id = session.get("user_id")
@@ -108,13 +138,13 @@ async def get_current_user(
         # 비활성/삭제된 사용자는 세션 거부
         raise UnauthenticatedError()
 
-    # 역할 조회 (code) + 메뉴 권한(코드 고정 매핑)
+    # 역할 조회 (code) + 메뉴 권한(코드 고정 매핑 ∪ 사용자/그룹 개별 부여)
     roles = list((await db.execute(
         select(Role.code)
         .join(UserRole, UserRole.role_id == Role.id)
         .where(UserRole.user_id == user_id)
     )).scalars().all())
-    allowed_menus = _allowed_menus_for_roles(roles)
+    allowed_menus = await _compute_allowed_menus(db, user_id, roles)
 
     return {
         "user_id": user.id,
@@ -123,6 +153,8 @@ async def get_current_user(
         "roles": roles,
         "allowed_menus": allowed_menus,
         "is_active": user.is_active,
+        # 세션 생성(로그인) 시점에 기록해 둔 "직전 접속" 시각(ISO 문자열, 없으면 None).
+        "last_login_at": session.get("last_login_at"),
     }
 
 CurrentUserDep = Annotated[dict, Depends(get_current_user)]

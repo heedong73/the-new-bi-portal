@@ -54,7 +54,32 @@ async def accessible_report_ids(
         """
     )
     rows = await db.execute(sql, {"action": action, "user_id": user_id})
-    return {r[0] for r in rows.all()}
+    ids = {r[0] for r in rows.all()}
+
+    # 그룹 "허용 계열사" 스코프 — VIEW만 자동 부여(권한 관리 개편, 확인사항 3).
+    # 계열사(최상위 폴더) 하위 전체 레포트에 대해 소속 그룹 기준으로 합산한다.
+    if action == PermissionAction.VIEW:
+        scope_rows = await db.execute(text(
+            """
+            WITH RECURSIVE scoped_folders AS (
+                SELECT gcs.root_folder_id AS folder_id
+                FROM bip.group_company_scopes gcs
+                WHERE gcs.group_id IN (
+                    SELECT group_id FROM bip.user_group_members WHERE user_id = :user_id
+                )
+                UNION ALL
+                -- 지정된 계열사(최상위 폴더) 하위 모든 폴더까지 재귀적으로 확장
+                SELECT rf.id
+                FROM bip.report_folders rf
+                JOIN scoped_folders sf ON rf.parent_id = sf.folder_id
+            )
+            SELECT DISTINCT r.id
+            FROM bip.reports r
+            JOIN scoped_folders sf ON r.folder_id = sf.folder_id
+            """
+        ), {"user_id": user_id})
+        ids.update(r[0] for r in scope_rows.all())
+    return ids
 
 async def has_permission(
     db: AsyncSession, user_id: int, report_id: int, action: str = PermissionAction.VIEW,

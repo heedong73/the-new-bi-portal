@@ -8,12 +8,15 @@ from sqlalchemy import text, bindparam
 
 from app.core.constants import AuditAction, RoleCode
 from app.core.deps import SessionDep, RedisDep, require_menu
-from app.core.errors import NotFoundError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.models.auth import User, Role, UserRole, Department
 from app.models.portal import UserGroup, UserGroupMember
-from app.schemas.user import UserListItem, UserGroupBrief, UserStatusUpdate
+from app.schemas.user import (
+    LocalUserCreate, LocalUserPasswordReset, LocalUserUpdate,
+    UserGroupBrief, UserListItem, UserStatusUpdate,
+)
 from app.services.audit_service import append_audit
-from app.services.auth import session_service
+from app.services.auth import local_user_auth, session_service
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -93,6 +96,7 @@ async def list_users(db: SessionDep, _operator=Depends(_require_operator)):
             roles=roles_by_user.get(u.id, []),
             groups=groups_by_user.get(u.id, []),
             is_active=u.is_active,
+            is_local=u.is_local,
         )
         for u in users
     ]
@@ -128,88 +132,179 @@ async def update_status(
     return UserListItem(
         id=user.id, emp_no=user.external_id, name=user.name, email=user.email,
         department_id=user.department_id, roles=await _roles_for(db, user.id),
-        is_active=user.is_active,
+        is_active=user.is_active, is_local=user.is_local,
     )
 
 
-@router.put("/{user_id}/group", status_code=204)
-async def set_user_group(
-    user_id: int, body: GroupAssignRequest, db: SessionDep, op=Depends(_require_operator),
+# 사용자 권한 그룹 단일 설정과 역할 레벨 설정은 org.py의
+# PUT /api/org/members/{emp_no}/role-level, POST/DELETE .../groups 로 제공한다
+# (사번 기준, 미등록자 자동 등록 지원). 이 파일에는 동일 기능을 중복 정의하지 않는다.
+
+
+# ===== 로컬 사용자 (그룹웨어 미연동 계정) =====
+
+_ALLOWED_LOCAL_ROLE_CODES = {RoleCode.GENERAL_USER.value, RoleCode.SYSTEM_OPERATOR.value}
+
+
+def _to_list_item(user: User, roles: list[str]) -> UserListItem:
+    return UserListItem(
+        id=user.id, emp_no=user.external_id, name=user.name, email=user.email,
+        department_id=user.department_id, roles=roles,
+        is_active=user.is_active, is_local=user.is_local,
+    )
+
+
+@router.post("/local", response_model=UserListItem, status_code=201)
+async def create_local_user(
+    body: LocalUserCreate,
+    db: SessionDep,
+    operator=Depends(_require_operator),
 ):
-    """사용자의 권한 그룹을 단일 값으로 설정(교체). group_id=None이면 해제."""
+    """관리자가 그룹웨어 미연동 로컬 계정을 생성한다(테스트/외부 인력용).
+
+    - login_id는 자유 문자열이며 users.external_id에 저장한다. HR 사번과 중복되지 않아야 한다.
+    - 부서는 항상 NULL(로컬 계정은 조직도에 소속되지 않는다).
+    - 초기 역할은 General_User 기본, System_Operator 가능. 이후 그룹/레포트 권한은
+      기존 관리 화면(권한 관리 > 그룹/개인별)에서 부여한다.
+    """
+    if body.role_code not in _ALLOWED_LOCAL_ROLE_CODES:
+        raise ValidationError("허용되지 않는 역할 코드입니다.")
+
+    login_id = body.login_id.strip()
+    if not login_id:
+        raise ValidationError("로그인 아이디는 비워둘 수 없습니다.")
+
+    duplicate = await db.scalar(select(User).where(User.external_id == login_id))
+    if duplicate is not None:
+        raise ConflictError("이미 사용 중인 아이디입니다. 다른 값을 입력하세요.")
+
+    user = User(
+        external_id=login_id, name=body.name.strip(),
+        email=(body.email or "").strip() or None,
+        department_id=None, is_active=True, is_local=True,
+        password_hash=local_user_auth.hash_password(body.password),
+    )
+    db.add(user)
+    await db.flush()
+
+    role = await db.scalar(select(Role).where(Role.code == body.role_code))
+    if role is None:
+        raise NotFoundError("역할을 찾을 수 없습니다.")
+    db.add(UserRole(user_id=user.id, role_id=role.id))
+
+    await append_audit(
+        db, action=AuditAction.ADMIN_SETTING_CHANGE, result="success",
+        actor_user_id=operator["user_id"], actor_label=operator["emp_no"],
+        resource_type="local_user", resource_id=str(user.id),
+        meta={"target": "local_user_create", "login_id": login_id, "role": body.role_code},
+    )
+    await db.commit()
+    return _to_list_item(user, [body.role_code])
+
+
+@router.patch("/local/{user_id}", response_model=UserListItem)
+async def update_local_user(
+    user_id: int,
+    body: LocalUserUpdate,
+    db: SessionDep,
+    operator=Depends(_require_operator),
+):
+    """로컬 사용자 이름·이메일 수정. HR 매핑 사용자는 403(인사 뷰가 소스)."""
     user = await db.scalar(select(User).where(User.id == user_id))
     if user is None:
         raise NotFoundError("사용자를 찾을 수 없습니다.")
+    if not user.is_local:
+        raise ValidationError("로컬 계정만 여기에서 수정할 수 있습니다.")
 
-    if body.group_id is not None:
-        group = await db.scalar(select(UserGroup).where(UserGroup.id == body.group_id))
-        if group is None:
-            raise NotFoundError("그룹을 찾을 수 없습니다.")
+    changed: dict[str, str | None] = {}
+    if body.name is not None and body.name.strip() and body.name.strip() != user.name:
+        user.name = body.name.strip()
+        changed["name"] = user.name
+    if body.email is not None:
+        cleaned = body.email.strip() or None
+        if cleaned != user.email:
+            user.email = cleaned
+            changed["email"] = cleaned
 
-    # 기존 그룹 전부 제거 후 단일 그룹 지정
-    await db.execute(delete(UserGroupMember).where(UserGroupMember.user_id == user_id))
-    if body.group_id is not None:
-        db.add(UserGroupMember(group_id=body.group_id, user_id=user_id))
+    if changed:
+        await db.flush()
+        await append_audit(
+            db, action=AuditAction.ADMIN_SETTING_CHANGE, result="success",
+            actor_user_id=operator["user_id"], actor_label=operator["emp_no"],
+            resource_type="local_user", resource_id=str(user_id),
+            meta={"target": "local_user_update", **changed},
+        )
+    await db.commit()
+    return _to_list_item(user, await _roles_for(db, user.id))
+
+
+@router.post("/local/{user_id}/password", status_code=204)
+async def reset_local_user_password(
+    user_id: int,
+    body: LocalUserPasswordReset,
+    db: SessionDep,
+    redis: RedisDep,
+    operator=Depends(_require_operator),
+):
+    """로컬 사용자 비밀번호를 새 값으로 교체한다.
+
+    보안상 재설정 즉시 해당 사용자의 모든 세션을 무효화한다(다음 접속 시 재로그인 강제).
+    """
+    user = await db.scalar(select(User).where(User.id == user_id))
+    if user is None:
+        raise NotFoundError("사용자를 찾을 수 없습니다.")
+    if not user.is_local:
+        raise ValidationError("로컬 계정만 비밀번호를 재설정할 수 있습니다.")
+
+    user.password_hash = local_user_auth.hash_password(body.password)
     await db.flush()
+    # 잠금 초기화 + 세션 무효화
+    await session_service.destroy_user_sessions(redis, user_id)
+
     await append_audit(
-        db, action=AuditAction.GROUP_CHANGE, result="success",
-        actor_user_id=op["user_id"], actor_label=op["emp_no"],
-        resource_type="user", resource_id=str(user_id),
-        meta={"target": "set_group", "group_id": body.group_id},
+        db, action=AuditAction.ADMIN_SETTING_CHANGE, result="success",
+        actor_user_id=operator["user_id"], actor_label=operator["emp_no"],
+        resource_type="local_user", resource_id=str(user_id),
+        meta={"target": "local_user_password_reset"},
     )
     await db.commit()
 
 
-@router.put("/{user_id}/role-level", status_code=204)
-async def set_role_level(
-    user_id: int, body: RoleLevelRequest, db: SessionDep, op=Depends(_require_operator),
+@router.delete("/local/{user_id}", status_code=204)
+async def delete_local_user(
+    user_id: int,
+    db: SessionDep,
+    redis: RedisDep,
+    operator=Depends(_require_operator),
 ):
-    """사용자 역할 레벨 설정. General_User는 항상 유지하고 상위 역할만 교체한다.
+    """로컬 사용자 삭제. 그룹 멤버십·역할·부여 권한도 함께 정리한다.
 
-    - General_User: 상위 역할(Super_User/System_Operator) 제거
-    - Super_User: General_User + Super_User (System_Operator 제거)
-    - System_Operator: General_User + System_Operator (Super_User 제거)
+    HR 매핑 사용자는 인사 뷰가 소스라 여기서 삭제할 수 없다(비활성화만 허용).
     """
-    if body.role_code not in _ROLE_LEVELS:
-        raise ValidationError("허용되지 않은 역할입니다.")
-
     user = await db.scalar(select(User).where(User.id == user_id))
     if user is None:
         raise NotFoundError("사용자를 찾을 수 없습니다.")
+    if not user.is_local:
+        raise ValidationError("로컬 계정만 삭제할 수 있습니다. 그룹웨어 사용자는 비활성화로 처리하세요.")
 
-    roles = {
-        r.code: r.id
-        for r in (await db.execute(select(Role))).scalars().all()
-    }
-    # 목표 역할 집합
-    target = {RoleCode.GENERAL_USER.value}
-    if body.role_code == RoleCode.SUPER_USER.value:
-        target.add(RoleCode.SUPER_USER.value)
-    elif body.role_code == RoleCode.SYSTEM_OPERATOR.value:
-        target.add(RoleCode.SYSTEM_OPERATOR.value)
+    login_id = user.external_id
+    # 참조 정리: 역할, 그룹 멤버십(다형 FK가 없는 menu_permissions/report_permissions는 그대로 두고,
+    # 조회 시점에 사용자 존재 검증). ReportFavorite/UserReportActivity는 cascade 설정됨.
+    await db.execute(text("DELETE FROM bip.user_roles WHERE user_id = :uid"), {"uid": user_id})
+    await db.execute(text("DELETE FROM bip.user_group_members WHERE user_id = :uid"), {"uid": user_id})
+    await db.execute(text(
+        "DELETE FROM bip.menu_permissions WHERE subject_type = 'user' AND subject_id = :uid"
+    ), {"uid": user_id})
+    await db.execute(text(
+        "DELETE FROM bip.report_permissions WHERE subject_type = 'user' AND subject_id = :uid"
+    ), {"uid": user_id})
+    await db.delete(user)
+    await session_service.destroy_user_sessions(redis, user_id)
 
-    current = {
-        code
-        for (code,) in (await db.execute(
-            select(Role.code).join(UserRole, UserRole.role_id == Role.id)
-            .where(UserRole.user_id == user_id)
-        )).all()
-    }
-    # 추가
-    for code in target - current:
-        if code in roles:
-            db.add(UserRole(user_id=user_id, role_id=roles[code]))
-    # 제거 (목표에 없는 관리 역할)
-    for code in (current - target) & _ROLE_LEVELS:
-        if code in roles:
-            await db.execute(delete(UserRole).where(
-                UserRole.user_id == user_id, UserRole.role_id == roles[code]
-            ))
-    await db.flush()
     await append_audit(
-        db, action=AuditAction.PERMISSION_CHANGE, result="success",
-        actor_user_id=op["user_id"], actor_label=op["emp_no"],
-        resource_type="user_role", resource_id=str(user_id),
-        meta={"target": "set_role_level", "role_code": body.role_code},
+        db, action=AuditAction.ADMIN_SETTING_CHANGE, result="success",
+        actor_user_id=operator["user_id"], actor_label=operator["emp_no"],
+        resource_type="local_user", resource_id=str(user_id),
+        meta={"target": "local_user_delete", "login_id": login_id},
     )
     await db.commit()

@@ -7,8 +7,11 @@ export interface UserSummary {
   name: string
   email?: string | null
   department_id?: number | null
+  department_name?: string | null
   roles: string[]
   allowed_menus?: string[]
+  /** 직전 로그인 성공 시각(UTC ISO). 최초 로그인이면 null. */
+  last_login_at?: string | null
 }
 
 /** 로그인 성공 응답. */

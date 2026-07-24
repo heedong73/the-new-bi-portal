@@ -7,6 +7,7 @@ import { authApi } from '@/api/authApi'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { visibleAdminSections } from '@/routes/admin/adminNav'
 import BackgroundTaskDock from '@/components/BackgroundTaskDock'
+import { formatLastLogin, userRoleLabel } from '@/utils/user'
 
 export default function AdminConsoleLayout() {
   const navigate = useNavigate()
@@ -14,8 +15,10 @@ export default function AdminConsoleLayout() {
   const user = useAuthStore((s) => s.user)
   const clear = useAuthStore((s) => s.clear)
 
-  const isOperator = (user?.roles ?? []).includes('System_Operator')
+  const roles = user?.roles ?? []
+  const isOperator = roles.includes('System_Operator')
   const sections = visibleAdminSections(isOperator, user?.allowed_menus ?? [])
+  const lastLoginLabel = formatLastLogin(user?.last_login_at)
 
   const logoutMutation = useMutation({
     mutationFn: authApi.logout,
@@ -39,13 +42,6 @@ export default function AdminConsoleLayout() {
               <span className="editorial-brand-title mt-1 block">관리자 콘솔</span>
             </div>
           </div>
-          <Link
-            to="/"
-            className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 transition hover:text-blue-700"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            사용자 화면으로
-          </Link>
         </div>
 
         <nav className="editorial-nav flex-1 overflow-y-auto">
@@ -84,9 +80,19 @@ export default function AdminConsoleLayout() {
             사용자 화면으로
           </Link>
           <div className="flex items-center gap-4">
-            <div className="editorial-user text-right">
+            {lastLoginLabel && (
+              <span className="editorial-user__last-login shrink-0 text-xs text-slate-400">
+                마지막 접속 {lastLoginLabel}
+              </span>
+            )}
+            <div
+              className="editorial-user text-right"
+              title={`${user?.name ?? '-'} / ${userRoleLabel(roles)}, ${user?.department_name?.trim() || '팀 미지정'}`}
+            >
               <div className="editorial-user__name">{user?.name ?? '-'}</div>
-              <div className="editorial-user__meta">{user?.emp_no}</div>
+              <div className="editorial-user__meta">
+                {userRoleLabel(roles)}, {user?.department_name?.trim() || '팀 미지정'}
+              </div>
             </div>
             <button
               type="button"

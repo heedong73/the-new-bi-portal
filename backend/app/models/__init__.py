@@ -1,6 +1,9 @@
 from app.models.auth import Department, User, Role, UserRole, LocalAdmin
 from app.models.portal import UserGroup, UserGroupMember
-from app.models.report import Workspace, ReportFolder, Dataset, Report, ReportPermission, ReportFavorite
+from app.models.report import (
+    Workspace, ReportFolder, Dataset, Report, ReportPermission, ReportFavorite,
+    UserReportActivity, ReportViewDailyStat,
+)
 from app.models.refresh import RefreshRun, RefreshSchedule
 from app.models.mail import (
     MailSchedule,
@@ -17,6 +20,7 @@ __all__ = [
     "Department", "User", "Role", "UserRole", "LocalAdmin",
     "UserGroup", "UserGroupMember",
     "Workspace", "ReportFolder", "Dataset", "Report", "ReportPermission", "ReportFavorite",
+    "UserReportActivity", "ReportViewDailyStat",
     "RefreshRun", "RefreshSchedule",
     "MailSchedule", "MailRecipient", "MailSchedulePage",
     "MailJob", "ExportJob", "ReportImagePath",

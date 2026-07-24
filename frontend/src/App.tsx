@@ -11,8 +11,10 @@ import HomePage from '@/routes/HomePage'
 import ReportViewPage from '@/routes/ReportViewPage'
 import UsersPage from '@/routes/admin/UsersPage'
 import GroupsPage from '@/routes/admin/GroupsPage'
+import PermissionsPage from '@/routes/admin/PermissionsPage'
 import ReportsPage from '@/routes/admin/ReportsPage'
 import HolidaysPage from '@/routes/admin/HolidaysPage'
+import AuditLogsPage from '@/routes/admin/AuditLogsPage'
 import StatsDashboardPage from '@/routes/stats/StatsDashboardPage'
 import OpsStatusPage from '@/routes/monitoring/OpsStatusPage'
 import MailSchedulePage from '@/routes/mail/MailSchedulePage'
@@ -35,7 +37,11 @@ function App() {
             <Route element={<AuthGuard />}>
               {/* 사용자 포털 */}
               <Route element={<AppLayout />}>
-                <Route path="/" element={<HomePage />} />
+                <Route path="/" element={<Navigate to="/reports" replace />} />
+                <Route path="/reports" element={<HomePage />} />
+                <Route path="/reports/favorites" element={<HomePage />} />
+                <Route path="/reports/recent" element={<HomePage />} />
+                <Route path="/reports/catalog" element={<HomePage />} />
                 <Route path="/reports/:reportId" element={<ReportViewPage />} />
                 <Route path="/stats" element={<StatsDashboardPage />} />
                 <Route path="/service-center" element={<ServiceCenterPage />} />
@@ -47,7 +53,9 @@ function App() {
                 <Route path="/admin/reports" element={<ReportsPage />} />
                 <Route path="/admin/users" element={<UsersPage />} />
                 <Route path="/admin/groups" element={<GroupsPage />} />
+                <Route path="/admin/permissions" element={<PermissionsPage />} />
                 <Route path="/admin/holidays" element={<HolidaysPage />} />
+                <Route path="/admin/audit-logs" element={<AuditLogsPage />} />
                 <Route path="/admin/requests" element={<RequestAdminPage />} />
                 <Route path="/mail/schedules" element={<MailSchedulePage />} />
                 <Route path="/mail/jobs" element={<MailJobHistoryPage />} />

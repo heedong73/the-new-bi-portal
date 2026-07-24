@@ -7,7 +7,6 @@ from app.core.constants import RoleCode
 
 ROLES = [
     (RoleCode.GENERAL_USER, "일반 사용자"),
-    (RoleCode.SUPER_USER, "수퍼 사용자"),
     (RoleCode.SYSTEM_OPERATOR, "시스템 운영자"),
 ]
 

@@ -1,5 +1,7 @@
 from datetime import datetime
-from sqlalchemy import String, Boolean, BigInteger, ForeignKey, UniqueConstraint, func
+from datetime import datetime
+
+from sqlalchemy import String, Boolean, BigInteger, DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
@@ -28,6 +30,13 @@ class User(Base):
         BigInteger, ForeignKey(f"{SCHEMA}.departments.id"), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # 로컬 계정(관리자가 직접 만든 계정)이면 True. HR에서 매핑된 임직원은 False.
+    # 로컬 계정은 password_hash를 채우고 HR 뷰를 조회하지 않는다.
+    is_local: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 로컬 계정 argon2id 해시. HR 매핑 사용자는 NULL.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 마지막 로그인 성공 시각(UTC). 로그인 화면 우측 상단 사용자 정보에 노출한다.
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False
@@ -68,4 +77,5 @@ class LocalAdmin(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

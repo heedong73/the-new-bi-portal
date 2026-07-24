@@ -1,16 +1,21 @@
 /** 관리자 API 래퍼 — users / groups / roles (System_Operator 전용). */
 import apiClient, { request } from '@/api/client'
 import type {
+  GroupCompanyScopeItem,
   GroupMemberItem,
   GroupResponse,
   GroupTreeResponse,
   Holiday,
   HolidayCreate,
+  LocalUserCreatePayload,
+  LocalUserUpdatePayload,
+  MenuSubjectItem,
   OrgCompany,
   OrgMember,
   OrgNode,
   RoleResponse,
   TeamGroupSyncResult,
+  UserEffectivePermissions,
   UserListItem,
 } from '@/types/admin'
 
@@ -34,6 +39,19 @@ export const usersApi = {
     request<void>(`/api/users/${userId}/roles/${encodeURIComponent(roleCode)}`, {
       method: 'DELETE',
     }),
+
+  /** POST /api/users/local — 로컬 사용자 생성(관리자 전용). */
+  createLocal: (body: LocalUserCreatePayload) =>
+    apiClient.post<UserListItem>('/api/users/local', body),
+  /** PATCH /api/users/local/{id} — 로컬 사용자 이름/이메일 수정. */
+  updateLocal: (userId: number, body: LocalUserUpdatePayload) =>
+    request<UserListItem>(`/api/users/local/${userId}`, { method: 'PATCH', body }),
+  /** POST /api/users/local/{id}/password — 로컬 사용자 비밀번호 재설정. */
+  resetLocalPassword: (userId: number, password: string) =>
+    apiClient.post<void>(`/api/users/local/${userId}/password`, { password }),
+  /** DELETE /api/users/local/{id} — 로컬 사용자 완전 삭제. */
+  removeLocal: (userId: number) =>
+    request<void>(`/api/users/local/${userId}`, { method: 'DELETE' }),
 }
 
 export const orgApi = {
@@ -89,6 +107,37 @@ export const groupsApi = {
 
 export const rolesApi = {
   list: (signal?: AbortSignal) => apiClient.get<RoleResponse[]>('/api/roles', { signal }),
+}
+
+/** 권한 관리(개편) API — 그룹/사용자 메뉴 권한, 그룹 허용 계열사, 주체 우선 레포트 다중 부여. */
+export const permissionAdminApi = {
+  /** GET /api/permission-admin/menu-permissions/{subject_type}/{subject_id} — 부여된 메뉴 키 목록. */
+  getMenuPermissions: (subjectType: 'user' | 'group', subjectId: number, signal?: AbortSignal) =>
+    apiClient.get<string[]>(`/api/permission-admin/menu-permissions/${subjectType}/${subjectId}`, { signal }),
+  /** PUT /api/permission-admin/menu-permissions/{subject_type}/{subject_id} — 전체 교체(멱등). */
+  setMenuPermissions: (subjectType: 'user' | 'group', subjectId: number, menuKeys: string[]) =>
+    apiClient.put<string[]>(`/api/permission-admin/menu-permissions/${subjectType}/${subjectId}`, { menu_keys: menuKeys }),
+  /** GET /api/permission-admin/menu-permissions/by-menu/{menu_key} — 메뉴별 접근 주체. */
+  subjectsForMenu: (menuKey: string, signal?: AbortSignal) =>
+    apiClient.get<MenuSubjectItem[]>(`/api/permission-admin/menu-permissions/by-menu/${menuKey}`, { signal }),
+  /** GET /api/permission-admin/groups/{group_id}/company-scopes — 그룹 허용 계열사 목록. */
+  getCompanyScopes: (groupId: number, signal?: AbortSignal) =>
+    apiClient.get<GroupCompanyScopeItem[]>(`/api/permission-admin/groups/${groupId}/company-scopes`, { signal }),
+  /** PUT /api/permission-admin/groups/{group_id}/company-scopes — 전체 교체(멱등). */
+  setCompanyScopes: (groupId: number, rootFolderIds: number[]) =>
+    apiClient.put<GroupCompanyScopeItem[]>(`/api/permission-admin/groups/${groupId}/company-scopes`, {
+      root_folder_ids: rootFolderIds,
+    }),
+  /** POST /api/permission-admin/report-permissions/bulk-grant — 주체 우선 레포트 다중 권한 부여(멱등). */
+  bulkGrantReportPermissions: (body: {
+    subject_type: 'user' | 'group'
+    subject_id: number
+    report_ids: number[]
+    permissions: string[]
+  }) => apiClient.post<number>('/api/permission-admin/report-permissions/bulk-grant', body),
+  /** GET /api/permission-admin/users/{user_id}/effective-permissions — 사용자의 직접·상속 권한 총람. */
+  userEffectivePermissions: (userId: number, signal?: AbortSignal) =>
+    apiClient.get<UserEffectivePermissions>(`/api/permission-admin/users/${userId}/effective-permissions`, { signal }),
 }
 
 export const holidaysApi = {

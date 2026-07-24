@@ -38,7 +38,7 @@ class OrgMember(BaseModel):
     registered: bool = False
     user_id: int | None = None
     is_active: bool | None = None
-    role_level: str | None = None  # General_User / Super_User / System_Operator
+    role_level: str | None = None  # General_User / System_Operator
     groups: list[GroupRef] = []
 
 
@@ -48,7 +48,7 @@ class GroupAddRequest(BaseModel):
 
 
 class RoleLevelRequest(BaseModel):
-    """역할 레벨 설정 (General_User / Super_User / System_Operator)."""
+    """역할 레벨 설정 (General_User / System_Operator)."""
     role_code: str
 
 

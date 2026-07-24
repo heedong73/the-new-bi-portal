@@ -3,7 +3,6 @@ from enum import StrEnum
 
 class RoleCode(StrEnum):
     GENERAL_USER = "General_User"
-    SUPER_USER = "Super_User"
     SYSTEM_OPERATOR = "System_Operator"
 
 
@@ -19,6 +18,7 @@ class MenuKey(StrEnum):
     ADMIN_USERS = "admin_users"            # 관리자-사용자
     ADMIN_GROUPS = "admin_groups"          # 관리자-그룹
     ADMIN_HOLIDAYS = "admin_holidays"      # 관리자-공휴일
+    AUDIT_LOGS = "audit_logs"              # 관리자-감사 로그(시스템 사용자 활동 이력)
 
 
 # 메뉴 카탈로그 (키 → 표시명). 프론트 노출 순서.
@@ -33,15 +33,17 @@ MENU_CATALOG: list[tuple[str, str]] = [
     (MenuKey.ADMIN_USERS, "관리자 · 사용자"),
     (MenuKey.ADMIN_GROUPS, "관리자 · 그룹"),
     (MenuKey.ADMIN_HOLIDAYS, "관리자 · 공휴일"),
+    (MenuKey.AUDIT_LOGS, "관리자 · 감사 로그"),
 ]
 
 ALL_MENU_KEYS: list[str] = [k for k, _ in MENU_CATALOG]
 
 # 역할 → 메뉴 접근 권한 (코드 고정 매핑, 편집 불가). System_Operator는 항상 전체.
 # 서비스 센터는 메뉴 권한 대상이 아니라 로그인한 모든 사용자에게 노출된다.
+# 통계 등 General_User 기본값 밖의 메뉴는 관리자가 menu_permissions로
+# 그룹/사용자 단위 추가 부여한다(권한 관리 개편 — 확인사항 2).
 ROLE_MENUS: dict[str, list[str]] = {
     RoleCode.GENERAL_USER: [MenuKey.HOME],
-    RoleCode.SUPER_USER: [MenuKey.HOME, MenuKey.STATS],
     RoleCode.SYSTEM_OPERATOR: list(ALL_MENU_KEYS),
 }
 
@@ -51,7 +53,7 @@ class PermissionAction(StrEnum):
     DOWNLOAD = "DOWNLOAD"
     REFRESH = "REFRESH"
     MANAGE_REPORT = "MANAGE_REPORT"
-    VIEW_STATS = "VIEW_STATS"  # 레포트별 통계 조회 권한 (Super_User, 관리자 부여)
+    VIEW_STATS = "VIEW_STATS"  # 레포트별 통계 조회 권한 (레포트 작성자 자동 부여, 관리자 부여/회수)
 
 
 class SubjectType(StrEnum):
@@ -104,6 +106,7 @@ class AuditAction(StrEnum):
     REQUEST_CREATE = "request_create"
     REQUEST_UPDATE = "request_update"
     REQUEST_COMMENT = "request_comment"
+    STATS_VIEW = "stats_view"
 
 
 class RecipientType(StrEnum):

@@ -31,7 +31,6 @@ const USERS: UserListItem[] = [
 ]
 const ROLES: RoleResponse[] = [
   { id: 1, code: 'General_User', name: '일반 사용자' },
-  { id: 2, code: 'Super_User', name: '슈퍼 유저' },
   { id: 3, code: 'System_Operator', name: '시스템 운영자' },
 ]
 const GROUPS: GroupResponse[] = [{ id: 5, name: '영업팀', description: null }]
@@ -86,7 +85,9 @@ describe('UsersPage', () => {
     expect(await screen.findByText('홍길동')).toBeInTheDocument()
     expect(screen.getByText('김영희')).toBeInTheDocument()
     // 미등록자(김영희)에게 그룹 추가 → emp_no 기준 자동등록+부여
-    fireEvent.change(screen.getByLabelText('1002 권한 그룹 추가'), { target: { value: '5' } })
+    // 검색형 GroupPicker: 입력을 열고 옵션을 선택한다.
+    fireEvent.click(screen.getByLabelText('1002 권한 그룹 추가'))
+    fireEvent.click(await screen.findByRole('option', { name: '영업팀' }))
     await waitFor(() => expect(orgApi.addGroup).toHaveBeenCalledWith('1002', 5))
   })
 
@@ -112,9 +113,9 @@ describe('GroupsPage', () => {
     await waitFor(() => expect(groupsApi.removeMember).toHaveBeenCalledWith(5, 1))
   })
 
-  it('새 그룹을 생성한다', async () => {
+  it('수동 그룹을 생성한다', async () => {
     wrap(<GroupsPage />)
-    fireEvent.change(await screen.findByLabelText('새 그룹 이름'), { target: { value: '신규' } })
+    fireEvent.change(await screen.findByLabelText('수동 그룹 만들기'), { target: { value: '신규' } })
     fireEvent.click(screen.getByRole('button', { name: /추가/ }))
     await waitFor(() => expect(groupsApi.create).toHaveBeenCalledWith('신규'))
   })

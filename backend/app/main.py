@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.logging import setup_logging, get_logger
 from app.core.errors import BIPError, bip_error_handler, unhandled_error_handler
+from app.core.http_utils import request_context_middleware
 from app.api.routes import auth as auth_routes
 from app.api.routes import users as users_routes
 from app.api.routes import groups as groups_routes
@@ -22,6 +23,7 @@ from app.api.routes import holidays as holidays_routes
 from app.api.routes import report_images as report_images_routes
 from app.api.routes import org as org_routes
 from app.api.routes import requests as requests_routes
+from app.api.routes import permissions_admin as permissions_admin_routes
 
 
 logger = get_logger(__name__)
@@ -50,6 +52,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 감사 로그(audit_logs.ip_address) 기록용 클라이언트 IP를 요청 스코프에 저장.
+app.middleware("http")(request_context_middleware)
+
 app.include_router(auth_routes.router)
 app.include_router(users_routes.router)
 app.include_router(groups_routes.router)
@@ -68,3 +73,4 @@ app.include_router(holidays_routes.router)
 app.include_router(report_images_routes.router)
 app.include_router(org_routes.router)
 app.include_router(requests_routes.router)
+app.include_router(permissions_admin_routes.router)

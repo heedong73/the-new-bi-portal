@@ -4,8 +4,8 @@
  * URL은 기존 그대로 유지(/admin/*, /mail/*, /monitoring/*).
  */
 import {
-  FileBarChart, Users, UsersRound,
-  CalendarClock, Mail, CalendarOff, RefreshCw, Activity, Inbox,
+  FileBarChart, Users, UsersRound, ShieldCheck,
+  CalendarClock, Mail, CalendarOff, RefreshCw, Activity, Inbox, History,
 } from 'lucide-react'
 
 export interface AdminItem {
@@ -33,6 +33,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     items: [
       { to: '/admin/users', label: '사용자', Icon: Users, menu: 'admin_users', desc: '사용자 조회·역할 부여' },
       { to: '/admin/groups', label: '그룹', Icon: UsersRound, menu: 'admin_groups', desc: '권한 그룹 관리' },
+      { to: '/admin/permissions', label: '권한 관리', Icon: ShieldCheck, menu: 'admin_groups', desc: '그룹별 메뉴·계열사·레포트 권한' },
     ],
   },
   {
@@ -48,6 +49,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     items: [
       { to: '/monitoring/refresh', label: 'Refresh 현황', Icon: RefreshCw, menu: 'monitoring_refresh', desc: '새로고침 실행 현황' },
       { to: '/monitoring/ops', label: '운영 상태', Icon: Activity, menu: 'monitoring_ops', desc: 'DB·Redis·워커 상태' },
+      { to: '/admin/audit-logs', label: '감사 로그', Icon: History, menu: 'audit_logs', desc: '시스템 사용자 활동 이력' },
     ],
   },
   {

@@ -60,16 +60,16 @@ async def test_minimum_general_role_preserved(db):
     db.add(UserRole(user_id=user.id, role_id=general.id))
     await db.flush()
 
-    # Super_User 부여 후 회수 (General은 건드리지 않는 정책)
-    super_role = await db.scalar(select(Role).where(Role.code == RoleCode.SUPER_USER))
-    db.add(UserRole(user_id=user.id, role_id=super_role.id))
+    # System_Operator 부여 후 회수 (General은 건드리지 않는 정책)
+    operator_role = await db.scalar(select(Role).where(Role.code == RoleCode.SYSTEM_OPERATOR))
+    db.add(UserRole(user_id=user.id, role_id=operator_role.id))
     await db.flush()
 
-    # Super_User 회수
+    # System_Operator 회수
     from sqlalchemy import delete
     await db.execute(
         delete(UserRole).where(
-            UserRole.user_id == user.id, UserRole.role_id == super_role.id
+            UserRole.user_id == user.id, UserRole.role_id == operator_role.id
         )
     )
     await db.flush()

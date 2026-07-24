@@ -6,6 +6,7 @@ import { Plus, X } from 'lucide-react'
 import { reportAdminApi } from '@/api/reportAdminApi'
 import { usersApi, groupsApi } from '@/api/adminApi'
 import type { PermissionAction, ReportPermission, SubjectType } from '@/types/reportAdmin'
+import { GroupPicker, UserPicker } from './EntityPicker'
 
 const SUBJECT_TYPES: { value: SubjectType; label: string }[] = [
   { value: 'user', label: '사용자' },
@@ -93,7 +94,7 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <h4 className="mb-3 text-sm font-semibold text-slate-700">권한 부여</h4>
+      <h4 className="mb-3 text-sm font-bold text-slate-700">권한 부여</h4>
 
       {/* 부여 폼 */}
       <div className="mb-3 flex flex-wrap items-end gap-2">
@@ -103,17 +104,23 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
         </select>
 
         {subjectType === 'user' ? (
-          <select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} aria-label="사용자 선택"
-            className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm min-w-44">
-            <option value="">사용자 선택…</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.emp_no})</option>)}
-          </select>
+          <UserPicker
+            users={users}
+            value={subjectId === '' ? null : Number(subjectId)}
+            onChange={(id) => setSubjectId(id === null ? '' : String(id))}
+            loading={usersQuery.isLoading}
+            ariaLabel="사용자 선택"
+            className="min-w-56"
+          />
         ) : subjectType === 'group' ? (
-          <select value={subjectId} onChange={(e) => setSubjectId(e.target.value)} aria-label="그룹 선택"
-            className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm min-w-44">
-            <option value="">그룹 선택…</option>
-            {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
+          <GroupPicker
+            groups={groups}
+            value={subjectId === '' ? null : Number(subjectId)}
+            onChange={(id) => setSubjectId(id === null ? '' : String(id))}
+            loading={groupsQuery.isLoading}
+            ariaLabel="그룹 선택"
+            className="min-w-56"
+          />
         ) : (
           <input value={subjectId} onChange={(e) => setSubjectId(e.target.value)} type="number"
             placeholder={subjectType === 'dept' ? '부서 ID' : '역할 ID'} aria-label="주체 ID"
