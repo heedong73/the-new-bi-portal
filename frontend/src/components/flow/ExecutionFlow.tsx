@@ -123,7 +123,7 @@ function ExecutionFlowImpl({ runs }: ExecutionFlowProps) {
       aria-label={ko.flow.title}
     >
       <header className="border-b border-slate-100 px-3 py-2.5">
-        <h2 className="text-sm font-semibold text-slate-700">{ko.flow.title}</h2>
+        <h2 className="text-sm font-bold text-slate-700">{ko.flow.title}</h2>
       </header>
 
       {sortedRuns.length === 0 ? (

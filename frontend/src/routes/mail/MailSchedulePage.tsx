@@ -252,7 +252,7 @@ export default function MailSchedulePage() {
   return (
     <div>
       <div className="mb-5 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-800">메일 스케줄</h1>
+        <h1 className="portal-content-page-title">메일 스케줄</h1>
         <button type="button" onClick={openNew}
           className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500">
           <Plus className="h-4 w-4" /> 새 스케줄
@@ -306,7 +306,7 @@ export default function MailSchedulePage() {
         <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
           <div className="my-8 w-full max-w-7xl rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-800">
+              <h2 className="text-lg font-bold text-slate-800">
                 {editingId === 'new' ? '새 메일 스케줄' : '메일 스케줄 수정'}
               </h2>
               <button type="button" aria-label="닫기" onClick={() => setEditingId(null)} className="text-slate-400 hover:text-slate-600">
@@ -609,7 +609,7 @@ export default function MailSchedulePage() {
       {confirmDelete && (
         <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
-            <h2 className="text-base font-semibold text-slate-800">메일 스케줄 삭제</h2>
+            <h2 className="text-lg font-bold text-slate-800">메일 스케줄 삭제</h2>
             <p className="mt-2 text-sm text-slate-600">
               '<span className="font-medium text-slate-800">{confirmDelete.title}</span>' 스케줄을 삭제할까요?
             </p>

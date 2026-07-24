@@ -60,7 +60,7 @@ export default function HolidaysPage() {
   return (
     <section>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-slate-800">공휴일 관리</h2>
+        <h2 className="portal-content-page-title">공휴일 관리</h2>
         <div className="flex items-center gap-2">
           <select
             value={year}

@@ -129,7 +129,7 @@ async def get_overview(
     db: AsyncSession, from_dt: datetime | None, to_dt: datetime | None,
     report_ids: set[int] | None = None,
 ) -> dict:
-    """기본 운영 통계 (R18.1). report_ids 지정 시(Super_User) 해당 레포트 조회수만,
+    """기본 운영 통계 (R18.1). report_ids 지정 시(운영자가 아닌 사용자) 해당 레포트 조회수만,
     시스템 전역 지표(로그인/새로고침/메일/실패Job)는 숨긴다."""
     nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
     af, at = _as_aware_utc(from_dt), _as_aware_utc(to_dt)
@@ -148,7 +148,7 @@ async def get_overview(
             stmt = stmt.where(Report.created_at <= nt)
         return stmt
 
-    # 스코프(Super_User VIEW_STATS 또는 운영자 계열사 필터): 조회 기준 지표만 노출.
+    # 스코프(VIEW_STATS 부여분 또는 운영자 계열사 필터): 조회 기준 지표만 노출.
     if report_ids is not None:
         scope_str = {str(i) for i in report_ids}
         if not scope_str:
@@ -276,7 +276,7 @@ async def get_usage(
     db: AsyncSession, from_dt: datetime | None, to_dt: datetime | None,
     report_ids: set[int] | None = None,
 ) -> dict:
-    """사용 통계 (R18.2). report_ids 지정 시(Super_User) 부여된 레포트로 스코프하고
+    """사용 통계 (R18.2). report_ids 지정 시(운영자가 아닌 사용자) 부여된 레포트로 스코프하고
     시스템 전역 섹션(메일/Export/Refresh실패)은 제외한다."""
     nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
     scoped = report_ids is not None
@@ -373,7 +373,7 @@ async def get_usage(
         for h in range(24)
     ]
 
-    # Super_User: 부여 레포트 사용 통계만, 시스템 전역 섹션 제외
+    # 운영자가 아닌 사용자: 부여 레포트 사용 통계만, 시스템 전역 섹션 제외
     if scoped:
         return {
             "scoped": True,
@@ -458,7 +458,7 @@ async def _attach_user_names(db: AsyncSession, rows) -> list[dict]:
 
 async def _unused_reports(db: AsyncSession, report_ids: set[int] | None = None) -> list[dict]:
     """UNUSED_REPORT_DAYS 동안 report_view 이력이 없는 공개 리포트 목록.
-    report_ids 지정 시 해당 레포트로 한정(Super_User)."""
+    report_ids 지정 시 해당 레포트로 한정(운영자가 아닌 사용자)."""
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
         days=settings.UNUSED_REPORT_DAYS
     )

@@ -36,7 +36,7 @@ export default function LongestRunCard({ runs, topN = 5 }: LongestRunCardProps) 
 
   return (
     <div className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-bold text-slate-700">
         <Timer className="text-indigo-500" size={16} aria-hidden="true" />
         {ko.charts.longestRunTop}
       </h3>

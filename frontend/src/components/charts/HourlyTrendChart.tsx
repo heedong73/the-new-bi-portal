@@ -98,7 +98,7 @@ export default function HourlyTrendChart({ runs, height = 280 }: HourlyTrendChar
 
   return (
     <div className="flex flex-col rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 text-sm font-semibold text-slate-700">
+      <h3 className="mb-3 text-sm font-bold text-slate-700">
         {ko.charts.hourlyTrend} <span className="text-xs font-normal text-slate-400">(30분 단위)</span>
       </h3>
       {!hasAny ? (

@@ -36,7 +36,7 @@ export default function OpsStatusPage() {
 
   return (
     <div>
-      <h1 className="mb-5 text-xl font-bold text-slate-800">운영 상태</h1>
+      <h1 className="portal-content-page-title portal-content-page-title--mb-5">운영 상태</h1>
 
       {statusQuery.isLoading || !s ? (
         <p className="text-sm text-slate-400">상태 확인 중…</p>
@@ -68,7 +68,7 @@ export default function OpsStatusPage() {
               const jobs = s.recent_jobs[kind]
               return (
                 <div key={kind} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <h3 className="mb-3 text-sm font-semibold text-slate-700">{label}</h3>
+                  <h3 className="mb-3 text-sm font-bold text-slate-700">{label}</h3>
                   <ul className="space-y-1.5 text-sm">
                     {jobs.length === 0 && <li className="text-slate-400">기록 없음</li>}
                     {jobs.map((j) => (

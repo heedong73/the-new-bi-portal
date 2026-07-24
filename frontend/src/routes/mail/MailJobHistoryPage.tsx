@@ -31,7 +31,7 @@ export default function MailJobHistoryPage() {
 
   return (
     <div>
-      <h1 className="mb-5 text-xl font-bold text-slate-800">메일 발송 이력</h1>
+      <h1 className="portal-content-page-title portal-content-page-title--mb-5">메일 발송 이력</h1>
       {jobsQuery.isLoading ? (
         <p className="text-sm text-slate-400">불러오는 중…</p>
       ) : (

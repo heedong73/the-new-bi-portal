@@ -5,11 +5,13 @@
  *     + 레포트 조회수 TOP10 + 시간대별(0~23시) 조회/사용자.
  *   - 추이: 주별/월별 접속자·누적 레포트·조회 수.
  *   - 상세: 계열사/레포트/기간별 부서 조회 상세(조회수·고유 사용자·최근 접속) + CSV.
- * - Super_User: 관리자가 VIEW_STATS를 부여한 레포트만 선택해 조회(스코프).
+ * - 그 외(General_User 등 운영자가 아닌 사용자): 관리자가 VIEW_STATS를 부여한
+ *   레포트만 선택해 조회(스코프). 통계 메뉴 자체는 관리자가 그룹/사용자 단위로
+ *   접근을 부여해야 보인다(권한 관리 개편 — Super_User 역할 폐지).
  */
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { startOfDay, endOfDay } from 'date-fns'
+import { startOfDay, endOfDay, format, subDays } from 'date-fns'
 import { Users, UserCheck, Eye, FileText, FolderOpen, Download, CalendarClock, FileBarChart, Building2, Table2 } from 'lucide-react'
 import {
   ResponsiveContainer, ComposedChart, BarChart, Bar, Line, Cell, LabelList,
@@ -76,7 +78,7 @@ function SectionCard({ title, action, children }: {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
+        <h3 className="text-sm font-bold text-slate-700">{title}</h3>
         {action}
       </div>
       {children}
@@ -543,8 +545,8 @@ const TABS: { key: Tab; label: string }[] = [
 
 function OperatorStats() {
   const [tab, setTab] = useState<Tab>('main')
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
+  const [fromDate, setFromDate] = useState(() => format(subDays(new Date(), 7), 'yyyy-MM-dd'))
+  const [toDate, setToDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [companyId, setCompanyId] = useState<number | null>(null)
   const [granularity, setGranularity] = useState<'day' | 'week' | 'month'>('month')
   const [detailReportId, setDetailReportId] = useState<number | null>(null)
@@ -639,7 +641,7 @@ function OperatorStats() {
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="mb-4">
-        <h1 className="text-xl font-bold text-slate-800">통계 대시보드</h1>
+        <h1 className="portal-content-page-title">통계 대시보드</h1>
       </div>
 
       {/* 탭 */}
@@ -863,11 +865,11 @@ function AuthorKpis({ o, h }: { o: StatsOverview; h?: StatsHighlights }) {
 }
 
 // ── Super_User 대시보드 (VIEW_STATS 부여 레포트 스코프, 작성자 전체 기본) ─────
-function SuperUserStats() {
+function ScopedUserStats() {
   // null = 전체(작성자 게시 레포트 전체), 값 있으면 그 레포트만(드릴다운)
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
+  const [fromDate, setFromDate] = useState(() => format(subDays(new Date(), 7), 'yyyy-MM-dd'))
+  const [toDate, setToDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   // 부서/사용자 선택(상호 배타) → 시간대별 차트 드릴다운
   const [detailDept, setDetailDept] = useState<string | null>(null)
   const [detailUser, setDetailUser] = useState<{ id: number; name: string } | null>(null)
@@ -966,7 +968,7 @@ function SuperUserStats() {
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="mb-4">
-        <h1 className="text-xl font-bold text-slate-800">통계 대시보드</h1>
+        <h1 className="portal-content-page-title">통계 대시보드</h1>
       </div>
 
       {noStatsReports ? (
@@ -1065,5 +1067,5 @@ function SuperUserStats() {
 export default function StatsDashboardPage() {
   const user = useAuthStore((s) => s.user)
   const isOperator = (user?.roles ?? []).includes('System_Operator')
-  return isOperator ? <OperatorStats /> : <SuperUserStats />
+  return isOperator ? <OperatorStats /> : <ScopedUserStats />
 }

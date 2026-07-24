@@ -14,11 +14,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.constants import RoleCode, PermissionAction
+from app.core.constants import AuditAction, RoleCode, PermissionAction
 from app.core.deps import RedisDep, SessionDep, require_menu
 from app.core.errors import PermissionDeniedError
 from app.models.report import Report
 from app.services import stats_service, permission_service
+from app.services.audit_service import append_audit
 from app.services.cache import cache_get_json, cache_set_json
 
 router = APIRouter(tags=["stats"])
@@ -78,7 +79,7 @@ async def stats_reports(
     db: SessionDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """통계를 볼 수 있는 레포트 목록(드롭다운용). 운영자=전체, Super_User=VIEW_STATS 부여분.
+    """통계를 볼 수 있는 레포트 목록(드롭다운용). 운영자=전체, 그 외=VIEW_STATS 부여분.
 
     company_id 지정(운영자 전용) 시 그 계열사 소속 레포트만 반환 — 계열사 선택에
     맞춰 레포트 드롭다운도 좁혀 서로 다른 계열사를 고른 채 남는 UI 불일치를 막는다.
@@ -109,9 +110,24 @@ async def stats_overview(
     redis: RedisDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """기본 운영 통계. report_id/계열사 지정 시 그 범위만; Super_User는 전역 지표 숨김."""
+    """기본 운영 통계. report_id/계열사 지정 시 그 범위만; 운영자가 아니면 전역 지표 숨김.
+
+    통계 대시보드 진입 시 항상 호출되는 대표 엔드포인트라, 감사 로그에는 이 호출
+    1건만 `stats_view`로 기록한다(같은 화면의 usage/trends/hourly 등 나머지
+    하위 위젯 호출까지 각각 남기면 "통계를 봤다"는 신호가 로그 볼륨에 묻힌다).
+    """
     scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
     key = _cache_key("overview", from_, to, scope_key)
+    await append_audit(
+        db,
+        action=AuditAction.STATS_VIEW,
+        result="success",
+        actor_user_id=current["user_id"],
+        actor_label=current.get("emp_no"),
+        resource_type="report" if report_id is not None else "company" if company_id is not None else None,
+        resource_id=str(report_id) if report_id is not None else (str(company_id) if company_id is not None else None),
+    )
+    await db.commit()
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached

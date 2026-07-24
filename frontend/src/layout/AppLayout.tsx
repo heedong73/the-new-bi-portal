@@ -2,10 +2,9 @@
  * 공용 레이아웃 — 역할별 내비게이션, 사용자 헤더, 콘텐츠 Outlet.
  * 기능 계약을 유지하며 Ivory Editorial 표면 시스템을 적용한다.
  */
-import { useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { LayoutGrid, BarChart3, Settings, LogOut, PanelLeftClose, Menu, MessagesSquare } from 'lucide-react'
+import { BarChart3, Settings, LogOut, PanelLeftClose, Menu, MessagesSquare } from 'lucide-react'
 
 import { authApi } from '@/api/authApi'
 import { useAuthStore } from '@/stores/useAuthStore'
@@ -13,6 +12,7 @@ import { useSidebarStore } from '@/stores/useSidebarStore'
 import SidebarFolderTree from '@/components/SidebarFolderTree'
 import BackgroundTaskDock from '@/components/BackgroundTaskDock'
 import { ADMIN_GROUP_MENUS } from '@/routes/admin/adminNav'
+import { formatLastLogin, userRoleLabel } from '@/utils/user'
 
 export default function AppLayout() {
   const navigate = useNavigate()
@@ -22,16 +22,15 @@ export default function AppLayout() {
   const clear = useAuthStore((s) => s.clear)
   const collapsed = useSidebarStore((s) => s.collapsed)
   const toggleSidebar = useSidebarStore((s) => s.toggle)
-  const [folderTreeResetKey, setFolderTreeResetKey] = useState(0)
 
   const roles = user?.roles ?? []
   const allowedMenus = user?.allowed_menus ?? []
   const isOperator = roles.includes('System_Operator')
   const canStats = isOperator || allowedMenus.includes('stats')
   const canAdmin = isOperator || ADMIN_GROUP_MENUS.some((m) => allowedMenus.includes(m))
+  const lastLoginLabel = formatLastLogin(user?.last_login_at)
 
   const path = location.pathname
-  const reportActive = path === '/' || path.startsWith('/reports/')
   const statsActive = path.startsWith('/stats')
   const serviceActive = path.startsWith('/service-center')
   const adminActive = path.startsWith('/admin') || path.startsWith('/mail') || path.startsWith('/monitoring')
@@ -78,34 +77,37 @@ export default function AppLayout() {
           </div>
 
           <nav className="editorial-nav flex-1 space-y-1 overflow-y-auto">
-            <NavLink
-              to="/?fav=1"
-              end
-              onClick={() => setFolderTreeResetKey((value) => value + 1)}
-              className={() => itemCls(reportActive)}
-            >
-              <LayoutGrid className="h-4 w-4" />
-              레포트
-            </NavLink>
-            <SidebarFolderTree key={folderTreeResetKey} />
+            <SidebarFolderTree />
 
             {canStats && (
-              <NavLink to="/stats" className={() => itemCls(statsActive)}>
-                <BarChart3 className="h-4 w-4" />
-                통계
-              </NavLink>
+              <div className="space-y-1 pt-2">
+                <div className="portal-discovery-nav__divider mb-3" />
+                <p className="portal-discovery-nav__label px-3 pb-1">인사이트</p>
+                <NavLink to="/stats" className={() => itemCls(statsActive)}>
+                  <BarChart3 className="h-4 w-4" />
+                  통계
+                </NavLink>
+              </div>
             )}
 
-            <NavLink to="/service-center" className={() => itemCls(serviceActive)}>
-              <MessagesSquare className="h-4 w-4" />
-              서비스 센터
-            </NavLink>
+            <div className="space-y-1 pt-2">
+              <div className="portal-discovery-nav__divider mb-3" />
+              <p className="portal-discovery-nav__label px-3 pb-1">지원</p>
+              <NavLink to="/service-center" className={() => itemCls(serviceActive)}>
+                <MessagesSquare className="h-4 w-4" />
+                서비스 센터
+              </NavLink>
+            </div>
 
             {canAdmin && (
-              <NavLink to="/admin" className={() => itemCls(adminActive)}>
-                <Settings className="h-4 w-4" />
-                관리자 콘솔
-              </NavLink>
+              <div className="space-y-1 pt-2">
+                <div className="portal-discovery-nav__divider mb-3" />
+                <p className="portal-discovery-nav__label px-3 pb-1">관리</p>
+                <NavLink to="/admin" className={() => itemCls(adminActive)}>
+                  <Settings className="h-4 w-4" />
+                  관리자 콘솔
+                </NavLink>
+              </div>
             )}
           </nav>
         </div>
@@ -113,7 +115,7 @@ export default function AppLayout() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="editorial-header flex items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             {collapsed && (
               <button
                 type="button"
@@ -127,17 +129,29 @@ export default function AppLayout() {
             )}
           </div>
           <div className="flex items-center gap-4">
-            <div className="editorial-user text-right">
-              <div className="editorial-user__name">{user?.name ?? '-'}</div>
-              <div className="editorial-user__meta">{user?.emp_no}</div>
+            {lastLoginLabel && (
+              <span className="editorial-user__last-login shrink-0 text-xs text-slate-400">
+                마지막 접속 {lastLoginLabel}
+              </span>
+            )}
+            <div
+              className="editorial-user min-w-0 text-right"
+              title={`${user?.name ?? '-'} / ${userRoleLabel(roles)}, ${user?.department_name?.trim() || '팀 미지정'}`}
+            >
+              <div className="editorial-user__name">
+                <span>{user?.name ?? '-'}</span>
+              </div>
+              <div className="editorial-user__meta">
+                {userRoleLabel(roles)}, {user?.department_name?.trim() || '팀 미지정'}
+              </div>
             </div>
             <button
               type="button"
               onClick={() => logoutMutation.mutate()}
               disabled={logoutMutation.isPending}
-              className="editorial-logout inline-flex items-center gap-1.5 border px-3 py-1.5 text-sm transition disabled:opacity-50"
+              className="editorial-logout inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12.5px] font-medium leading-[18px] transition disabled:opacity-50"
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-3 w-3" />
               로그아웃
             </button>
           </div>

@@ -4,8 +4,8 @@
  * design.md "라우팅 ↔ 사이드바 매핑"의 메인(Refresh 실행 현황) 화면으로,
  * 1단계에서 만든 컴포넌트를 결합한다. 레이아웃(위→아래):
  *   1. FilterBar (상단 필터)
- *   2. KpiCards (7개 KPI)
- *   3. 2단 영역: 좌측 RefreshTimeline(Gantt) + 우측 ExecutionFlow
+ *   2. KpiCards (전체·성공·실패·진행중 4개 핵심 KPI)
+ *   3. 접기·펼치기가 가능한 RefreshTimeline(Gantt)
  *   4. 하단 분석: LongestRunCard(오래 걸린 TOP5) + FailedRunsCard(실패·경고) 2단 / HourlyTrendChart(30분 추이) 전체 폭
  *   5. RefreshTable (상세 테이블)
  *
@@ -16,7 +16,7 @@
  *   - 최초 진입 시 useLatestRefreshDate로 '데이터가 있는 최신 일자'를 받아 기본 선택으로 1회
  *     설정한다(오늘 갱신이 없어도 최근 실행일이 바로 보이도록). 확정 전에는 조회를 보류한다.
  *   - useRefreshTimetable(filters): 선택 일자의 Report 단위 runs —
- *     Gantt / 차트 / 테이블 / ExecutionFlow / KPI의 단일 데이터 소스.
+ *     Gantt / 차트 / 테이블 / KPI의 단일 데이터 소스.
  *   - KPI/요약(LongestRunCard/Donut 포함)은 /api/summary 대신 computeSummary(표시 중 runs)로
  *     계산하여 화면 전체를 선택 일자 기준으로 일관시킨다.
  *   - status "all"은 refreshApi 계층에서 status 파라미터 미전달로 매핑(전체 조회).
@@ -28,21 +28,26 @@
  *
  * 페이지 툴바(액션):
  *   - 관리자 콘솔 셸(AdminConsoleLayout)은 전역 헤더 액션 영역을 렌더하지 않으므로,
- *     새로고침 / 즉시 수집(collect-now) / CSV 내보내기 / 자동 새로고침 토글을 이
- *     페이지 자체 툴바에서 제공한다(HeaderActionsContext 미사용).
+ *     즉시 수집(collect-now)과 CSV 내보내기를 이 페이지 자체 툴바에서 제공한다
+ *     (HeaderActionsContext 미사용).
  *   - 내보내기는 RefreshTable의 onVisibleRowsChange로 보관한 "현재 표시 행"을 CSV로
  *     내보낸다(검색/정렬/토글이 반영된 행 — Requirement 18.5).
  *   - 즉시 수집은 useTaskStore에 진행 작업을 등록하고, 우측 상단 BackgroundTaskDock가
  *     /api/collect-status를 폴링해 "수집 중 → 완료"를 표시한다. useTaskStore가
  *     localStorage에 영속되므로 페이지를 새로고침해도 진행 배너가 유지된다.
  */
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { RefreshCw, DownloadCloud, FileDown } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  DownloadCloud,
+  FileDown,
+} from "lucide-react";
 import { startOfDay, endOfDay } from "date-fns";
 import FilterBar from "@/components/filters/FilterBar";
 import KpiCards from "@/components/kpi/KpiCards";
 import RefreshTimeline from "@/components/gantt/RefreshTimeline";
-import ExecutionFlow from "@/components/flow/ExecutionFlow";
 import {
   FailedRunsCard,
   HourlyTrendChart,
@@ -82,11 +87,6 @@ export default function RefreshStatusPage() {
   const excludeReport = useRefreshFilterStore((s) => s.excludeReport);
   const clearExcludedReports = useRefreshFilterStore((s) => s.clearExcludedReports);
 
-  // 자동 새로고침 토글 — 콘솔 헤더가 없으므로 페이지 툴바에서 제어한다.
-  const autoRefresh = useRefreshFilterStore((s) => s.autoRefresh);
-  const toggleAutoRefresh = useRefreshFilterStore((s) => s.toggleAutoRefresh);
-  const autoRefreshIntervalSec = useRefreshFilterStore((s) => s.autoRefreshIntervalSec);
-
   // 최초 진입 시 '데이터가 있는 최신 일자'로 기본 선택을 1회 자동 설정한다
   // (오늘 갱신이 없어도 최근 실행일이 바로 보이도록). 세션 내에서는 사용자의
   // 선택을 존중하고, 전체 새로고침(store 초기화) 시 다시 최신 일자로 맞춘다.
@@ -111,14 +111,19 @@ export default function RefreshStatusPage() {
   ]);
 
   // --- 데이터 취득 (TanStack Query 훅) ------------------------------------
-  // 선택 일자 하루([from,to])가 화면의 단일 데이터 소스다. KPI/요약/실행흐름은
+  // 선택 일자 하루([from,to])가 화면의 단일 데이터 소스다. KPI/요약은
   // 단일 일자 기준 /api/summary 대신 이 runs에서 계산하여 화면 전체를 일관시킨다.
   // 기본 일자(최신)가 확정되기 전에는 조회를 보류한다(불필요한 오늘자 조회 방지).
   const filters = useMemo(
     () => ({ from, to, status, reportId, datasetId }),
     [from, to, status, reportId, datasetId]
   );
-  const timetableQuery = useRefreshTimetable(filters, selectedDateInitialized);
+  // 페이지 진입·필터 변경·수집 완료 시에만 조회하고 주기 polling은 사용하지 않는다.
+  const timetableQuery = useRefreshTimetable(
+    filters,
+    selectedDateInitialized,
+    false
+  );
 
   const timetableRuns = useMemo<RefreshRunOut[]>(
     () => timetableQuery.data ?? [],
@@ -141,7 +146,19 @@ export default function RefreshStatusPage() {
     [visibleTimetableRuns]
   );
 
-  /** 새로고침: 현재 선택 일자 기준 타임테이블 재조회 */
+  // 타임테이블은 기본적으로 펼쳐 두고 운영자가 필요할 때 접어 공간을 확보한다.
+  const [timelineOpen, setTimelineOpen] = useState(true);
+
+  // 실패 KPI에서 하단 실패·경고 목록으로 접근 가능하게 이동·포커스를 함께 제공한다.
+  const failedReportsRef = useRef<HTMLDivElement>(null);
+  const handleFailedKpiClick = useCallback(() => {
+    const target = failedReportsRef.current;
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.focus({ preventScroll: true });
+  }, []);
+
+  /** 조회 오류 재시도: 현재 선택 일자 기준 타임테이블을 다시 조회한다. */
   const applyAndRefetch = useCallback(() => {
     timetableQuery.refetch();
   }, [timetableQuery]);
@@ -167,9 +184,12 @@ export default function RefreshStatusPage() {
   const addTask = useTaskStore((s) => s.addTask);
   const updateTask = useTaskStore((s) => s.updateTask);
   const removeTask = useTaskStore((s) => s.removeTask);
-  const collecting = useTaskStore((s) =>
-    s.tasks.some((t) => t.kind === "collect" && t.status === "pending")
+  const collectTask = useTaskStore((s) =>
+    s.tasks.find((task) => task.id === COLLECT_TASK_ID)
   );
+  const collecting = collectTask?.status === "pending";
+  const collectCompleted =
+    collectTask?.status === "success" && collectTask.message === "완료";
   const handleCollectNow = useCallback(() => {
     // 단일 플라이트 — 고정 id로 중복 배너 방지. 잔여(완료/실패) 항목 정리 후 재시작.
     removeTask(COLLECT_TASK_ID);
@@ -208,47 +228,46 @@ export default function RefreshStatusPage() {
       {/* 0. 오류 배너 (오류가 있을 때만 렌더) */}
       <ErrorBanner error={error} onRetry={applyAndRefetch} />
 
-      {/* 1. 페이지 툴바: 제목 + 액션(자동 새로고침 / 새로고침 / 즉시 수집 / CSV) */}
+      {collectCompleted && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800 shadow-sm"
+        >
+          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-bold">Power BI 실행 이력 수집이 완료되었습니다.</p>
+            <p className="mt-0.5 text-xs text-emerald-700">
+              최신 수집 데이터로 Refresh 실행 현황을 갱신했습니다.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* 1. 페이지 툴바: 제목 + 액션(즉시 수집 / CSV) */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold text-slate-800">Refresh 실행 현황</h1>
+          <h1 className="portal-content-page-title">Refresh 실행 현황</h1>
           <p className="text-xs text-slate-500">
             Power BI 데이터셋 새로고침 실행 이력 · 예약 현황
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={toggleAutoRefresh}
-              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            />
-            자동 새로고침 ({autoRefreshIntervalSec}초)
-          </label>
-          <button
-            type="button"
-            onClick={applyAndRefetch}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            <RefreshCw className="h-4 w-4" />
-            새로고침
-          </button>
           <button
             type="button"
             onClick={handleCollectNow}
             disabled={collectNow.isPending || collecting}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
           >
-            <DownloadCloud className="h-4 w-4" />
+            <DownloadCloud className="h-3.5 w-3.5" />
             {collecting ? "수집 중…" : "즉시 수집"}
           </button>
           <button
             type="button"
             onClick={handleExport}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700"
+            className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-slate-700"
           >
-            <FileDown className="h-4 w-4" />
+            <FileDown className="h-3.5 w-3.5" />
             CSV 내보내기
           </button>
         </div>
@@ -261,10 +280,10 @@ export default function RefreshStatusPage() {
         <LoadingSpinner />
       ) : (
         <>
-          {/* 2. KPI 카드 */}
-          <KpiCards summary={summary} />
+          {/* 2. 핵심 상태 KPI */}
+          <KpiCards summary={summary} onFailedClick={handleFailedKpiClick} />
 
-          {/* 3. 2단 레이아웃: Gantt(좌) + ExecutionFlow(우) */}
+          {/* 3. Refresh 타임테이블 */}
           {/* 제외된 리포트가 있으면 복원 배너를 표시한다 (선택 제외 방식). */}
           {excludedReportIds.length > 0 && (
             <div className="flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
@@ -281,27 +300,46 @@ export default function RefreshStatusPage() {
             </div>
           )}
 
-          {/* 우측 컬럼은 relative 컨테이너로 두고 ExecutionFlow를 absolute로 채워,
-              좌측 Gantt 높이에 맞춰지고 내용이 길면 패널 내부에서 세로 스크롤되게 한다.
-              (items-start: 우측 컬럼이 Gantt 높이에 늘어나도록 stretch 방지) */}
-          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <RefreshTimeline
-              runs={visibleTimetableRuns}
-              from={from}
-              to={to}
-              onExcludeReport={excludeReport}
-            />
-            <div className="relative min-h-[20rem] self-stretch">
-              <div className="absolute inset-0">
-                <ExecutionFlow runs={visibleTimetableRuns} />
-              </div>
+          <div className={timelineOpen ? "relative" : "relative flex justify-end"}>
+            <button
+              type="button"
+              onClick={() => setTimelineOpen((open) => !open)}
+              aria-controls="refresh-timeline-panel"
+              aria-expanded={timelineOpen}
+              className={`z-10 inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                timelineOpen ? "absolute right-4 top-3" : ""
+              }`}
+            >
+              {timelineOpen ? (
+                <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              Refresh 타임테이블 {timelineOpen ? "접기" : "펼치기"}
+            </button>
+            <div id="refresh-timeline-panel">
+              {timelineOpen && (
+                <RefreshTimeline
+                  runs={visibleTimetableRuns}
+                  from={from}
+                  to={to}
+                  onExcludeReport={excludeReport}
+                />
+              )}
             </div>
           </div>
 
           {/* 4. 하단 분석: 가장 오래 걸린 TOP5 + 실패·경고 목록(2단), 시간대별 추이(전체 폭·30분) */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <LongestRunCard runs={visibleTimetableRuns} />
-            <FailedRunsCard runs={visibleTimetableRuns} />
+            <div
+              ref={failedReportsRef}
+              id="failed-refresh-reports"
+              tabIndex={-1}
+              className="scroll-mt-4 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+            >
+              <FailedRunsCard runs={visibleTimetableRuns} />
+            </div>
           </div>
           <HourlyTrendChart runs={visibleTimetableRuns} />
 

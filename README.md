@@ -44,13 +44,13 @@ REM 또는 직접:
 .venv\Scripts\python.exe -m celery -A app.workers.celery_app worker -l info --pool=solo
 ```
 
-Redis는 Docker 백그라운드 컨테이너(`bip-redis`)로 띄우는 것을 권장합니다. 저장소 루트에서 `redis-up.cmd`(있으면)로 시작하거나 직접:
+Redis는 Docker 백그라운드 컨테이너(`bip-dev-redis`)로 띄우는 것을 권장합니다. 저장소 루트에서 `redis-up.cmd`(있으면)로 시작하거나 직접:
 
 ```bat
-docker run -d --name bip-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
+docker run -d --name bip-dev-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
 ```
 
-`--restart unless-stopped`를 주면 이후 Docker Desktop이 켜질 때 Redis가 **자동으로 함께 기동**됩니다(창 불필요). 중지는 `docker stop bip-redis`. `.env`의 `REDIS_URL`이 이 Redis를 가리켜야 합니다. 운영(docker-compose/리눅스)에서는 prefork가 정상 동작하므로 solo 풀이 필요 없습니다.
+`--restart unless-stopped`를 주면 이후 Docker Desktop이 켜질 때 Redis가 **자동으로 함께 기동**됩니다(창 불필요). 중지는 `docker stop bip-dev-redis`. `.env`의 `REDIS_URL`이 이 Redis를 가리켜야 합니다. 운영(docker-compose/리눅스)에서는 prefork가 정상 동작하므로 solo 풀이 필요 없습니다.
 
 ### 로컬 일괄 기동 (한 번에)
 
@@ -61,7 +61,7 @@ REM 저장소 루트에서
 dev-up.cmd
 ```
 
-사전 준비: Docker Desktop 실행, `backend\.venv` 의존성 설치, `frontend` `npm install`, `.env` 존재. (Redis 외 4개 창을 닫으면 해당 서비스가 종료됩니다. Redis는 `docker stop bip-redis`로 중지.)
+사전 준비: Docker Desktop 실행, `backend\.venv` 의존성 설치, `frontend` `npm install`, `.env` 존재. (Redis 외 4개 창을 닫으면 해당 서비스가 종료됩니다. Redis는 `docker stop bip-dev-redis`로 중지.)
 
 ## 구성 서비스
 

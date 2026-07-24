@@ -106,7 +106,7 @@ export default function RefreshTimeline({
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4" aria-label={ko.gantt.title}>
-      <h2 className="mb-3 text-sm font-semibold text-slate-700">{ko.gantt.title}</h2>
+      <h2 className="mb-3 text-sm font-bold text-slate-700">{ko.gantt.title}</h2>
 
       <div ref={containerRef} className="w-full overflow-x-auto">
         {rows.length === 0 ? (

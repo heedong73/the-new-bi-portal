@@ -35,7 +35,7 @@ export default function FailedRunsCard({ runs }: FailedRunsCardProps) {
 
   return (
     <div className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-bold text-slate-700">
         <AlertTriangle className="text-amber-500" size={16} aria-hidden="true" />
         {ko.charts.failedRuns}
         {problems.length > 0 && (

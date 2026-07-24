@@ -51,7 +51,7 @@ export default function BackgroundTaskDock() {
   return (
     <div className="fixed right-4 top-32 z-50 w-72 rounded-xl border border-slate-200 bg-white/95 shadow-2xl backdrop-blur">
       <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
-        <span className="text-sm font-semibold text-slate-700">진행중</span>
+        <span className="text-sm font-bold text-slate-700">진행중</span>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{tasks.length}</span>
       </div>
       <ul className="max-h-72 divide-y divide-slate-100 overflow-y-auto">

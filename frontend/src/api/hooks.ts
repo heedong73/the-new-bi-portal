@@ -63,14 +63,15 @@ function useRefetchInterval(): number | false {
  */
 export function useRefreshTimetable(
   filters: TimetableFilterInput,
-  enabled = true
+  enabled = true,
+  allowAutoRefresh = true
 ): UseQueryResult<RefreshRunOut[]> {
   const refetchInterval = useRefetchInterval();
   return useQuery({
     queryKey: ["refresh-timetable", serializeFilters(filters)],
     queryFn: ({ signal }) => refreshApi.getTimetable(filters, signal),
     enabled,
-    refetchInterval,
+    refetchInterval: allowAutoRefresh ? refetchInterval : false,
     staleTime: 10_000,
   });
 }

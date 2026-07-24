@@ -138,7 +138,7 @@ export default function RequestDetailModal({
               )}
 
               <div className="mt-4">
-                <div className="mb-1 text-sm font-semibold text-slate-700">💬 대화</div>
+                <div className="mb-1 text-sm font-bold text-slate-700">💬 대화</div>
                 <RequestComments requestId={requestId} comments={r.comments} onAdded={invalidate} />
               </div>
             </div>
@@ -160,7 +160,7 @@ export default function RequestDetailModal({
 
               {r.status_history.length > 0 && (
                 <div className="mt-4 border-t border-slate-200 pt-4">
-                  <h3 className="mb-2 text-sm font-semibold text-slate-700">상태 변경 이력</h3>
+                  <h3 className="mb-2 text-sm font-bold text-slate-700">상태 변경 이력</h3>
                   <ol className="space-y-2 border-l-2 border-slate-100 pl-3">
                     {r.status_history.map((h) => (
                       <li key={h.id} className="relative">
@@ -196,7 +196,7 @@ export default function RequestDetailModal({
 
               {isOperator && (
                 <div className="mt-4 border-t border-slate-200 pt-4">
-                  <h3 className="mb-2 text-sm font-semibold text-slate-700">관리자 처리</h3>
+                  <h3 className="mb-2 text-sm font-bold text-slate-700">관리자 처리</h3>
 
                   <label className="text-xs text-slate-500">상태 변경</label>
                   <select

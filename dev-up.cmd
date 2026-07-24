@@ -13,7 +13,7 @@ setlocal
 set ROOT=%~dp0
 
 echo Ensuring Redis container (detached, auto-restart)...
-docker start bip-redis >NUL 2>&1 || docker run -d --name bip-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
+docker start bip-dev-redis >NUL 2>&1 || docker run -d --name bip-dev-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
 if errorlevel 1 (
   echo [WARN] Failed to start Redis container. Make sure Docker Desktop is running.
 )
@@ -34,7 +34,7 @@ start "BIP Frontend" cmd /k "cd /d %ROOT%frontend && npm run dev"
 
 echo.
 echo Done.
-echo  - Redis: runs in background as docker container "bip-redis" (no window).
+echo  - Redis: runs in background as docker container "bip-dev-redis" (no window).
 echo  - 4 windows opened: Worker / Beat / Backend / Frontend. Close a window to stop that service.
-echo  - Stop Redis with: docker stop bip-redis   (start again: docker start bip-redis)
+echo  - Stop Redis with: docker stop bip-dev-redis   (start again: docker start bip-dev-redis)
 endlocal

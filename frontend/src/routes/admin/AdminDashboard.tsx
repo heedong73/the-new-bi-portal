@@ -37,7 +37,7 @@ export default function AdminDashboard() {
                 <Icon className="h-5 w-5" />
               </div>
               <div className="min-w-0">
-                <div className="font-semibold text-slate-800 transition group-hover:text-blue-700">{label}</div>
+                <div className="text-sm font-bold text-slate-800 transition group-hover:text-blue-700">{label}</div>
                 <div className="mt-1 text-xs leading-5 text-slate-500">{desc}</div>
               </div>
             </Link>

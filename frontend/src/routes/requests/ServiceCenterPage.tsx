@@ -92,11 +92,11 @@ export default function ServiceCenterPage() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['requests'] })
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
+    <div className="service-center-page min-h-screen bg-slate-50 p-6">
       {/* 헤더 */}
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-800">
-          서비스 요청 <span className="text-sm font-normal text-slate-400">{total}건</span>
+        <h1 className="portal-content-page-title">
+          서비스 요청 <span className="text-[10px] font-normal text-slate-400">{total}건</span>
         </h1>
         <button type="button" onClick={() => setCreateOpen(true)}
           className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500">
@@ -246,7 +246,7 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
     <div className="fixed inset-0 z-20 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
       <div className="my-8 w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-800">서비스 요청 작성</h2>
+          <h2 className="text-lg font-bold text-slate-800">서비스 요청 작성</h2>
           <button type="button" aria-label="닫기" onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
         </div>
 
