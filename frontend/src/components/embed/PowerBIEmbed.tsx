@@ -30,7 +30,7 @@ export default function PowerBIEmbed({ embed, onReport }: Props) {
         settings: {
           layoutType: models.LayoutType.Custom,
           customLayout: {
-            displayOption: models.DisplayOption.ActualSize,
+            displayOption: models.DisplayOption.FitToPage,
           },
           panes: {
             filters: { expanded: false, visible: true },

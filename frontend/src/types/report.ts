@@ -15,7 +15,14 @@ export interface ReportSummary {
   can_manage?: boolean
   can_download?: boolean
   author_label?: string | null
+  created_at?: string | null
   updated_at?: string | null
+  published_at?: string | null
+  folder_path?: string | null
+  root_folder_id?: number | null
+  root_folder_name?: string | null
+  last_viewed_at?: string | null
+  view_count?: number
   is_favorite?: boolean
 }
 
@@ -67,4 +74,23 @@ export interface RefreshStatus {
   last_refresh_local?: string | null
   next_scheduled_local?: string | null
   message?: string | null
+}
+
+
+export type ReportCatalogSort = 'latest' | 'popular'
+
+export interface ReportCatalogParams {
+  q?: string
+  rootFolderId?: number | null
+  folderId?: number | null
+  sort?: ReportCatalogSort
+  limit?: number
+  offset?: number
+}
+
+export interface ReportCatalogResponse {
+  items: ReportSummary[]
+  total: number
+  limit: number
+  offset: number
 }

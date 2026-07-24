@@ -10,7 +10,7 @@ import { useTaskStore } from '@/stores/useTaskStore'
 import type { EmbedInfo, RefreshStatus, ReportSummary } from '@/types/report'
 
 vi.mock('@/api/portalApi', () => ({
-  reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn(), liveRefreshStatus: vi.fn(), replacePbix: vi.fn(), favorites: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn() },
+  reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn(), liveRefreshStatus: vi.fn(), replacePbix: vi.fn(), favorites: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn(), recordView: vi.fn() },
   datasetsApi: { triggerRefresh: vi.fn(), cancelRefresh: vi.fn() },
 }))
 
@@ -53,6 +53,7 @@ describe('ReportViewPage', () => {
     useTaskStore.setState({ tasks: [] })
     vi.mocked(reportsApi.list).mockResolvedValue([REPORT])
     vi.mocked(reportsApi.embed).mockResolvedValue(EMBED)
+    vi.mocked(reportsApi.recordView).mockResolvedValue(undefined as never)
     vi.mocked(reportsApi.refreshStatus).mockResolvedValue(STATUS)
     vi.mocked(reportsApi.liveRefreshStatus).mockResolvedValue({
       has_history: true, status: 'Completed', in_progress: false,
@@ -69,6 +70,7 @@ describe('ReportViewPage', () => {
     expect(await screen.findByText('월간 매출')).toBeInTheDocument()
     expect(await screen.findByTestId('pbi-embed')).toBeInTheDocument()
     expect(await screen.findByText('성공')).toBeInTheDocument()
+    await waitFor(() => expect(reportsApi.recordView).toHaveBeenCalledWith(10))
   })
 
   it('새로고침 버튼 클릭 시 dataset_id로 트리거한다', async () => {
@@ -114,5 +116,6 @@ describe('ReportViewPage', () => {
     )
     renderAt()
     expect(await screen.findByText('이 레포트를 볼 권한이 없습니다.')).toBeInTheDocument()
+    expect(reportsApi.recordView).not.toHaveBeenCalled()
   })
 })

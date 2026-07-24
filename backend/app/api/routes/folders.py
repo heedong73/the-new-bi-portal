@@ -5,8 +5,8 @@ CRUD는 System_Operator, 트리 조회(tree)는 로그인 사용자(G+).
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select, func, or_
 
 from app.core.constants import AuditAction, RoleCode, PermissionAction
 from app.core.deps import SessionDep, require_menu, get_current_user
@@ -90,15 +90,30 @@ async def delete_folder(folder_id: int, db: SessionDep, op=Depends(_require_oper
     await db.commit()
 
 @router.get("/tree", response_model=list[FolderTreeNode])
-async def folder_tree(db: SessionDep, current=Depends(get_current_user)):
+async def folder_tree(
+    db: SessionDep,
+    current=Depends(get_current_user),
+    q: str | None = Query(default=None, max_length=200),
+):
     """폴더 트리 + 사용자가 VIEW 권한 가진 레포트만 노출(R41.4).
 
-    운영자(System_Operator/로컬 관리자)는 관리 목적상 레포트 유무와 무관하게
-    전체 폴더 구조를 본다(빈 폴더 포함). 일반 사용자는 하위(자기 포함)에 조회권
-    레포트가 없는 폴더를 숨긴다(R41.7).
+    검색어가 있으면 리포트 메타데이터가 일치하는 레포트만 집계하고,
+    해당 결과가 속한 폴더 경로만 반환한다. 검색이 없을 때 운영자
+    (System_Operator/로컬 관리자)는 관리 목적상 빈 폴더까지 본다.
     """
     folders = (await db.execute(select(ReportFolder).order_by(ReportFolder.sort_order, ReportFolder.id))).scalars().all()
-    reports = (await db.execute(select(Report))).scalars().all()
+    normalized_query = (q or "").strip()
+    reports_stmt = select(Report)
+    if normalized_query:
+        pattern = f"%{normalized_query}%"
+        reports_stmt = reports_stmt.where(or_(
+            Report.display_name.ilike(pattern),
+            Report.report_name.ilike(pattern),
+            Report.description.ilike(pattern),
+            Report.author_label.ilike(pattern),
+            Report.category.ilike(pattern),
+        ))
+    reports = (await db.execute(reports_stmt)).scalars().all()
 
     accessible = await permission_service.accessible_report_ids(
         db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
@@ -124,12 +139,13 @@ async def folder_tree(db: SessionDep, current=Depends(get_current_user)):
         else:
             roots.append(nodes[f.id])
 
-    # 운영자(System_Operator/로컬 관리자)는 레포트 유무와 무관하게 전체 폴더 구조를 본다.
+    # 검색이 없을 때만 운영자에게 빈 폴더까지 보여준다.
+    # 검색 중에는 모든 역할에서 결과가 있는 폴더 경로만 남겨 count를 검색 결과와 맞춘다.
     is_operator = (
         RoleCode.SYSTEM_OPERATOR.value in current.get("roles", [])
         or bool(current.get("is_local_admin"))
     )
-    if is_operator:
+    if is_operator and not normalized_query:
         return roots
 
     # (일반 사용자) 하위(자기 포함)에 조회권 있는 레포트가 하나도 없는 폴더는 숨긴다(R41.4/R41.7).

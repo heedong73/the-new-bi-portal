@@ -47,9 +47,23 @@ class ReportResponse(BaseModel):
     is_published: bool
     author_label: str | None = None
     updated_at: datetime | None = None
+    published_at: datetime | None = None
+    folder_path: str | None = None
+    root_folder_id: int | None = None
+    root_folder_name: str | None = None
+    last_viewed_at: datetime | None = None
+    view_count: int = 0  # 최근 30일 전체 사용자 조회수
     is_favorite: bool = False
     created_by_user_id: int | None = None
     created_by_label: str | None = None
     created_at: datetime | None = None
     can_manage: bool = False  # MANAGE_REPORT 권한(레포트 교체 가능) 여부
     can_download: bool = False  # DOWNLOAD 권한(Export/원본 다운로드 가능) 여부
+
+
+class ReportCatalogResponse(BaseModel):
+    """검색·카테고리·정렬이 적용된 페이지형 레포트 카탈로그."""
+    items: list[ReportResponse] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int

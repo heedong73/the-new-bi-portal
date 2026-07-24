@@ -1,13 +1,17 @@
 /** 레포트 카탈로그/폴더 API 래퍼 (BIP 포털). */
 import apiClient, { API_BASE_URL } from '@/api/client'
 import type {
-  EmbedInfo, ExportFormat, ExportStatusResponse, FolderTreeNode, RefreshStatus, ReportSummary,
+  EmbedInfo, ExportFormat, ExportStatusResponse, FolderTreeNode, RefreshStatus,
+  ReportCatalogParams, ReportCatalogResponse, ReportSummary,
 } from '@/types/report'
 
 export const foldersApi = {
-  /** GET /api/report-folders/tree — VIEW 권한 필터된 폴더 트리. */
-  tree: (signal?: AbortSignal) =>
-    apiClient.get<FolderTreeNode[]>('/api/report-folders/tree', { signal }),
+  /** GET /api/report-folders/tree — VIEW 권한과 선택적 검색어로 필터된 폴더 트리. */
+  tree: (signal?: AbortSignal, q?: string) =>
+    apiClient.get<FolderTreeNode[]>('/api/report-folders/tree', {
+      query: { q: q || undefined },
+      signal,
+    }),
 }
 
 export const reportsApi = {
@@ -15,6 +19,27 @@ export const reportsApi = {
   list: (folderId?: number | null, signal?: AbortSignal) =>
     apiClient.get<ReportSummary[]>('/api/reports', {
       query: { folder_id: folderId ?? undefined },
+      signal,
+    }),
+
+  /** 검색·카테고리·최신/최근 30일 인기순 레포트 카탈로그. */
+  catalog: (params: ReportCatalogParams = {}, signal?: AbortSignal) =>
+    apiClient.get<ReportCatalogResponse>('/api/reports/catalog', {
+      query: {
+        q: params.q || undefined,
+        root_folder_id: params.rootFolderId ?? undefined,
+        folder_id: params.folderId ?? undefined,
+        sort: params.sort ?? 'latest',
+        limit: params.limit ?? 24,
+        offset: params.offset ?? 0,
+      },
+      signal,
+    }),
+
+  /** 현재 사용자의 최근 본 레포트. */
+  recent: (limit?: number, signal?: AbortSignal) =>
+    apiClient.get<ReportSummary[]>('/api/reports/recent', {
+      query: { limit },
       signal,
     }),
 
@@ -58,9 +83,12 @@ export const reportsApi = {
     )
   },
 
-  /** GET /api/reports/favorites — 내 즐겨찾기 레포트 목록. */
-  favorites: (signal?: AbortSignal) =>
-    apiClient.get<ReportSummary[]>('/api/reports/favorites', { signal }),
+  /** GET /api/reports/favorites — 최근 조회순 내 즐겨찾기 레포트 목록. */
+  favorites: (limit?: number, signal?: AbortSignal) =>
+    apiClient.get<ReportSummary[]>('/api/reports/favorites', {
+      query: { limit },
+      signal,
+    }),
   /** PUT /api/reports/{id}/favorite — 즐겨찾기 추가. */
   addFavorite: (reportDbId: number) =>
     apiClient.put<void>(`/api/reports/${reportDbId}/favorite`),
@@ -74,8 +102,11 @@ export const reportsApi = {
       `/api/reports/${reportDbId}/export`, { export_format: format },
     ),
 
-  /**
-   * POST /api/reports/{id}/view-duration — 조회 세션 체류 시간 갱신(근사치).
+  /** POST /api/reports/{id}/view — 최근 조회와 인기 집계에 화면 진입을 기록. */
+  recordView: (reportDbId: number) =>
+    apiClient.post<void>(`/api/reports/${reportDbId}/view`),
+
+  /** POST /api/reports/{id}/view-duration — 조회 세션 체류 시간 갱신(근사치).
    * 탭 이탈/전환 시점에 keepalive fetch로 호출한다(페이지가 언로드되어도 요청 유지).
    */
   reportViewDuration: (reportDbId: number, viewLogId: number, durationSeconds: number) =>

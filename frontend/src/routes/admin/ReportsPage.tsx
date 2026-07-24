@@ -315,7 +315,7 @@ export default function ReportsPage() {
   return (
     <section>
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-800">레포트 관리</h2>
+        <h2 className="portal-content-page-title">레포트 관리</h2>
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => { setAddParentId('root'); setNewFolderName('') }}
             className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
@@ -342,7 +342,7 @@ export default function ReportsPage() {
       {/* 트리 */}
       <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
         {/* 컬럼 헤더 */}
-        <div className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_130px_minmax(0,1.4fr)_280px] items-center gap-3 border-b border-slate-200 px-2 py-2.5 text-sm font-semibold text-slate-500">
+        <div className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_130px_minmax(0,1.4fr)_280px] items-center gap-3 border-b border-slate-200 px-2 py-2.5 text-xs font-extrabold text-slate-500">
           <span className="pl-1">레포트명</span>
           <span>레포트 ID</span>
           <span>등록일</span>
@@ -377,7 +377,7 @@ export default function ReportsPage() {
         <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
           <div role="dialog" aria-modal="true" aria-label="레포트 권한 관리" className="my-12 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-800">
+              <h3 className="text-lg font-bold text-slate-800">
                 권한 관리{permsReportName ? <span className="text-slate-500"> — {permsReportName}</span> : null}
               </h3>
               <button type="button" aria-label="닫기" onClick={() => setPermsReportId(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
@@ -395,7 +395,7 @@ export default function ReportsPage() {
         <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
           <div role="dialog" aria-modal="true" aria-label="PBIX 업로드 게시" className="my-12 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-800">PBIX 업로드 게시 (신규)</h3>
+              <h3 className="text-lg font-bold text-slate-800">PBIX 업로드 게시 (신규)</h3>
               <button type="button" aria-label="닫기" onClick={closeUpload} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); if (pbixFile) uploadMutation.mutate() }} className="space-y-4">
@@ -450,7 +450,7 @@ export default function ReportsPage() {
         <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
           <div role="dialog" aria-modal="true" aria-label={editMode === 'edit' ? '레포트 수정' : '폴더 이동'} className="my-12 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-800">{editMode === 'edit' ? '레포트 수정' : '폴더 이동'}</h3>
+              <h3 className="text-lg font-bold text-slate-800">{editMode === 'edit' ? '레포트 수정' : '폴더 이동'}</h3>
               <button type="button" aria-label="닫기" onClick={() => setEditReport(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); editReportMutation.mutate() }} className="space-y-4">
@@ -496,7 +496,7 @@ export default function ReportsPage() {
           <div role="dialog" aria-modal="true" aria-label="레포트 삭제 확인" className="my-24 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-3 flex items-center gap-2">
               <Trash2 className="h-5 w-5 text-red-600" />
-              <h3 className="text-lg font-semibold text-slate-800">레포트 삭제</h3>
+              <h3 className="text-lg font-bold text-slate-800">레포트 삭제</h3>
             </div>
             <p className="text-sm text-slate-600">
               <span className="font-medium text-slate-800">{deleteTarget.display_name || deleteTarget.report_name || deleteTarget.report_id}</span>

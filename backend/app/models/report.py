@@ -1,5 +1,8 @@
-from datetime import datetime
-from sqlalchemy import String, Boolean, BigInteger, Integer, ForeignKey, UniqueConstraint, Text, func
+from datetime import date, datetime
+from sqlalchemy import (
+    String, Boolean, BigInteger, Integer, ForeignKey, UniqueConstraint, Text,
+    Date, DateTime, Index, func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.session import Base
 
@@ -59,6 +62,7 @@ class Report(Base):
     default_view_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_by_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
@@ -93,3 +97,42 @@ class ReportFavorite(Base):
         BigInteger, ForeignKey(f"{SCHEMA}.reports.id", ondelete="CASCADE"), primary_key=True
     )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class UserReportActivity(Base):
+    """사용자별 최근 조회 시각과 누적 조회 횟수."""
+    __tablename__ = "user_report_activity"
+    __table_args__ = (
+        Index("ix_user_report_activity_user_last_viewed", "user_id", "last_viewed_at"),
+        Index("ix_user_report_activity_report", "report_id"),
+        {"schema": SCHEMA},
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.users.id", ondelete="CASCADE"), primary_key=True
+    )
+    report_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.reports.id", ondelete="CASCADE"), primary_key=True
+    )
+    first_viewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_viewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    view_count: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+
+
+class ReportViewDailyStat(Base):
+    """최근 기간 인기순 계산을 위한 레포트별 일일 조회 집계."""
+    __tablename__ = "report_view_daily_stats"
+    __table_args__ = (
+        Index("ix_report_view_daily_stats_date", "viewed_date"),
+        {"schema": SCHEMA},
+    )
+
+    report_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(f"{SCHEMA}.reports.id", ondelete="CASCADE"), primary_key=True
+    )
+    viewed_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    view_count: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)

@@ -1,147 +1,111 @@
-/**
- * 좌측 내비의 폴더/레포트 탐색기 트리.
- * 폴더는 펼치기/접기만 수행하고, 레포트 선택은 단일 뷰로 이동한다.
- */
-import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { Folder, FolderOpen, Star, FileBarChart, ChevronRight, ChevronDown } from 'lucide-react'
+/** 레포트 탐색 허브 전용 좌측 내비게이션. 카테고리에는 최상위 폴더만 표시한다. */
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Clock3, Folder, Home, LayoutGrid, Star } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 
-import { foldersApi, reportsApi } from '@/api/portalApi'
-import { reportDisplayName, type FolderTreeNode } from '@/types/report'
+import { foldersApi } from '@/api/portalApi'
+import type { FolderTreeNode } from '@/types/report'
 
 function countReports(node: FolderTreeNode): number {
   return node.report_ids.length + node.children.reduce((sum, child) => sum + countReports(child), 0)
 }
 
-interface ItemProps {
-  node: FolderTreeNode
-  depth: number
-  currentReportId: number | null
-  onOpenReport: (id: number) => void
-}
-
-function NavFolderItem({ node, depth, currentReportId, onOpenReport }: ItemProps) {
-  const [open, setOpen] = useState(false)
-  const hasChildren = node.children.length > 0
-  const hasReports = node.report_ids.length > 0
-  const expandable = hasChildren || hasReports
-  const total = countReports(node)
-
-  const reportsQuery = useQuery({
-    queryKey: ['folder-reports', node.id],
-    queryFn: ({ signal }) => reportsApi.list(node.id, signal),
-    enabled: open && hasReports,
-    staleTime: 30_000,
-  })
-  const reports = reportsQuery.data ?? []
-
-  return (
-    <li>
-      <button
-        type="button"
-        aria-expanded={expandable ? open : undefined}
-        onClick={() => expandable && setOpen((value) => !value)}
-        className="portal-tree-folder mb-0.5 flex w-full items-center gap-1 py-1.5 pr-1 text-sm transition"
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
-      >
-        {open ? <FolderOpen className="h-3.5 w-3.5 shrink-0" /> : <Folder className="h-3.5 w-3.5 shrink-0" />}
-        <span className="flex-1 truncate text-left">{node.name}</span>
-        <span className="text-xs text-slate-400">{total}</span>
-        {expandable ? (
-          open ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-        ) : (
-          <span className="w-3.5 shrink-0" />
-        )}
-      </button>
-
-      {open && (
-        <ul>
-          {node.children.map((child) => (
-            <NavFolderItem
-              key={`f-${child.id}`}
-              node={child}
-              depth={depth + 1}
-              currentReportId={currentReportId}
-              onOpenReport={onOpenReport}
-            />
-          ))}
-
-          {hasReports && reportsQuery.isLoading && (
-            <li
-              className="py-1 text-xs text-slate-400"
-              style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
-            >
-              레포트 불러오는 중…
-            </li>
-          )}
-          {reports.map((report) => {
-            const active = currentReportId === report.id
-            return (
-              <li key={`r-${report.id}`}>
-                <button
-                  type="button"
-                  onClick={() => onOpenReport(report.id)}
-                  title={reportDisplayName(report)}
-                  className={`portal-tree-report flex w-full items-center gap-1.5 py-1.5 pr-2 text-sm transition ${
-                    active ? 'portal-tree-report--active font-medium' : ''
-                  }`}
-                  style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
-                >
-                  <FileBarChart className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{reportDisplayName(report)}</span>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </li>
-  )
+function positiveNumber(value: string | null): number | null {
+  const parsed = Number(value)
+  return value && Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
 export default function SidebarFolderTree() {
   const navigate = useNavigate()
   const location = useLocation()
-
   const treeQuery = useQuery({
     queryKey: ['folder-tree'],
     queryFn: ({ signal }) => foldersApi.tree(signal),
     staleTime: 60_000,
   })
 
-  const reportMatch = location.pathname.match(/^\/reports\/(\d+)/)
-  const currentReportId = reportMatch ? Number(reportMatch[1]) : null
-  const favActive = location.pathname === '/'
-  const folders = treeQuery.data ?? []
+  const roots = treeQuery.data ?? []
+  const params = new URLSearchParams(location.search)
+  const selectedRootId = positiveNumber(params.get('root'))
+  const path = location.pathname
+  const reportNavClass = (active: boolean) =>
+    `portal-discovery-link flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm font-medium transition ${
+      active ? 'portal-discovery-link--active' : ''
+    }`
+  const categoryClass = (active: boolean) =>
+    `portal-discovery-link flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm font-medium transition ${
+      active ? 'portal-discovery-link--active' : ''
+    }`
 
   return (
-    <div className="portal-tree">
-      <button
-        type="button"
-        onClick={() => navigate('/?fav=1')}
-        className={`portal-tree-favorite flex w-full items-center gap-1.5 py-1.5 pl-4 pr-2 text-sm transition ${
-          favActive ? 'portal-tree-favorite--active font-medium' : ''
-        }`}
-      >
-        <Star className="h-3.5 w-3.5 shrink-0 fill-yellow-400 text-yellow-400" />
-        즐겨찾기
-      </button>
-      {treeQuery.isLoading ? (
-        <p className="px-4 py-1.5 text-xs text-slate-400">불러오는 중…</p>
-      ) : folders.length > 0 ? (
-        <ul>
-          {folders.map((node) => (
-            <NavFolderItem
-              key={node.id}
-              node={node}
-              depth={1}
-              currentReportId={currentReportId}
-              onOpenReport={(id) => navigate(`/reports/${id}`)}
-            />
-          ))}
-        </ul>
-      ) : null}
+    <div className="portal-discovery-nav px-2 pb-2">
+      <p className="portal-discovery-nav__label px-2 pb-2 pt-1">레포트 탐색</p>
+      <div className="space-y-0.5">
+        <button
+          type="button"
+          onClick={() => navigate('/reports')}
+          className={reportNavClass(path === '/reports')}
+          aria-current={path === '/reports' ? 'page' : undefined}
+        >
+          <Home className="h-4 w-4 shrink-0" />
+          <span className="flex-1">홈</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate('/reports/favorites')}
+          className={reportNavClass(path === '/reports/favorites')}
+          aria-current={path === '/reports/favorites' ? 'page' : undefined}
+        >
+          <Star className="h-4 w-4 shrink-0" />
+          <span className="flex-1">즐겨찾기</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate('/reports/recent')}
+          className={reportNavClass(path === '/reports/recent')}
+          aria-current={path === '/reports/recent' ? 'page' : undefined}
+        >
+          <Clock3 className="h-4 w-4 shrink-0" />
+          <span className="flex-1">최근 본 리포트</span>
+        </button>
+      </div>
+
+      <div className="portal-discovery-nav__divider my-4" />
+      <p className="portal-discovery-nav__label px-2 pb-2">카테고리</p>
+      <div className="space-y-0.5">
+        <button
+          type="button"
+          onClick={() => navigate('/reports/catalog')}
+          className={categoryClass(path === '/reports/catalog' && selectedRootId == null)}
+          aria-current={path === '/reports/catalog' && selectedRootId == null ? 'page' : undefined}
+        >
+          <LayoutGrid className="h-4 w-4 shrink-0" />
+          <span className="flex-1">전체 리포트</span>
+          {roots.length > 0 && (
+            <span className="portal-discovery-link__count">{roots.reduce((sum, root) => sum + countReports(root), 0)}</span>
+          )}
+        </button>
+
+        {treeQuery.isLoading ? (
+          <p className="px-3 py-2 text-xs text-slate-400">불러오는 중…</p>
+        ) : roots.map((root) => {
+          const active = path === '/reports/catalog' && selectedRootId === root.id
+          return (
+            <button
+              key={root.id}
+              type="button"
+              onClick={() => navigate(`/reports/catalog?root=${root.id}`)}
+              className={categoryClass(active)}
+              title={root.name}
+              aria-current={active ? 'page' : undefined}
+            >
+              <Folder className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{root.name}</span>
+              <span className="portal-discovery-link__count">{countReports(root)}</span>
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 import redis.asyncio as aioredis
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -51,6 +51,7 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
             report = Report(
                 workspace_id=workspace_id, report_id=report_id, dataset_id=dataset_id,
                 report_name=report_name, folder_id=folder_id, is_published=True,
+                published_at=func.now(),
                 description=description, author_label=author_label,
                 created_by_user_id=created_by_user_id, created_by_label=created_by_label,
             )
@@ -66,6 +67,8 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
         else:
             report.dataset_id = dataset_id
             report.report_name = report_name
+            report.is_published = True
+            report.published_at = func.now()
             if description is not None:
                 report.description = description
             if author_label is not None:

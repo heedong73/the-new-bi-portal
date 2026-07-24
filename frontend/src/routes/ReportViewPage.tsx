@@ -51,12 +51,12 @@ function fmtLocal(iso?: string | null): string | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })
 }
 
-function latestUpdateLabel(refreshEnd?: string | null, reportUpdated?: string | null): string | null {
-  const candidates = [refreshEnd, reportUpdated]
-    .map((value) => value ? new Date(value).getTime() : Number.NaN)
-    .filter((value) => !Number.isNaN(value))
-  if (candidates.length === 0) return null
-  return fmtLocal(new Date(Math.max(...candidates)).toISOString()) ?? null
+function fmtDate(iso?: string | null): string | undefined {
+  if (!iso) return undefined
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? undefined
+    : d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 export default function ReportViewPage() {
@@ -65,6 +65,7 @@ export default function ReportViewPage() {
   const params = useParams<{ reportId: string }>()
   const reportDbId = Number(params.reportId)
   const validId = Number.isFinite(reportDbId) && reportDbId > 0
+  const recordedReportIdRef = useRef<number | null>(null)
 
   // 목록에서 해당 레포트 메타(dataset_id, 표시명) 조회 (캐시 재사용)
   const listQuery = useQuery({
@@ -83,6 +84,19 @@ export default function ReportViewPage() {
     enabled: validId,
     staleTime: 5 * 60_000,
   })
+
+  // 토큰 발급까지 성공한 진입만 최근 조회/인기 집계에 반영한다.
+  useEffect(() => {
+    if (!validId || !embedQuery.isSuccess || recordedReportIdRef.current === reportDbId) return
+    recordedReportIdRef.current = reportDbId
+    reportsApi.recordView(reportDbId)
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ['report-recent'] })
+        queryClient.invalidateQueries({ queryKey: ['report-favorites'] })
+        queryClient.invalidateQueries({ queryKey: ['report-catalog'] })
+      })
+      .catch(() => { /* 탐색 이력은 best-effort */ })
+  }, [embedQuery.isSuccess, queryClient, reportDbId, validId])
 
   const statusQuery = useQuery({
     queryKey: ['live-refresh', reportDbId],
@@ -175,15 +189,16 @@ export default function ReportViewPage() {
   const [pages, setPages] = useState<{ name: string; displayName: string }[]>([])
   const [activePageName, setActivePageName] = useState('')
 
-  // 전체 화면 종료 시 앱 기본 보기(실제 크기)로 복귀한다.
-  // (전체 화면 진입 시 페이지 맞춤으로 바꾸므로, 나올 때 되돌린다)
+  // 전체 화면 종료 시 앱 기본 보기(페이지 맞춤)로 복귀한다.
+  // (전체 화면 중에도 기본값과 동일하게 페이지 맞춤을 쓰므로, 사용자가 보기 옵션에서
+  // '실제 크기'로 바꾼 뒤 전체 화면에 들어갔다 나오는 경우를 위해 명시적으로 되돌린다)
   useEffect(() => {
     const onFsChange = () => {
       if (document.fullscreenElement) return
       reportRef.current
         ?.updateSettings({
           layoutType: models.LayoutType.Custom,
-          customLayout: { displayOption: models.DisplayOption.ActualSize },
+          customLayout: { displayOption: models.DisplayOption.FitToPage },
         })
         .catch(() => { /* noop */ })
     }
@@ -204,11 +219,11 @@ export default function ReportViewPage() {
     reportRef.current = r
     if (r) setRenderedAt((current) => current ?? Date.now())
     if (!r) return
-    // 기본 보기를 '실제 크기'로 확실히 적용 (초기 embedConfig만으론 미적용되는 경우 대비)
+    // 기본 보기를 '페이지 맞춤'으로 확실히 적용 (초기 embedConfig만으론 미적용되는 경우 대비)
     const applyFit = () => {
       r.updateSettings({
         layoutType: models.LayoutType.Custom,
-        customLayout: { displayOption: models.DisplayOption.ActualSize },
+        customLayout: { displayOption: models.DisplayOption.FitToPage },
       }).catch(() => { /* noop */ })
     }
     const loadPages = () => {
@@ -255,8 +270,9 @@ export default function ReportViewPage() {
     setViewMenuOpen(false)
     const r = reportRef.current
     if (!r) return
-    // 전체 화면에서는 화면을 꽉 채우도록 '페이지 맞춤'으로 전환한다.
-    // (실제 크기로 두면 레포트가 상단에 붙고 하단에 여백이 남음)
+    // 전체 화면은 화면을 꽉 채우도록 '페이지 맞춤'을 강제한다.
+    // (사용자가 보기 옵션에서 '실제 크기'로 바꿔 뒀어도, 전체 화면에서는 레포트가
+    // 상단에 붙고 하단에 여백이 남는 것을 피하기 위해 페이지 맞춤으로 전환)
     try {
       await r.updateSettings({
         layoutType: models.LayoutType.Custom,
@@ -331,6 +347,9 @@ export default function ReportViewPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reports'] })
       queryClient.invalidateQueries({ queryKey: ['favorites'] })
+      queryClient.invalidateQueries({ queryKey: ['report-catalog'] })
+      queryClient.invalidateQueries({ queryKey: ['report-favorites'] })
+      queryClient.invalidateQueries({ queryKey: ['report-recent'] })
     },
   })
 
@@ -471,9 +490,7 @@ export default function ReportViewPage() {
       }
     : { has_history: false }
 
-  // 마지막 업데이트 = max(라이브 새로고침 end_time, report.updated_at)
-  // PBIX 교체는 새로고침 이력에 안 남을 수 있으므로 updated_at도 함께 고려한다.
-  const lastUpdateLabel = latestUpdateLabel(live?.end_time, report?.updated_at)
+  const publishedLabel = fmtDate(report?.published_at)
 
   const isFavorite = !!report?.is_favorite
 
@@ -517,7 +534,7 @@ export default function ReportViewPage() {
       <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3">
         <button
           type="button"
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/reports')}
           aria-label="목록으로"
           className="flex items-center gap-1 text-sm text-slate-500 transition hover:text-slate-800"
         >
@@ -541,7 +558,7 @@ export default function ReportViewPage() {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
             <span>작성자: {report?.author_label || '-'}</span>
             <span className="text-slate-300">·</span>
-            <span>마지막 업데이트: {lastUpdateLabel ?? '-'}</span>
+            <span>게시일: {publishedLabel ?? '-'}</span>
           </div>
         </div>
 
@@ -832,7 +849,7 @@ export default function ReportViewPage() {
         <div className="fixed inset-0 z-20 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
           <div role="dialog" aria-modal="true" aria-label="레포트 업데이트(교체)" className="my-24 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-800">레포트 업데이트(교체)</h3>
+              <h3 className="text-lg font-bold text-slate-800">레포트 업데이트(교체)</h3>
               <button type="button" aria-label="닫기" onClick={() => setReplaceOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
 

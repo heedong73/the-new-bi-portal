@@ -12,22 +12,27 @@ import json
 from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
 from celery.result import AsyncResult
 from sqlalchemy import select, func, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
 from app.core.constants import AuditAction, RoleCode, PermissionAction, SubjectType
 from app.core.deps import SessionDep, require_menu, require_report_permission, get_current_user, PowerBIClientDep, RedisDep
 from app.core.errors import NotFoundError, ConflictError, ValidationError, PermissionDeniedError
-from app.models.report import Report, Workspace, ReportFavorite, ReportPermission
+from app.models.report import (
+    Report, Workspace, ReportFavorite, ReportPermission,
+    UserReportActivity, ReportViewDailyStat,
+)
 from app.models.mail import MailSchedule
 from app.models.log import AuditLog
 from app.workers.celery_app import celery_app
 from app.workers.tasks.pbix_import import pbix_import as pbix_import_task
 from app.schemas.report import (
     ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse, DefaultViewUpdate,
+    ReportCatalogResponse,
 )
 from app.services.powerbi.client import ReportPageDTO
 from app.services.audit_service import append_audit
-from app.services import permission_service
+from app.services import permission_service, report_discovery_service
 from app.services.refresh_query import get_schedule_info
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -46,16 +51,48 @@ def _creator_label(op: dict) -> str | None:
     return name or emp
 
 
-def _to_response(r: Report) -> ReportResponse:
+def _to_response(
+    r: Report,
+    *,
+    folder_path: str | None = None,
+    root_folder_id: int | None = None,
+    root_folder_name: str | None = None,
+    last_viewed_at=None,
+    view_count: int = 0,
+) -> ReportResponse:
     return ReportResponse(
         id=r.id, workspace_id=r.workspace_id, report_id=r.report_id,
         dataset_id=r.dataset_id, report_name=r.report_name, display_name=r.display_name,
         description=r.description, category=r.category, folder_id=r.folder_id,
-        is_published=r.is_published, sort_order=r.sort_order,
+        is_published=r.is_published, published_at=r.published_at, sort_order=r.sort_order,
         author_label=r.author_label, updated_at=r.updated_at,
+        folder_path=folder_path, root_folder_id=root_folder_id,
+        root_folder_name=root_folder_name, last_viewed_at=last_viewed_at,
+        view_count=view_count,
         created_by_user_id=r.created_by_user_id, created_by_label=r.created_by_label,
         created_at=r.created_at,
     )
+
+
+def _discovery_response(
+    item,
+    *,
+    manage_ids: set[int],
+    download_ids: set[int],
+    favorite_ids: set[int],
+) -> ReportResponse:
+    response = _to_response(
+        item.report,
+        folder_path=item.folder_path,
+        root_folder_id=item.root_folder_id,
+        root_folder_name=item.root_folder_name,
+        last_viewed_at=item.last_viewed_at,
+        view_count=item.view_count,
+    )
+    response.can_manage = item.report.id in manage_ids
+    response.can_download = item.report.id in download_ids
+    response.is_favorite = item.report.id in favorite_ids
+    return response
 
 async def _upsert_workspace(db: SessionDep, workspace_id: str) -> None:
     """workspace_id가 workspaces에 없으면 생성 (auto-upsert)."""
@@ -103,29 +140,115 @@ async def list_reports(
     return result
 
 
-@router.get("/favorites", response_model=list[ReportResponse])
-async def list_favorites(db: SessionDep, current=Depends(get_current_user)):
-    """현재 사용자가 즐겨찾기한 레포트(VIEW 권한 보유분)."""
-    accessible = await permission_service.accessible_report_ids(
+def _discovery_user_id(current: dict) -> int:
+    """독립 PK 공간을 쓰는 로컬 관리자가 일반 사용자의 개인화를 읽지 않게 한다."""
+    return -1 if current.get("is_local_admin") else current["user_id"]
+
+
+async def _discovery_permissions(db: SessionDep, current: dict):
+    accessible_ids = await permission_service.accessible_report_ids(
         db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
     )
-    fav_ids = [
-        rid for (rid,) in (await db.execute(
-            select(ReportFavorite.report_id).where(ReportFavorite.user_id == current["user_id"])
-        )).all()
+    manage_ids = await permission_service.accessible_report_ids(
+        db, current["user_id"], PermissionAction.MANAGE_REPORT, roles=current.get("roles")
+    )
+    download_ids = await permission_service.accessible_report_ids(
+        db, current["user_id"], PermissionAction.DOWNLOAD, roles=current.get("roles")
+    )
+    favorite_ids: set[int] = set()
+    if not current.get("is_local_admin"):
+        favorite_ids = {
+            report_id for (report_id,) in (await db.execute(
+                select(ReportFavorite.report_id).where(
+                    ReportFavorite.user_id == current["user_id"]
+                )
+            )).all()
+        }
+    return accessible_ids, manage_ids, download_ids, favorite_ids
+
+
+@router.get("/catalog", response_model=ReportCatalogResponse)
+async def report_catalog(
+    db: SessionDep,
+    current=Depends(get_current_user),
+    q: str | None = Query(default=None, max_length=200),
+    root_folder_id: int | None = Query(default=None),
+    folder_id: int | None = Query(default=None),
+    sort: str = Query(default="latest", pattern="^(latest|popular)$"),
+    limit: int = Query(default=24, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """VIEW 권한 범위 내 검색·최상위 폴더·최신/최근 30일 인기순 카탈로그."""
+    accessible, manage_ids, download_ids, favorite_ids = await _discovery_permissions(db, current)
+    items, total = await report_discovery_service.catalog(
+        db,
+        user_id=_discovery_user_id(current),
+        accessible_ids=accessible,
+        root_folder_id=root_folder_id,
+        folder_id=folder_id,
+        query=q,
+        sort=sort,
+        limit=limit,
+        offset=offset,
+    )
+    return ReportCatalogResponse(
+        items=[
+            _discovery_response(
+                item,
+                manage_ids=manage_ids,
+                download_ids=download_ids,
+                favorite_ids=favorite_ids,
+            )
+            for item in items
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/recent", response_model=list[ReportResponse])
+async def list_recent_reports(
+    db: SessionDep,
+    current=Depends(get_current_user),
+    limit: int | None = Query(default=None, ge=1, le=100),
+):
+    """현재 사용자가 최근에 연 레포트를 마지막 조회순으로 반환한다."""
+    accessible, manage_ids, download_ids, favorite_ids = await _discovery_permissions(db, current)
+    items = await report_discovery_service.recent(
+        db, user_id=_discovery_user_id(current), accessible_ids=accessible, limit=limit
+    )
+    return [
+        _discovery_response(
+            item,
+            manage_ids=manage_ids,
+            download_ids=download_ids,
+            favorite_ids=favorite_ids,
+        )
+        for item in items
     ]
-    if not fav_ids:
-        return []
-    reports = (await db.execute(
-        select(Report).where(Report.id.in_(fav_ids)).order_by(Report.sort_order, Report.id)
-    )).scalars().all()
-    out = []
-    for r in reports:
-        if r.id in accessible:
-            resp = _to_response(r)
-            resp.is_favorite = True
-            out.append(resp)
-    return out
+
+
+@router.get("/favorites", response_model=list[ReportResponse])
+async def list_favorites(
+    db: SessionDep,
+    current=Depends(get_current_user),
+    limit: int | None = Query(default=None, ge=1, le=100),
+):
+    """현재 사용자의 즐겨찾기를 최근 조회순(미조회는 추가순)으로 반환한다."""
+    accessible, manage_ids, download_ids, favorite_ids = await _discovery_permissions(db, current)
+    items = await report_discovery_service.favorites(
+        db, user_id=_discovery_user_id(current), accessible_ids=accessible, limit=limit
+    )
+    return [
+        _discovery_response(
+            item,
+            manage_ids=manage_ids,
+            download_ids=download_ids,
+            favorite_ids=favorite_ids,
+        )
+        for item in items
+    ]
 
 
 @router.get("/{report_id}/pages", response_model=list[ReportPageDTO])
@@ -169,6 +292,57 @@ async def remove_favorite(report_id: int, db: SessionDep, current=Depends(get_cu
         ReportFavorite.user_id == current["user_id"], ReportFavorite.report_id == report_id,
     ))
     await db.commit()
+
+
+@router.post("/{report_id}/view", status_code=204)
+async def record_report_view(
+    report_id: int,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """실제 레포트 화면 진입을 최근 조회와 일별 인기 집계에 반영한다."""
+    existing_report_id = await db.scalar(select(Report.id).where(Report.id == report_id))
+    if existing_report_id is None:
+        raise NotFoundError("레포트를 찾을 수 없습니다.")
+
+    allowed = await permission_service.has_permission(
+        db,
+        current["user_id"],
+        report_id,
+        PermissionAction.VIEW,
+        roles=current.get("roles"),
+    )
+    if not allowed:
+        raise PermissionDeniedError()
+    if current.get("is_local_admin"):
+        return
+
+    activity_insert = pg_insert(UserReportActivity).values(
+        user_id=current["user_id"],
+        report_id=report_id,
+        first_viewed_at=func.now(),
+        last_viewed_at=func.now(),
+        view_count=1,
+    )
+    await db.execute(activity_insert.on_conflict_do_update(
+        index_elements=["user_id", "report_id"],
+        set_={
+            "last_viewed_at": func.now(),
+            "view_count": UserReportActivity.view_count + 1,
+        },
+    ))
+
+    daily_insert = pg_insert(ReportViewDailyStat).values(
+        report_id=report_id,
+        viewed_date=func.current_date(),
+        view_count=1,
+    )
+    await db.execute(daily_insert.on_conflict_do_update(
+        index_elements=["report_id", "viewed_date"],
+        set_={"view_count": ReportViewDailyStat.view_count + 1},
+    ))
+    await db.commit()
+
 
 @router.get("/all", response_model=list[ReportResponse])
 async def list_all_reports(db: SessionDep, _op=Depends(_require_operator)):
@@ -270,6 +444,8 @@ async def change_visibility(report_id: int, body: VisibilityUpdate, db: SessionD
     report = await db.scalar(select(Report).where(Report.id == report_id))
     if report is None:
         raise NotFoundError("레포트를 찾을 수 없습니다.")
+    if body.is_published and not report.is_published:
+        report.published_at = func.now()
     report.is_published = body.is_published
     await db.flush()
     await append_audit(db, action=AuditAction.REPORT_VISIBILITY_CHANGE, result="success",
@@ -527,7 +703,7 @@ async def replace_pbix(
 ):
     """기존 레포트를 PBIX 재업로드로 교체(덮어쓰기). MANAGE_REPORT 권한 필요.
 
-    Super_User는 운영자가 MANAGE_REPORT를 부여한 레포트에 한해 콘텐츠를 교체할 수 있다.
+    General_User도 운영자가 MANAGE_REPORT를 부여한 레포트에 한해 콘텐츠를 교체할 수 있다.
     Power BI Import(nameConflict=CreateOrOverwrite)로 동일 이름 레포트를 덮어쓴다.
     """
     if not file.filename or not file.filename.lower().endswith(".pbix"):
