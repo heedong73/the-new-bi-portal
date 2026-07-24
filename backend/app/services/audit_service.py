@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.http_utils import get_current_client_ip
 from app.models.log import AuditLog
 
 # meta에 허용되는 키만 통과 (시크릿 차단 화이트리스트)
@@ -50,7 +51,12 @@ async def append_audit(
     meta: dict | None = None,
 ) -> int:
     """감사 로그 1건 기록. 시크릿은 _sanitize_meta로 차단. 생성된 로그 id를 반환한다
-    (호출부 대부분은 무시하지만, report_view는 체류시간 갱신을 위해 필요로 한다)."""
+    (호출부 대부분은 무시하지만, report_view는 체류시간 갱신을 위해 필요로 한다).
+
+    ip_address는 호출부가 넘기지 않아도 request_context_middleware가 요청마다
+    저장해 둔 클라이언트 IP를 자동으로 채운다(Celery 워커 등 요청 밖 컨텍스트에서는
+    None). 위조 가능성이 있는 참고값이라 단독 신원 증거로는 쓰지 않는다.
+    """
     entry = AuditLog(
         actor_user_id=actor_user_id,
         actor_label=actor_label,
@@ -59,6 +65,7 @@ async def append_audit(
         resource_id=resource_id,
         result=result,
         meta=_sanitize_meta(meta),
+        ip_address=get_current_client_ip(),
     )
     db.add(entry)
     await db.flush()

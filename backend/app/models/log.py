@@ -28,6 +28,9 @@ class AuditLog(Base):
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # report_view 전용: 프런트가 탭 전환/이탈 시점에 갱신하는 체류 시간(초, 근사치).
     duration_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # 요청 클라이언트 IP(nginx X-Forwarded-For/X-Real-IP 또는 request.client.host).
+    # 감사 목적의 참고값이며, 위조 가능성이 있어 단독 신원 증거로 쓰지 않는다.
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 class Request(Base):
     __tablename__ = "requests"
