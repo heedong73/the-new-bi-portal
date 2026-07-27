@@ -114,8 +114,8 @@
   max-width: 680px;
   margin: 0;
   color: #182d3d;
-  font-family: Georgia, "Noto Serif KR", serif;
-  font-size: clamp(42px, 3.65vw, 53px);
+  font-family: inherit;
+  font-size: clamp(29.4px, 2.555vw, 37.1px);
   font-weight: 500;
   letter-spacing: -0.052em;
   line-height: 1.18;
@@ -128,12 +128,13 @@
 }
 
 .login-story__description {
-  margin: 27px 0 0 42px;
+  margin: 27px 0 0;
   color: #6f7778;
   font-size: clamp(12px, 0.95vw, 14px);
   font-weight: 400;
   letter-spacing: -0.01em;
   line-height: 1.9;
+  white-space: nowrap;
 }
 
 .login-data-flow {
@@ -461,7 +462,7 @@
   }
 
   .login-story h2 {
-    font-size: clamp(38px, 4.2vw, 47px);
+    font-size: clamp(26.6px, 2.94vw, 32.9px);
   }
 
   .login-main {
@@ -677,14 +678,19 @@
   }
 
   .login-story {
+    --login-story-right-inset: clamp(32px, 3vw, 48px);
+
     width: 100%;
-    padding-right: clamp(32px, 3vw, 48px);
+    padding-right: var(--login-story-right-inset);
     padding-left: clamp(58px, 5.4vw, 78px);
+  }
+
+  .login-story__edition {
+    right: var(--login-story-right-inset);
   }
 
   .login-data-flow {
     width: calc(100% - 20px);
-    max-width: 860px;
     margin-top: 46px;
     margin-left: 20px;
   }
@@ -704,7 +710,9 @@
 
 @media (min-width: 861px) and (max-width: 1180px) {
   .login-story {
-    padding-right: 24px;
+    --login-story-right-inset: 24px;
+
+    padding-right: var(--login-story-right-inset);
     padding-left: 42px;
   }
 

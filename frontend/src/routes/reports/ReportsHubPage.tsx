@@ -498,7 +498,7 @@ export default function ReportsHubPage() {
             <div>
               <p className="report-hub-kicker">Report discovery workspace</p>
               <h1>환영합니다, <strong>{user?.name || '사용자'}</strong>님!</h1>
-              <p>필요한 인사이트를 빠르게 찾고, 최근 업무 흐름을 자연스럽게 이어가세요.</p>
+              <p>업무에 필요한 인사이트를 더 빠르고 편리하게, 하나의 공간에서 만나보세요.</p>
             </div>
             <HomeReportSearch
               key={query}

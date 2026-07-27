@@ -100,14 +100,12 @@ export default function LoginPage() {
           <span /> Business Intelligence Workspace
         </p>
         <h2>
-          데이터가
+          업무에 <em>필요한 인사이트</em>를 더 빠르고 편리하게,
           <br />
-          <em>더 나은 결정</em>이 되는 곳.
+          하나의 공간에서 만나보세요.
         </h2>
         <p className="login-story__description">
-          하나의 공간에서 리포트를 발견하고 공유하며,
-          <br />
-          비즈니스의 다음 인사이트를 연결하세요.
+          리포트를 탐색하고 공유하며, 데이터 기반의 더 나은 업무 흐름을 만들어가세요.
         </p>
 
         <div className="login-data-flow" aria-hidden="true">
