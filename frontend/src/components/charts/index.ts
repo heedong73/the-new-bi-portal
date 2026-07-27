@@ -11,6 +11,7 @@ export type { LongestRunCardProps } from "./LongestRunCard";
 
 export { default as HourlyTrendChart } from "./HourlyTrendChart";
 export type { HourlyTrendChartProps } from "./HourlyTrendChart";
+export { extractBucket, bucketRangeLabel } from "./hourlyBuckets";
 
 export { default as FailedRunsCard } from "./FailedRunsCard";
 export type { FailedRunsCardProps } from "./FailedRunsCard";

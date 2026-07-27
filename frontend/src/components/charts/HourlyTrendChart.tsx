@@ -17,6 +17,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -25,12 +26,20 @@ import {
 import ko from "@/i18n/ko";
 import { STATUS_COLORS } from "@/components/gantt/ganttGeometry";
 import type { RefreshRunOut } from "@/types/refresh";
+import { BUCKETS, bucketLabel, extractBucket, labelToBucket } from "./hourlyBuckets";
 
 export interface HourlyTrendChartProps {
   /** Report 단위로 펼쳐진 refresh 목록. 상위 페이지에서 주입한다. */
   runs: RefreshRunOut[];
   /** 차트 높이(px). 기본 280 */
   height?: number;
+  /** 현재 선택된 30분 버킷 인덱스(0~47). null이면 미선택. */
+  selectedBucket?: number | null;
+  /**
+   * 버킷 클릭 시 호출. 같은 버킷을 다시 클릭하면 null(해제)로 전달한다.
+   * 지정하지 않으면 차트는 클릭 불가(기존 동작 유지).
+   */
+  onSelectBucket?: (bucket: number | null) => void;
 }
 
 /** 30분 버킷 집계 1행 */
@@ -43,35 +52,11 @@ interface BucketDatum {
   failed: number;
 }
 
-/** 하루 30분 버킷 개수 (24시간 × 2) */
-const BUCKETS = 48;
-
 const TOTAL_LINE_COLOR = "#6366f1"; // indigo-500
 const FAILED_LINE_COLOR = STATUS_COLORS.failed;
 
 const TOTAL_KEY = "건수";
 const FAILED_KEY = ko.status.failed;
-
-/**
- * local ISO 문자열에서 30분 버킷 인덱스(0~47)를 추출한다. 형식 불일치/null이면 null.
- * 오프셋 재해석 없이 ISO 문자열의 `HH:mm` 부분만 읽는다.
- */
-function extractBucket(iso: string | null): number | null {
-  if (!iso) return null;
-  const m = iso.match(/[T ](\d{2}):(\d{2})/);
-  if (!m) return null;
-  const h = Number(m[1]);
-  const min = Number(m[2]);
-  if (h < 0 || h > 23) return null;
-  return h * 2 + (min >= 30 ? 1 : 0);
-}
-
-/** 버킷 인덱스 → "HH:mm" 라벨 */
-function bucketLabel(idx: number): string {
-  const h = Math.floor(idx / 2);
-  const mm = idx % 2 === 0 ? "00" : "30";
-  return `${String(h).padStart(2, "0")}:${mm}`;
-}
 
 /** 시작 시각(local)의 30분 버킷별로 총/실패 건수를 집계한다 (48개 버킷). */
 function aggregateByHalfHour(runs: RefreshRunOut[]): BucketDatum[] {
@@ -92,14 +77,38 @@ function aggregateByHalfHour(runs: RefreshRunOut[]): BucketDatum[] {
   }));
 }
 
-export default function HourlyTrendChart({ runs, height = 280 }: HourlyTrendChartProps) {
+export default function HourlyTrendChart({
+  runs,
+  height = 280,
+  selectedBucket = null,
+  onSelectBucket,
+}: HourlyTrendChartProps) {
   const data = useMemo(() => aggregateByHalfHour(runs), [runs]);
   const hasAny = useMemo(() => data.some((d) => d.total > 0), [data]);
 
+  const clickable = typeof onSelectBucket === "function";
+
+  /** 차트 클릭 → 활성 x라벨을 버킷으로 역산. 같은 버킷 재클릭은 해제(null). */
+  const handleChartClick = (state: { activeLabel?: string | number } | null) => {
+    if (!onSelectBucket) return;
+    const bucket = labelToBucket(state?.activeLabel);
+    if (bucket == null) return;
+    onSelectBucket(bucket === selectedBucket ? null : bucket);
+  };
+
+  const selectedLabel =
+    selectedBucket != null ? bucketLabel(selectedBucket) : null;
+
   return (
     <div className="flex flex-col rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 text-sm font-bold text-slate-700">
-        {ko.charts.hourlyTrend} <span className="text-xs font-normal text-slate-400">(30분 단위)</span>
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-700">
+        {ko.charts.hourlyTrend}{" "}
+        <span className="text-xs font-normal text-slate-400">(30분 단위)</span>
+        {clickable && hasAny && (
+          <span className="ml-auto text-xs font-normal text-slate-400">
+            시간대를 클릭하면 아래 표가 해당 시간대로 필터링됩니다
+          </span>
+        )}
       </h3>
       {!hasAny ? (
         <p className="flex h-40 items-center justify-center text-sm text-slate-400">
@@ -110,7 +119,12 @@ export default function HourlyTrendChart({ runs, height = 280 }: HourlyTrendChar
         <div className="overflow-x-auto">
           <div style={{ minWidth: 1440 }}>
             <ResponsiveContainer width="100%" height={height}>
-              <LineChart data={data} margin={{ top: 4, right: 16, bottom: 28, left: -8 }}>
+              <LineChart
+                data={data}
+                margin={{ top: 4, right: 16, bottom: 28, left: -8 }}
+                onClick={clickable ? handleChartClick : undefined}
+                style={clickable ? { cursor: "pointer" } : undefined}
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis
                   dataKey="label"
@@ -123,6 +137,15 @@ export default function HourlyTrendChart({ runs, height = 280 }: HourlyTrendChar
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
                 <Tooltip />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
+                {selectedLabel != null && (
+                  <ReferenceLine
+                    x={selectedLabel}
+                    stroke={TOTAL_LINE_COLOR}
+                    strokeWidth={2}
+                    strokeOpacity={0.7}
+                    ifOverflow="extendDomain"
+                  />
+                )}
                 <Line
                   type="monotone"
                   dataKey="total"

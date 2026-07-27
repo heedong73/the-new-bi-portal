@@ -49,6 +49,8 @@ import FilterBar from "@/components/filters/FilterBar";
 import KpiCards from "@/components/kpi/KpiCards";
 import RefreshTimeline from "@/components/gantt/RefreshTimeline";
 import {
+  bucketRangeLabel,
+  extractBucket,
   FailedRunsCard,
   HourlyTrendChart,
   LongestRunCard,
@@ -144,6 +146,30 @@ export default function RefreshStatusPage() {
   const summary = useMemo(
     () => computeSummary(visibleTimetableRuns),
     [visibleTimetableRuns]
+  );
+
+  // 시간대별 추이 그래프에서 클릭한 30분 버킷(0~47). null = 전체.
+  // 이 선택은 "상세 테이블"에만 적용한다(그래프/KPI/간트는 전체 유지).
+  const [selectedBucket, setSelectedBucket] = useState<number | null>(null);
+
+  // 선택 일자·필터가 바뀌면 시간대 선택을 해제한다(다른 날짜의 선택 잔존 방지).
+  // effect 내 setState 대신 렌더 중 이전 값 비교(React 권장 패턴)로 처리한다.
+  const filterKey = `${+from}|${+to}|${status}|${reportId ?? ""}|${datasetId ?? ""}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setSelectedBucket(null);
+  }
+
+  // 상세 테이블에 넘길 runs: 시간대 선택 시 해당 30분 버킷에 시작된 run만.
+  const tableRuns = useMemo<RefreshRunOut[]>(
+    () =>
+      selectedBucket == null
+        ? visibleTimetableRuns
+        : visibleTimetableRuns.filter(
+            (r) => extractBucket(r.startTimeLocal) === selectedBucket
+          ),
+    [visibleTimetableRuns, selectedBucket]
   );
 
   // 타임테이블은 기본적으로 펼쳐 두고 운영자가 필요할 때 접어 공간을 확보한다.
@@ -341,12 +367,33 @@ export default function RefreshStatusPage() {
               <FailedRunsCard runs={visibleTimetableRuns} />
             </div>
           </div>
-          <HourlyTrendChart runs={visibleTimetableRuns} />
+          <HourlyTrendChart
+            runs={visibleTimetableRuns}
+            selectedBucket={selectedBucket}
+            onSelectBucket={setSelectedBucket}
+          />
 
           {/* 5. 상세 테이블 */}
+          {/* 시간대 선택 시 테이블만 해당 30분 버킷으로 필터링됨을 알리고 해제 버튼 제공. */}
+          {selectedBucket != null && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-800">
+              <span>
+                선택한 시간대{" "}
+                <strong>{bucketRangeLabel(selectedBucket)}</strong>에 시작된
+                refresh만 표시 중 — {tableRuns.length}건
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedBucket(null)}
+                className="rounded border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-100"
+              >
+                전체 표시
+              </button>
+            </div>
+          )}
           <div className="min-w-0">
             <RefreshTable
-              runs={visibleTimetableRuns}
+              runs={tableRuns}
               onVisibleRowsChange={handleVisibleRowsChange}
             />
           </div>
