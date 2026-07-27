@@ -17,6 +17,7 @@ from app.schemas.permission import (
     RoleResponse, RoleAssignRequest, PermissionGrantRequest, PermissionBulkGrantRequest,
     PermissionResponse,
 )
+from app.services import permission_service
 from app.services.audit_service import append_audit
 
 router = APIRouter(tags=["roles-permissions"])
@@ -82,7 +83,11 @@ async def list_permissions(report_id: int, db: SessionDep, _op=Depends(_require_
 
 @router.post("/api/reports/{report_id}/permissions", response_model=PermissionResponse, status_code=201)
 async def grant_permission(report_id: int, body: PermissionGrantRequest, db: SessionDep, op=Depends(_require_reports_menu)):
-    """레포트 권한 부여 (주체=user/role/dept/group, 권한=VIEW/DOWNLOAD/REFRESH/MANAGE_REPORT)."""
+    """레포트 권한 부여 (주체=user/role/dept/group).
+
+    권한=VIEW/DOWNLOAD/DOWNLOAD_PBIX/REFRESH/MANAGE_REPORT/MANAGE_DEFAULT_VIEW/VIEW_STATS.
+    조회를 전제로 하는 권한을 부여하면 VIEW도 함께 부여한다(멱등).
+    """
     report = await db.scalar(select(Report).where(Report.id == report_id))
     if report is None:
         raise NotFoundError("레포트를 찾을 수 없습니다.")
@@ -103,6 +108,24 @@ async def grant_permission(report_id: int, body: PermissionGrantRequest, db: Ses
         subject_id=body.subject_id, permission=body.permission,
     )
     db.add(perm)
+
+    # 조회 전제 권한이면 VIEW도 함께 보장한다(이미 있으면 건너뜀).
+    for code in permission_service.normalize_grant_codes([body.permission]):
+        if code == body.permission:
+            continue
+        already = await db.scalar(
+            select(ReportPermission).where(
+                ReportPermission.report_id == report_id,
+                ReportPermission.subject_type == body.subject_type,
+                ReportPermission.subject_id == body.subject_id,
+                ReportPermission.permission == code,
+            )
+        )
+        if already is None:
+            db.add(ReportPermission(
+                report_id=report_id, subject_type=body.subject_type,
+                subject_id=body.subject_id, permission=code,
+            ))
     await db.flush()
     await append_audit(db, action=AuditAction.PERMISSION_CHANGE, result="success",
                        actor_user_id=op["user_id"], actor_label=op["emp_no"],
@@ -135,8 +158,8 @@ async def grant_permissions_bulk(report_id: int, body: PermissionBulkGrantReques
         )).scalars().all()
     }
     added: list[str] = []
-    for permission in body.permissions:
-        code = permission.value if hasattr(permission, "value") else str(permission)
+    # 조회 없이 다운로드/새로고침/관리만 가진 모순 상태를 막기 위해 VIEW를 자동 포함한다.
+    for code in permission_service.normalize_grant_codes(body.permissions):
         if code in existing:
             continue
         db.add(ReportPermission(

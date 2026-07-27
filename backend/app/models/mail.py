@@ -121,6 +121,13 @@ class ExportJob(Base):
     page_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     export_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # --- 페이지 단위 내보내기 옵션 (직접 Export) ---
+    # 파일명에 쓰는 사람이 읽는 페이지 이름(page_name은 내부 섹션 id라 파일명에 부적합).
+    page_display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Power BI 북마크 state 문자열. 요청자 화면의 슬라이서/필터 선택을 결과에 반영한다.
+    bookmark_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 전체 페이지 내보내기 시 내보낼 페이지 순서(숨김 페이지 제외). CSV(page_name).
+    page_names_csv: Mapped[str | None] = mapped_column(Text, nullable=True)
     # --- standalone export (T-25): mail_job_id가 NULL인 직접 Export 요청 ---
     requested_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     report_id: Mapped[int | None] = mapped_column(

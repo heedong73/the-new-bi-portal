@@ -1,15 +1,17 @@
 /** 권한 관리 — 그룹 중심 메뉴 권한 · 허용 계열사 · 레포트 다중 권한 부여 통합 화면.
  *
- * - 그룹 관리: 그룹을 고르면 메뉴 접근 토글, 허용 계열사(최상위 폴더) 다중 선택,
- *   레포트를 다중 선택해 권한(조회/다운로드/새로고침/교체/통계조회)을 한 번에 부여.
- * - 메뉴 관리: 메뉴를 고르면 접근 가능한 주체(그룹/개별 사용자) 목록을 보여준다.
+ * - 그룹 관리: 그룹을 고르면 메뉴 접근(통계) 토글, 허용 계열사(최상위 폴더) 다중 선택,
+ *   레포트를 다중 선택해 권한(조회/내보내기/원본 다운로드/새로고침/교체/기본 뷰 관리/
+ *   통계 조회)을 한 번에 부여.
+ * - 통계 접근: 통계 메뉴에 접근 가능한 주체(그룹/개별 사용자) 목록을 보여준다.
  *   그룹 권한으로 얻은 사용자는 여기서 회수할 수 없다(그룹 관리에서 조정).
+ *   관리자·운영 메뉴는 System_Operator 전용이라 개별 부여 대상이 아니다.
  *
  * 기존 레포트 관리 화면의 레포트별 '권한' 버튼(ReportPermissionPanel)은 병행 유지한다.
  */
 import { useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Building2, Info, LayoutGrid, Shield, User, UsersRound, X } from 'lucide-react'
+import { BarChart3, Building2, LayoutGrid, Shield, User, UsersRound, X } from 'lucide-react'
 
 import { permissionAdminApi, usersApi } from '@/api/adminApi'
 import { foldersAdminApi, reportAdminApi } from '@/api/reportAdminApi'
@@ -17,23 +19,28 @@ import { MENU_CATALOG } from '@/constants/menus'
 import type { PermissionAction } from '@/types/reportAdmin'
 import type { DirectReportPermission, InheritedReportPermission } from '@/types/admin'
 import CompanyScopePicker from './CompanyScopePicker'
+import PermissionHint from './PermissionHint'
 import ReportMultiPicker from './ReportMultiPicker'
 import GroupTreeSelector, { type GroupSelection } from './GroupTreeSelector'
 import { UserPicker } from './EntityPicker'
 
 const REPORT_PERMISSIONS: { value: PermissionAction; label: string; hint?: string }[] = [
   { value: 'VIEW', label: '조회' },
-  { value: 'DOWNLOAD', label: '다운로드' },
+  { value: 'DOWNLOAD', label: '내보내기', hint: 'PDF·PowerPoint·이미지로 내보낼 수 있습니다. 원본 파일(.pbix)은 포함되지 않습니다.' },
+  { value: 'DOWNLOAD_PBIX', label: '원본 다운로드', hint: 'Power BI 원본 파일(.pbix)을 내려받을 수 있습니다. 데이터 모델이 포함되므로 꼭 필요한 대상에만 부여하세요.' },
   { value: 'REFRESH', label: '새로고침' },
-  { value: 'MANAGE_REPORT', label: '교체', hint: "레포트 파일 교체와 함께 레포트 뷰의 '현재 뷰를 기본값으로 저장' 권한이 포함됩니다." },
+  { value: 'MANAGE_REPORT', label: '교체', hint: '레포트 원본 파일(.pbix)을 새 파일로 덮어써 내용을 교체할 수 있습니다.' },
+  { value: 'MANAGE_DEFAULT_VIEW', label: '기본 뷰 관리', hint: "레포트 뷰의 '현재 뷰를 기본값으로 저장'과 '기본 뷰 초기화'를 사용할 수 있습니다. 모든 사용자에게 보이는 시작 화면이 바뀝니다." },
   { value: 'VIEW_STATS', label: '통계 조회' },
 ]
 
 const PERM_LABEL: Record<string, string> = {
   VIEW: '조회',
-  DOWNLOAD: '다운로드',
+  DOWNLOAD: '내보내기',
+  DOWNLOAD_PBIX: '원본 다운로드',
   REFRESH: '새로고침',
   MANAGE_REPORT: '교체',
+  MANAGE_DEFAULT_VIEW: '기본 뷰 관리',
   VIEW_STATS: '통계 조회',
 }
 const permOrder = (code: string) => {
@@ -57,7 +64,8 @@ export default function PermissionsPage() {
       <div className="mb-4">
         <h2 className="portal-content-page-title">권한 관리</h2>
         <p className="mt-1 text-sm text-slate-500">
-          그룹·메뉴·개인 단위로 메뉴 접근, 허용 계열사, 레포트 권한을 한 화면에서 관리합니다.
+          그룹·개인 단위로 통계 메뉴 접근, 허용 계열사, 레포트 권한을 한 화면에서 관리합니다.
+          관리자·운영 메뉴는 시스템 운영자만 접근합니다.
         </p>
       </div>
 
@@ -65,8 +73,8 @@ export default function PermissionsPage() {
         <TabButton active={tab === 'groups'} onClick={() => setTab('groups')} icon={<UsersRound className="h-4 w-4" />}>
           그룹 관리
         </TabButton>
-        <TabButton active={tab === 'menus'} onClick={() => setTab('menus')} icon={<LayoutGrid className="h-4 w-4" />}>
-          메뉴 관리
+        <TabButton active={tab === 'menus'} onClick={() => setTab('menus')} icon={<BarChart3 className="h-4 w-4" />}>
+          통계 접근
         </TabButton>
         <TabButton active={tab === 'personal'} onClick={() => setTab('personal')} icon={<User className="h-4 w-4" />}>
           개인별 권한
@@ -229,7 +237,11 @@ function GroupDetailPanel({ groupId, groupName }: { groupId: number; groupName: 
             })}
           </div>
         )}
-        <p className="mt-2 text-xs text-slate-400">홈은 모든 사용자가 기본으로 접근하며, 시스템 운영자는 항상 전체 메뉴에 접근합니다.</p>
+        <p className="mt-2 text-xs text-slate-400">
+          홈·서비스 센터는 모든 사용자가 기본으로 접근합니다. 관리자·운영 메뉴(레포트 관리, 사용자,
+          그룹, 공휴일, 감사 로그, 운영 상태, Refresh 현황, 메일 이력·스케줄)는 시스템 운영자
+          전용이라 부여 대상이 아닙니다.
+        </p>
       </div>
 
       {/* 허용 계열사 */}
@@ -255,7 +267,7 @@ function GroupDetailPanel({ groupId, groupName }: { groupId: number; groupName: 
           <CompanyScopePicker folders={folders} value={scopeIds} onChange={setScopeDraft} />
         )}
         <p className="mt-2 text-xs text-slate-400">
-          선택한 계열사 하위 모든 레포트에 조회 권한이 자동으로 부여됩니다. 다운로드·새로고침·교체·통계 조회는 아래에서 레포트별로 부여하세요.
+          선택한 계열사 하위 모든 레포트에 조회 권한이 자동으로 부여됩니다. 내보내기·원본 다운로드·새로고침·교체·기본 뷰 관리·통계 조회는 아래에서 레포트별로 부여하세요.
         </p>
       </div>
 
@@ -272,14 +284,15 @@ function GroupDetailPanel({ groupId, groupName }: { groupId: number; groupName: 
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <span className="text-xs text-slate-400">권한(복수 선택)</span>
               {REPORT_PERMISSIONS.map((p) => (
-                <label key={p.value} title={p.hint}
-                  className={`inline-flex items-center gap-1 text-sm text-slate-600 ${p.hint ? 'cursor-help' : ''}`}>
-                  <input type="checkbox" checked={reportPerms.includes(p.value)}
-                    onChange={(e) => togglePerm(p.value, e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300" />
-                  {p.label}
-                  {p.hint && <Info className="h-3 w-3 text-slate-400" aria-hidden />}
-                </label>
+                <span key={p.value} className="inline-flex items-center gap-1">
+                  <label className="inline-flex items-center gap-1 text-sm text-slate-600">
+                    <input type="checkbox" checked={reportPerms.includes(p.value)}
+                      onChange={(e) => togglePerm(p.value, e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300" />
+                    {p.label}
+                  </label>
+                  {p.hint && <PermissionHint text={p.hint} label={p.label} />}
+                </span>
               ))}
               <button type="button"
                 disabled={reportIds.size === 0 || reportPerms.length === 0 || grantMutation.isPending}
@@ -288,6 +301,9 @@ function GroupDetailPanel({ groupId, groupName }: { groupId: number; groupName: 
                 {grantMutation.isPending ? '부여 중…' : `선택한 ${reportIds.size}개 레포트에 부여`}
               </button>
             </div>
+            <p className="mt-2 text-xs text-slate-400">
+              내보내기·원본 다운로드·새로고침·교체·기본 뷰 관리를 부여하면 조회 권한이 함께 부여됩니다.
+            </p>
             {grantMessage && <p className="mt-2 text-xs text-green-700">{grantMessage}</p>}
             {grantMutation.isError && <p role="alert" className="mt-2 text-xs text-red-600">부여에 실패했습니다. 다시 시도하세요.</p>}
           </>
@@ -297,7 +313,7 @@ function GroupDetailPanel({ groupId, groupName }: { groupId: number; groupName: 
   )
 }
 
-// ===== 메뉴 관리 =====
+// ===== 통계 접근 =====
 
 function MenuPermissionsView() {
   const [selectedMenu, setSelectedMenu] = useState<string>(MENU_CATALOG[0]?.[0] ?? '')
@@ -349,27 +365,35 @@ function MenuPermissionsView() {
   const [addUserId, setAddUserId] = useState<number | null>(null)
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr]">
-      <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
-        <ul className="space-y-0.5">
-          {MENU_CATALOG.map(([key, label]) => (
-            <li key={key}>
-              <button type="button" onClick={() => setSelectedMenu(key)}
-                className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm ${
-                  selectedMenu === key ? 'bg-blue-600 text-white' : 'text-slate-700 hover:bg-slate-100'
-                }`}>
-                <LayoutGrid className={`h-3.5 w-3.5 shrink-0 ${selectedMenu === key ? 'text-white' : 'text-slate-400'}`} />
-                <span className="truncate">{label}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+    <div className="grid grid-cols-1 gap-6">
+      {/* 부여 대상 메뉴가 통계 하나뿐이라 메뉴 선택 목록 없이 바로 주체를 보여준다.
+          메뉴가 다시 늘어나면 MENU_CATALOG 기반 선택 목록을 복원하면 된다. */}
+      {MENU_CATALOG.length > 1 && (
+        <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+          <ul className="space-y-0.5">
+            {MENU_CATALOG.map(([key, label]) => (
+              <li key={key}>
+                <button type="button" onClick={() => setSelectedMenu(key)}
+                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm ${
+                    selectedMenu === key ? 'bg-blue-600 text-white' : 'text-slate-700 hover:bg-slate-100'
+                  }`}>
+                  <LayoutGrid className={`h-3.5 w-3.5 shrink-0 ${selectedMenu === key ? 'text-white' : 'text-slate-400'}`} />
+                  <span className="truncate">{label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-4 text-sm font-bold text-slate-800">
+        <h3 className="mb-1 text-sm font-bold text-slate-800">
           {MENU_CATALOG.find(([k]) => k === selectedMenu)?.[1] ?? selectedMenu} — 접근 가능 주체
         </h3>
+        <p className="mb-4 text-xs text-slate-400">
+          통계 메뉴는 그룹 또는 개별 사용자에게 부여할 수 있습니다. 레포트별 통계 범위는 각 레포트의
+          &apos;통계 조회&apos; 권한으로 결정됩니다.
+        </p>
 
         {subjectsQuery.isLoading ? (
           <p className="text-sm text-slate-400">불러오는 중…</p>
@@ -729,14 +753,15 @@ function UserDetailPanel({ userId }: { userId: number }) {
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     <span className="text-xs text-slate-400">권한(복수 선택)</span>
                     {REPORT_PERMISSIONS.map((p) => (
-                      <label key={p.value} title={p.hint}
-                        className={`inline-flex items-center gap-1 text-sm text-slate-600 ${p.hint ? 'cursor-help' : ''}`}>
-                        <input type="checkbox" checked={reportPerms.includes(p.value)}
-                          onChange={(e) => togglePerm(p.value, e.target.checked)}
-                          className="h-4 w-4 rounded border-slate-300" />
-                        {p.label}
-                        {p.hint && <Info className="h-3 w-3 text-slate-400" aria-hidden />}
-                      </label>
+                      <span key={p.value} className="inline-flex items-center gap-1">
+                        <label className="inline-flex items-center gap-1 text-sm text-slate-600">
+                          <input type="checkbox" checked={reportPerms.includes(p.value)}
+                            onChange={(e) => togglePerm(p.value, e.target.checked)}
+                            className="h-4 w-4 rounded border-slate-300" />
+                          {p.label}
+                        </label>
+                        {p.hint && <PermissionHint text={p.hint} label={p.label} />}
+                      </span>
                     ))}
                     <button type="button"
                       disabled={reportIds.size === 0 || reportPerms.length === 0 || grantMutation.isPending}

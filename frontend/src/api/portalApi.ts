@@ -96,10 +96,31 @@ export const reportsApi = {
   removeFavorite: (reportDbId: number) =>
     apiClient.del<void>(`/api/reports/${reportDbId}/favorite`),
 
-  /** POST /api/reports/{id}/export — Export 요청(DOWNLOAD 권한). 202 {export_job_id}. */
-  startExport: (reportDbId: number, format: ExportFormat) =>
+  /** POST /api/reports/{id}/export — Export 요청(내보내기/원본 다운로드 권한). 202 {export_job_id}.
+   *
+   * page_name을 주면 그 페이지 1장만, 없으면 레포트 전체를 내보낸다.
+   * PDF/PPTX/PNG 모두 두 범위를 지원하며 전체 PNG는 ZIP으로 내려올 수 있다.
+   * bookmark_state(현재 화면에서 캡처한 북마크 state)를 주면 슬라이서/필터 선택이 반영된다.
+   */
+  startExport: (
+    reportDbId: number,
+    format: ExportFormat,
+    options?: {
+      pageName?: string | null
+      pageDisplayName?: string | null
+      bookmarkState?: string | null
+      pageNames?: string[] | null
+    },
+  ) =>
     apiClient.post<{ export_job_id: number; status: string }>(
-      `/api/reports/${reportDbId}/export`, { export_format: format },
+      `/api/reports/${reportDbId}/export`,
+      {
+        export_format: format,
+        page_name: options?.pageName ?? null,
+        page_display_name: options?.pageDisplayName ?? null,
+        bookmark_state: options?.bookmarkState ?? null,
+        page_names: options?.pageNames ?? null,
+      },
     ),
 
   /** POST /api/reports/{id}/view — 최근 조회와 인기 집계에 화면 진입을 기록. */

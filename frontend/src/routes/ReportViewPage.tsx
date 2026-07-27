@@ -32,6 +32,19 @@ const EXPORT_FORMAT_LABEL: Record<ExportFormat, string> = {
   PDF: 'PDF', PPTX: 'PowerPoint', PNG: '이미지', PBIX: '원본(.pbix)',
 }
 
+/** Export 요청 1건 — 포맷 + 범위(페이지/전체/원본) 옵션 + 작업 도크 표시용 라벨. */
+interface ExportRequestVariables {
+  format: ExportFormat
+  /** 작업 도크 라벨에 덧붙일 범위 표시(예: 페이지명, '전체 페이지'). */
+  scopeLabel?: string
+  options?: {
+    pageName?: string | null
+    pageDisplayName?: string | null
+    bookmarkState?: string | null
+    pageNames?: string[] | null
+  }
+}
+
 /** 요일(영문) → 한글 축약. */
 const WEEKDAY_KO: Record<string, string> = {
   Monday: '월', Tuesday: '화', Wednesday: '수', Thursday: '목',
@@ -407,11 +420,14 @@ export default function ReportViewPage() {
 
   // 다운로드(Export): 포맷별 비동기 Export 요청 → 작업 도크가 진행/완료·자동 다운로드 처리.
   const exportMutation = useMutation({
-    mutationFn: (format: ExportFormat) => reportsApi.startExport(reportDbId, format),
-    onSuccess: (res, format) => {
+    mutationFn: (variables: ExportRequestVariables) =>
+      reportsApi.startExport(reportDbId, variables.format, variables.options),
+    onSuccess: (res, variables) => {
+      const reportLabel = report ? reportDisplayName(report) : '레포트'
+      const scopeLabel = variables.scopeLabel ? ` · ${variables.scopeLabel}` : ''
       addTask({
         id: `export-${res.export_job_id}`,
-        label: `${report ? reportDisplayName(report) : '레포트'} · ${EXPORT_FORMAT_LABEL[format]}`,
+        label: `${reportLabel}${scopeLabel} · ${EXPORT_FORMAT_LABEL[variables.format]}`,
         kind: 'export',
         status: 'pending',
         exportJobId: res.export_job_id,
@@ -420,9 +436,65 @@ export default function ReportViewPage() {
     },
   })
 
-  function requestExport(format: ExportFormat) {
+  /**
+   * 현재 화면 상태(슬라이서/필터/페이지 선택)를 북마크 state로 캡처한다.
+   * 캡처가 불가능한 레포트는 null을 반환하고, 이 경우 Power BI에 저장된 기본 상태로
+   * 내보내진다(안내 문구로 알린다).
+   */
+  async function captureViewState(allPages: boolean): Promise<string | null> {
+    const r = reportRef.current
+    if (!r) return null
+    try {
+      const bookmark = await r.bookmarksManager.capture(
+        allPages ? { allPages: true } : undefined,
+      )
+      return bookmark.state ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /** 현재 보고 있는 페이지 1장만 내보낸다(PDF/PPTX/PNG). */
+  async function requestCurrentPageExport(format: ExportFormat) {
     setDownloadMenuOpen(false)
-    exportMutation.mutate(format)
+    const state = await captureViewState(false)
+    if (!state) {
+      setViewSaveMsg({ ok: false, text: '현재 화면 설정을 가져오지 못해 저장된 기본 상태로 내보냅니다.' })
+      window.setTimeout(() => setViewSaveMsg(null), 5000)
+    }
+    exportMutation.mutate({
+      format,
+      scopeLabel: activePageDisplayName || '현재 페이지',
+      options: {
+        pageName: activePageName || null,
+        pageDisplayName: activePageDisplayName || null,
+        bookmarkState: state,
+      },
+    })
+  }
+
+  /** 레포트의 보이는 전체 페이지를 화면 순서대로 내보낸다(PNG/PPTX/PDF). */
+  async function requestAllPagesExport(format: ExportFormat) {
+    setDownloadMenuOpen(false)
+    const state = await captureViewState(true)
+    if (!state) {
+      setViewSaveMsg({ ok: false, text: '현재 화면 설정을 가져오지 못해 저장된 기본 상태로 내보냅니다.' })
+      window.setTimeout(() => setViewSaveMsg(null), 5000)
+    }
+    exportMutation.mutate({
+      format,
+      scopeLabel: '전체 페이지',
+      options: {
+        bookmarkState: state,
+        pageNames: pages.length > 0 ? pages.map((p) => p.name) : null,
+      },
+    })
+  }
+
+  /** 원본 .pbix 파일 다운로드 (페이지/뷰 상태 개념 없음). */
+  function requestPbixExport() {
+    setDownloadMenuOpen(false)
+    exportMutation.mutate({ format: 'PBIX' })
   }
 
   const [replaceOpen, setReplaceOpen] = useState(false)
@@ -464,7 +536,11 @@ export default function ReportViewPage() {
   }
 
   const title = report ? reportDisplayName(report) : '레포트'
-  const canRefresh = Boolean(report?.dataset_id)
+  // 현재 페이지의 사람이 읽는 이름(다운로드 메뉴 표기 + 내보낸 파일명에 사용).
+  const activePageDisplayName =
+    pages.find((p) => p.name === activePageName)?.displayName ?? ''
+  // 데이터셋이 연결되어 있고 새로고침 권한이 있을 때만 버튼을 노출한다(백엔드도 재검증).
+  const canRefresh = Boolean(report?.dataset_id) && Boolean(report?.can_refresh)
   const currentRefreshTask = tasks.find(
     (task) => task.kind === 'refresh'
       && task.reportId === reportDbId
@@ -654,7 +730,7 @@ export default function ReportViewPage() {
                     className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">
                     <ScanLine className="h-3 w-3 text-slate-500" /> 실제 크기
                   </button>
-                  {report?.can_manage && (
+                  {report?.can_manage_default_view && (
                     <>
                       <div className="my-0.5 border-t border-slate-100" />
                       <button type="button" role="menuitem" onClick={saveCurrentAsDefault} disabled={defaultViewMutation.isPending}
@@ -672,8 +748,8 @@ export default function ReportViewPage() {
             )}
           </div>
 
-          {/* 다운로드 드롭다운 (DOWNLOAD 권한자에게만 노출) */}
-          {report?.can_download && (
+          {/* 다운로드 드롭다운 (내보내기 또는 원본 다운로드 권한자에게만 노출) */}
+          {(report?.can_download || report?.can_download_pbix) && (
             <div className="relative">
               <button
                 type="button"
@@ -696,18 +772,39 @@ export default function ReportViewPage() {
                     className="fixed inset-0 z-10 cursor-default"
                     onClick={() => setDownloadMenuOpen(false)}
                   />
-                  <div role="menu" className="absolute right-0 z-20 mt-1 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-0.5 shadow-lg">
-                    <p className="px-2 py-0.5 text-[10.5px] font-medium text-slate-400">렌더링 파일</p>
-                    <button type="button" role="menuitem" onClick={() => requestExport('PDF')}
-                      className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PDF</button>
-                    <button type="button" role="menuitem" onClick={() => requestExport('PPTX')}
-                      className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
-                    <button type="button" role="menuitem" onClick={() => requestExport('PNG')}
-                      className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">이미지 (PNG)</button>
-                    <div className="my-0.5 border-t border-slate-100" />
-                    <p className="px-2 py-0.5 text-[10.5px] font-medium text-slate-400">원본 파일</p>
-                    <button type="button" role="menuitem" onClick={() => requestExport('PBIX')}
-                      className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">Power BI 원본 (.pbix)</button>
+                  <div role="menu" className="absolute right-0 z-20 mt-1 w-64 overflow-hidden rounded-lg border border-slate-200 bg-white py-0.5 shadow-lg">
+                    {report?.can_download && (
+                      <>
+                        <p className="truncate px-2 py-0.5 text-[10.5px] font-medium text-slate-400">
+                          현재 페이지{activePageDisplayName ? ` · ${activePageDisplayName}` : ''}
+                        </p>
+                        <button type="button" role="menuitem" onClick={() => requestCurrentPageExport('PNG')}
+                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">이미지 (PNG)</button>
+                        <button type="button" role="menuitem" onClick={() => requestCurrentPageExport('PPTX')}
+                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
+                        <button type="button" role="menuitem" onClick={() => requestCurrentPageExport('PDF')}
+                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PDF</button>
+                        <div className="my-0.5 border-t border-slate-100" />
+                        <div className="flex items-center justify-between gap-2 px-2 py-0.5">
+                          <p className="text-[10.5px] font-medium text-slate-400">전체 페이지</p>
+                          <p className="whitespace-nowrap text-[10.5px] text-slate-400">페이지 수에 따라 시간이 걸립니다</p>
+                        </div>
+                        <button type="button" role="menuitem" onClick={() => requestAllPagesExport('PNG')}
+                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">이미지 (PNG · ZIP)</button>
+                        <button type="button" role="menuitem" onClick={() => requestAllPagesExport('PPTX')}
+                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
+                        <button type="button" role="menuitem" onClick={() => requestAllPagesExport('PDF')}
+                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PDF</button>
+                      </>
+                    )}
+                    {report?.can_download_pbix && (
+                      <>
+                        {report?.can_download && <div className="my-0.5 border-t border-slate-100" />}
+                        <p className="px-2 py-0.5 text-[10.5px] font-medium text-slate-400">원본 파일</p>
+                        <button type="button" role="menuitem" onClick={requestPbixExport}
+                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">Power BI 원본 (.pbix)</button>
+                      </>
+                    )}
                   </div>
                 </>
               )}

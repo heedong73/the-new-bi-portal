@@ -20,7 +20,14 @@ export interface ReportAdmin {
 }
 
 export type SubjectType = 'user' | 'role' | 'dept' | 'group'
-export type PermissionAction = 'VIEW' | 'DOWNLOAD' | 'REFRESH' | 'MANAGE_REPORT' | 'VIEW_STATS'
+export type PermissionAction =
+  | 'VIEW'
+  | 'DOWNLOAD'
+  | 'DOWNLOAD_PBIX'
+  | 'REFRESH'
+  | 'MANAGE_REPORT'
+  | 'MANAGE_DEFAULT_VIEW'
+  | 'VIEW_STATS'
 
 export interface ReportPermission {
   id: number

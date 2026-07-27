@@ -14,6 +14,9 @@ export interface ReportSummary {
   is_published: boolean
   can_manage?: boolean
   can_download?: boolean
+  can_download_pbix?: boolean
+  can_manage_default_view?: boolean
+  can_refresh?: boolean
   author_label?: string | null
   created_at?: string | null
   updated_at?: string | null

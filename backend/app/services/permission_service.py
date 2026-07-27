@@ -2,17 +2,39 @@
 
 design.md "사용자 그룹 및 권한 계산 설계"(R8, R22, R24) 참조.
 주체: user(직접) / role(역할) / dept(부서, users.department_id) / group(소속 그룹).
-액션별(VIEW/DOWNLOAD/REFRESH/MANAGE_REPORT) 합집합으로 접근 가능 Report 집합 계산.
+액션별(VIEW/DOWNLOAD/DOWNLOAD_PBIX/REFRESH/MANAGE_REPORT/MANAGE_DEFAULT_VIEW/
+VIEW_STATS) 합집합으로 접근 가능 Report 집합 계산.
 System_Operator는 모든 액션 보유로 간주(R24.3).
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import PermissionAction, RoleCode, SubjectType
+from app.core.constants import (
+    ACTIONS_IMPLYING_VIEW, PermissionAction, RoleCode, SubjectType,
+)
 from app.models.auth import User, UserRole, Role
 from app.models.report import Report, ReportPermission
+
+def normalize_grant_codes(codes: Iterable[str]) -> list[str]:
+    """부여할 권한 코드 목록을 정규화한다(중복 제거 + VIEW 자동 포함).
+
+    다운로드/원본 다운로드/새로고침/교체/기본 뷰 관리는 레포트를 열 수 있어야
+    의미가 있으므로 조회(VIEW)를 함께 부여한다 — 조회 권한 없이 다른 액션만 가진
+    모순된 상태를 만들지 않는다. 반환 순서는 PermissionAction 정의 순으로 안정화한다.
+    """
+    normalized: set[str] = set()
+    for code in codes:
+        value = code.value if hasattr(code, "value") else str(code)
+        normalized.add(value)
+        if value in ACTIONS_IMPLYING_VIEW:
+            normalized.add(PermissionAction.VIEW.value)
+    order = [p.value for p in PermissionAction]
+    return sorted(normalized, key=lambda c: order.index(c) if c in order else len(order))
+
 
 async def _is_system_operator(db: AsyncSession, user_id: int) -> bool:
     code = await db.scalar(

@@ -112,11 +112,21 @@ async def start_export(
     report_id: str,
     export_format: str,
     page_name: str | None = None,
+    *,
+    page_names: list[str] | None = None,
+    bookmark_state: str | None = None,
 ) -> ExportStartResult:
     """Power BI ExportTo API 호출 → export_id + 초기 status 반환.
 
-    page_name(레포트 섹션명)이 주어지면 해당 페이지만 export하도록
-    powerBIReportConfiguration.pages 를 포함한다. 미지정 시 리포트 전체.
+    페이지 지정:
+      - page_name: 단일 페이지만 내보낸다(레포트 섹션명, displayName 아님).
+      - page_names: 여러 페이지를 지정 순서대로 내보낸다(숨김 페이지 제외 목적).
+      - 둘 다 없으면 Power BI가 레포트 전체를 자체 순서로 내보낸다.
+
+    bookmark_state: 클라이언트가 캡처한 북마크 state. 지정하면 요청자 화면의
+    슬라이서/필터 선택이 반영된다. 단일 페이지는 해당 페이지 bookmark로,
+    전체/다중 페이지는 defaultBookmark(개별 bookmark 없는 모든 페이지에 적용)로 넣는다.
+
     mock 모드는 즉시 Succeeded를 반환하며 외부 호출을 하지 않는다.
     """
     fmt = export_format.upper()
@@ -131,9 +141,20 @@ async def start_export(
         f"/reports/{report_id}/ExportTo"
     )
     body: dict[str, Any] = {"format": fmt}
+    report_config: dict[str, Any] = {}
     if page_name:
-        # 특정 페이지만 내보내기 (pageName = 레포트 섹션명, displayName 아님)
-        body["powerBIReportConfiguration"] = {"pages": [{"pageName": page_name}]}
+        page: dict[str, Any] = {"pageName": page_name}
+        if bookmark_state:
+            page["bookmark"] = {"state": bookmark_state}
+        report_config["pages"] = [page]
+    else:
+        if page_names:
+            report_config["pages"] = [{"pageName": name} for name in page_names]
+        if bookmark_state:
+            # 개별 bookmark가 없는 모든 페이지에 적용된다.
+            report_config["defaultBookmark"] = {"state": bookmark_state}
+    if report_config:
+        body["powerBIReportConfiguration"] = report_config
 
     try:
         async with httpx.AsyncClient(

@@ -29,8 +29,26 @@ class DefaultViewUpdate(BaseModel):
     state: str | None = None
 
 class ExportRequest(BaseModel):
-    """독립 Export 요청 (T-25). 포맷: PDF | PNG | PPTX(렌더링) | PBIX(원본 파일)"""
+    """독립 Export 요청 (T-25). 포맷: PDF | PNG | PPTX(렌더링) | PBIX(원본 파일)
+
+    페이지 범위:
+      - page_name 지정 = 그 페이지 1장만 내보낸다(PDF/PPTX/PNG).
+      - page_name 없음 = 레포트 전체를 내보낸다(PDF/PPTX/PNG).
+        전체 PNG는 페이지별 이미지가 담긴 ZIP으로 반환될 수 있다.
+      - PBIX는 페이지 범위 없이 원본 파일을 내려받는다.
+
+    bookmark_state: 프런트가 `bookmarksManager.capture()`로 캡처한 Power BI 북마크
+    state 문자열. 화면의 슬라이서/필터 선택을 내보내기 결과에 반영하기 위해 전달한다.
+    비우면 Power BI에 저장된 기본 상태로 렌더링된다.
+    """
     export_format: str = Field(default="PDF", pattern="^(PDF|PNG|PPTX|PBIX)$")
+    page_name: str | None = Field(default=None, max_length=255)
+    # 파일명 표기에만 쓰는 사람이 읽는 페이지 이름(page_name은 내부 섹션 id).
+    page_display_name: str | None = Field(default=None, max_length=255)
+    bookmark_state: str | None = None
+    # 전체 범위에서 내보낼 페이지 순서(레포트에서 숨김 처리한 페이지 제외).
+    # 비우면 Power BI가 레포트 전체를 자체 순서로 내보낸다.
+    page_names: list[str] | None = None
 
 class ReportResponse(BaseModel):
     """레포트 응답 (목록/상세)."""
@@ -57,8 +75,11 @@ class ReportResponse(BaseModel):
     created_by_user_id: int | None = None
     created_by_label: str | None = None
     created_at: datetime | None = None
-    can_manage: bool = False  # MANAGE_REPORT 권한(레포트 교체 가능) 여부
-    can_download: bool = False  # DOWNLOAD 권한(Export/원본 다운로드 가능) 여부
+    can_manage: bool = False  # MANAGE_REPORT 권한(레포트 PBIX 교체 가능) 여부
+    can_download: bool = False  # DOWNLOAD 권한(렌더링 파일 내보내기 가능) 여부
+    can_download_pbix: bool = False  # DOWNLOAD_PBIX 권한(원본 .pbix 다운로드 가능) 여부
+    can_manage_default_view: bool = False  # MANAGE_DEFAULT_VIEW 권한(공통 기본 뷰 저장) 여부
+    can_refresh: bool = False  # REFRESH 권한(수동 새로고침 가능) 여부
 
 
 class ReportCatalogResponse(BaseModel):

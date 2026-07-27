@@ -38,6 +38,17 @@ MENU_CATALOG: list[tuple[str, str]] = [
 
 ALL_MENU_KEYS: list[str] = [k for k, _ in MENU_CATALOG]
 
+# 일반 사용자(그룹/개인)에게 "직접 부여"할 수 있는 메뉴 키.
+# 나머지 메뉴(관리자 계열, 운영 상태, Refresh 현황, 메일 이력/스케줄)는 정책상
+# System_Operator 전용이므로 부여 대상이 아니다 — 부여해도 무효가 되도록
+# menu_permissions 읽기/쓰기 양쪽에서 이 목록으로 필터한다.
+GRANTABLE_MENU_KEYS: list[str] = [MenuKey.STATS]
+
+# 부여 가능한 메뉴만 담은 카탈로그 (권한 관리 화면 노출용).
+GRANTABLE_MENU_CATALOG: list[tuple[str, str]] = [
+    (k, label) for k, label in MENU_CATALOG if k in GRANTABLE_MENU_KEYS
+]
+
 # 역할 → 메뉴 접근 권한 (코드 고정 매핑, 편집 불가). System_Operator는 항상 전체.
 # 서비스 센터는 메뉴 권한 대상이 아니라 로그인한 모든 사용자에게 노출된다.
 # 통계 등 General_User 기본값 밖의 메뉴는 관리자가 menu_permissions로
@@ -50,10 +61,23 @@ ROLE_MENUS: dict[str, list[str]] = {
 
 class PermissionAction(StrEnum):
     VIEW = "VIEW"
-    DOWNLOAD = "DOWNLOAD"
+    DOWNLOAD = "DOWNLOAD"            # 내보내기(PDF/PPTX/PNG 렌더링 파일)
+    DOWNLOAD_PBIX = "DOWNLOAD_PBIX"  # 원본 .pbix 다운로드 (데이터 모델 포함 — 별도 통제)
     REFRESH = "REFRESH"
-    MANAGE_REPORT = "MANAGE_REPORT"
+    MANAGE_REPORT = "MANAGE_REPORT"              # PBIX 교체(콘텐츠 덮어쓰기)
+    MANAGE_DEFAULT_VIEW = "MANAGE_DEFAULT_VIEW"  # 공통 기본 뷰 저장/초기화
     VIEW_STATS = "VIEW_STATS"  # 레포트별 통계 조회 권한 (레포트 작성자 자동 부여, 관리자 부여/회수)
+
+
+# 부여 시 조회(VIEW)를 함께 필요로 하는 액션 — 조회 없이 다운로드/새로고침/관리만
+# 가진 모순 상태를 막기 위해 권한 부여 시 VIEW를 자동 포함한다.
+ACTIONS_IMPLYING_VIEW: set[str] = {
+    PermissionAction.DOWNLOAD,
+    PermissionAction.DOWNLOAD_PBIX,
+    PermissionAction.REFRESH,
+    PermissionAction.MANAGE_REPORT,
+    PermissionAction.MANAGE_DEFAULT_VIEW,
+}
 
 
 class SubjectType(StrEnum):

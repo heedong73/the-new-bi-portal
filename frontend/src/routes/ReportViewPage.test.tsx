@@ -30,6 +30,8 @@ vi.mock('powerbi-client', () => ({
 const REPORT: ReportSummary = {
   id: 10, workspace_id: 'ws', report_id: 'pbi-rpt', dataset_id: 'ds-1',
   display_name: '월간 매출', folder_id: 1, is_published: true,
+  // 새로고침 버튼은 REFRESH 권한(can_refresh)이 있을 때만 노출된다.
+  can_refresh: true,
 }
 const EMBED: EmbedInfo = { reportId: 'pbi-rpt', embedUrl: 'https://embed', embedToken: 'tok' }
 const STATUS: RefreshStatus = { has_history: true, status: 'Completed', last_refresh_local: '2026-06-24 09:00' }

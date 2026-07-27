@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Building2,
@@ -13,6 +13,7 @@ import {
 
 import { groupsApi, orgApi } from '@/api/adminApi'
 import type { GroupTreeNode, TeamGroupSyncResult } from '@/types/admin'
+import { getDefaultExpandedOrgIds, prioritizePrimaryCompany } from './orgTreeDefaults'
 
 export interface GroupSelection {
   id: number
@@ -33,7 +34,7 @@ export default function GroupTreeSelector({
   const queryClient = useQueryClient()
   const [newName, setNewName] = useState('')
   const [cmpId, setCmpId] = useState('')
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [expansionOverrides, setExpansionOverrides] = useState<Map<string, boolean>>(() => new Map())
   const [syncPlan, setSyncPlan] = useState<TeamGroupSyncResult | null>(null)
   const [syncDeptId, setSyncDeptId] = useState<string | null>(null)
 
@@ -80,22 +81,29 @@ export default function GroupTreeSelector({
     },
   })
 
-  const companies = companiesQuery.data ?? []
-  const tree = treeQuery.data?.tree ?? []
+  const companies = useMemo(
+    () => prioritizePrimaryCompany(companiesQuery.data ?? []),
+    [companiesQuery.data],
+  )
+  const tree = useMemo(
+    () => prioritizePrimaryCompany(treeQuery.data?.tree ?? []),
+    [treeQuery.data],
+  )
+  const defaultExpanded = useMemo(() => getDefaultExpandedOrgIds(tree), [tree])
   const manualGroups = treeQuery.data?.ungrouped ?? []
 
   function toggle(deptId: string) {
-    setExpanded((previous) => {
-      const next = new Set(previous)
-      if (next.has(deptId)) next.delete(deptId)
-      else next.add(deptId)
+    setExpansionOverrides((previous) => {
+      const next = new Map(previous)
+      const currentlyExpanded = next.get(deptId) ?? defaultExpanded.has(deptId)
+      next.set(deptId, !currentlyExpanded)
       return next
     })
   }
 
   const renderNode = (node: GroupTreeNode, depth: number): ReactNode => {
     const hasChildren = node.children.length > 0
-    const isOpen = expanded.has(node.dept_id)
+    const isOpen = expansionOverrides.get(node.dept_id) ?? defaultExpanded.has(node.dept_id)
     const isGroup = node.group_id !== null
     const isSelected = isGroup && selectedId === node.group_id
     const groupName = node.group_name || node.dept_name

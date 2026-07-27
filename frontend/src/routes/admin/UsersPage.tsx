@@ -1,7 +1,7 @@
 /** 사용자 관리 — 인사 조직도 트리 + 부서 구성원(이름/사번/이메일/부서/직급) + BIP 등록/권한그룹/역할.
  *  가시성은 권한 기반: 등록된 사용자도 권한(그룹/레포트 권한)이 없으면 레포트 조회 불가.
  */
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronRight, ChevronDown, Building2, Search, Users2, RefreshCcw, X, UserCog } from 'lucide-react'
 
@@ -9,6 +9,7 @@ import { orgApi, groupsApi, usersApi } from '@/api/adminApi'
 import type { OrgMember, OrgNode, TeamGroupSyncResult } from '@/types/admin'
 import { GroupPicker } from './EntityPicker'
 import LocalUsersPanel from './LocalUsersPanel'
+import { getDefaultExpandedOrgIds, prioritizePrimaryCompany } from './orgTreeDefaults'
 
 const ROLE_LEVELS = [
   { code: 'General_User', label: '일반 사용자' },
@@ -21,7 +22,7 @@ export default function UsersPage() {
   const [selectedDept, setSelectedDept] = useState<{ id: string; name: string } | null>(null)
   const [search, setSearch] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [expansionOverrides, setExpansionOverrides] = useState<Map<string, boolean>>(() => new Map())
   const [roleDraft, setRoleDraft] = useState<Record<string, string>>({})
   const [syncPlan, setSyncPlan] = useState<TeamGroupSyncResult | null>(null)
   const [view, setView] = useState<'org' | 'local'>('org')
@@ -91,16 +92,23 @@ export default function UsersPage() {
     },
   })
 
-  const companies = companiesQuery.data ?? []
-  const tree = treeQuery.data ?? []
+  const companies = useMemo(
+    () => prioritizePrimaryCompany(companiesQuery.data ?? []),
+    [companiesQuery.data],
+  )
+  const tree = useMemo(
+    () => prioritizePrimaryCompany(treeQuery.data ?? []),
+    [treeQuery.data],
+  )
+  const defaultExpanded = useMemo(() => getDefaultExpandedOrgIds(tree), [tree])
   const groups = groupsQuery.data ?? []
   const members = membersQuery.data ?? []
 
   function toggle(id: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+    setExpansionOverrides((previous) => {
+      const next = new Map(previous)
+      const currentlyExpanded = next.get(id) ?? defaultExpanded.has(id)
+      next.set(id, !currentlyExpanded)
       return next
     })
   }
@@ -112,7 +120,7 @@ export default function UsersPage() {
 
   const renderNode = (node: OrgNode, depth: number): ReactNode => {
     const hasChildren = node.children.length > 0
-    const isOpen = expanded.has(node.dept_id)
+    const isOpen = expansionOverrides.get(node.dept_id) ?? defaultExpanded.has(node.dept_id)
     const isSelected = selectedDept?.id === node.dept_id
     return (
       <div key={node.dept_id}>

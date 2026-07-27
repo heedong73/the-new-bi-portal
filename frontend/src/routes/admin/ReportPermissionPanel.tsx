@@ -1,12 +1,13 @@
 /** 레포트 권한 부여 패널 (T-추가) — VIEW/DOWNLOAD/REFRESH/MANAGE 주체별 부여·회수. */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Info, Plus, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 
 import { reportAdminApi } from '@/api/reportAdminApi'
 import { usersApi, groupsApi } from '@/api/adminApi'
 import type { PermissionAction, ReportPermission, SubjectType } from '@/types/reportAdmin'
 import { GroupPicker, UserPicker } from './EntityPicker'
+import PermissionHint from './PermissionHint'
 
 const SUBJECT_TYPES: { value: SubjectType; label: string }[] = [
   { value: 'user', label: '사용자' },
@@ -16,9 +17,11 @@ const SUBJECT_TYPES: { value: SubjectType; label: string }[] = [
 ]
 const PERMISSIONS: { value: PermissionAction; label: string; hint?: string }[] = [
   { value: 'VIEW', label: '조회' },
-  { value: 'DOWNLOAD', label: '다운로드' },
+  { value: 'DOWNLOAD', label: '내보내기', hint: 'PDF·PowerPoint·이미지로 내보낼 수 있습니다. 원본 파일(.pbix)은 포함되지 않습니다.' },
+  { value: 'DOWNLOAD_PBIX', label: '원본 다운로드', hint: 'Power BI 원본 파일(.pbix)을 내려받을 수 있습니다. 데이터 모델이 포함되므로 꼭 필요한 대상에만 부여하세요.' },
   { value: 'REFRESH', label: '새로고침' },
-  { value: 'MANAGE_REPORT', label: '교체', hint: "레포트 파일 교체와 함께 레포트 뷰의 '현재 뷰를 기본값으로 저장' 권한이 포함됩니다." },
+  { value: 'MANAGE_REPORT', label: '교체', hint: '레포트 원본 파일(.pbix)을 새 파일로 덮어써 내용을 교체할 수 있습니다.' },
+  { value: 'MANAGE_DEFAULT_VIEW', label: '기본 뷰 관리', hint: "레포트 뷰의 '현재 뷰를 기본값으로 저장'과 '기본 뷰 초기화'를 사용할 수 있습니다. 모든 사용자에게 보이는 시작 화면이 바뀝니다." },
   { value: 'VIEW_STATS', label: '통계 조회' },
 ]
 
@@ -130,14 +133,15 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-slate-200 px-2 py-1.5">
           <span className="text-xs text-slate-400">권한(복수 선택)</span>
           {PERMISSIONS.map((p) => (
-            <label key={p.value} title={p.hint}
-              className={`inline-flex items-center gap-1 text-sm text-slate-600 ${p.hint ? 'cursor-help' : ''}`}>
-              <input type="checkbox" checked={selectedPerms.includes(p.value)}
-                onChange={(e) => togglePerm(p.value, e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300" />
-              {p.label}
-              {p.hint && <Info className="h-3 w-3 text-slate-400" aria-hidden />}
-            </label>
+            <span key={p.value} className="inline-flex items-center gap-1">
+              <label className="inline-flex items-center gap-1 text-sm text-slate-600">
+                <input type="checkbox" checked={selectedPerms.includes(p.value)}
+                  onChange={(e) => togglePerm(p.value, e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300" />
+                {p.label}
+              </label>
+              {p.hint && <PermissionHint text={p.hint} label={p.label} />}
+            </span>
           ))}
         </div>
 

@@ -182,6 +182,12 @@ textarea {
   line-height: 1.25;
 }
 
+/* 글자 간 자간은 좁히되(SCL/BI/PORTAL 각 단어 내부), 단어 사이 공백은 그대로 유지해
+   "SCL BI PORTAL"이 세 단어로 구분되어 보이게 한다. */
+.editorial-brand-title.editorial-brand-title--wordmark {
+  letter-spacing: 0.02em;
+}
+
 .editorial-brand-subtitle {
   color: #8a8e88;
   font-size: 10px;

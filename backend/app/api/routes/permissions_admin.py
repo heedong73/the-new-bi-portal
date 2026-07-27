@@ -13,13 +13,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, delete, text, and_, or_
 
 from app.core.constants import (
-    AuditAction, MENU_CATALOG, PermissionAction, ROLE_MENUS, RoleCode,
+    AuditAction, GRANTABLE_MENU_KEYS, MENU_CATALOG, PermissionAction, ROLE_MENUS,
+    RoleCode,
 )
 from app.core.deps import SessionDep, require_menu
 from app.core.errors import NotFoundError, ValidationError
 from app.models.auth import Department, Role, User, UserRole
 from app.models.portal import UserGroup, UserGroupMember, MenuPermission, GroupCompanyScope
 from app.models.report import Report, ReportFolder, ReportPermission
+from app.services import permission_service
 from app.schemas.permission_admin import (
     MenuPermissionSetRequest, MenuPermissionItem, MenuSubjectItem,
     GroupCompanyScopeSetRequest, GroupCompanyScopeItem, GroupReportBulkGrantRequest,
@@ -35,7 +37,9 @@ router = APIRouter(prefix="/api/permission-admin", tags=["permission-admin"])
 
 _require_operator = require_menu("admin_groups")
 
-_VALID_MENU_KEYS = {k for k, _ in MENU_CATALOG}
+# 개별 부여/조회 대상 메뉴 = 통계뿐. 관리자/운영 메뉴는 System_Operator 전용이라
+# 부여 자체를 허용하지 않는다(require_menu에서도 개별 부여로는 통과되지 않는다).
+_VALID_MENU_KEYS = set(GRANTABLE_MENU_KEYS)
 
 
 def _validate_subject_type(subject_type: str) -> None:
@@ -94,7 +98,7 @@ async def list_subjects_for_menu(menu_key: str, db: SessionDep, _op=Depends(_req
 async def get_menu_permissions(
     subject_type: str, subject_id: int, db: SessionDep, _op=Depends(_require_operator),
 ):
-    """특정 주체(사용자/그룹)에 개별 부여된 메뉴 키 목록."""
+    """특정 주체(사용자/그룹)에 개별 부여된 메뉴 키 목록(부여 가능 목록으로 필터)."""
     _validate_subject_type(subject_type)
     rows = (await db.execute(
         select(MenuPermission.menu_key).where(
@@ -102,7 +106,7 @@ async def get_menu_permissions(
             MenuPermission.subject_id == subject_id,
         )
     )).scalars().all()
-    return list(rows)
+    return [k for k in rows if k in _VALID_MENU_KEYS]
 
 
 @router.put("/menu-permissions/{subject_type}/{subject_id}", response_model=list[str])
@@ -218,10 +222,13 @@ async def bulk_grant_report_permissions(
         )
     )).all())
 
+    # 다운로드/새로고침/관리 권한만 부여되어 목록에 보이지도 않는 상태를 막기 위해
+    # 조회(VIEW)를 자동 포함한다.
+    grant_codes = permission_service.normalize_grant_codes(body.permissions)
+
     added = 0
     for report_id in body.report_ids:
-        for permission in body.permissions:
-            code = permission.value if hasattr(permission, "value") else str(permission)
+        for code in grant_codes:
             if (report_id, code) in existing_perms:
                 continue
             db.add(ReportPermission(
@@ -238,7 +245,7 @@ async def bulk_grant_report_permissions(
                            resource_id=f"{body.subject_type}:{body.subject_id}",
                            meta={"target": "bulk_grant", "subject_type": body.subject_type,
                                  "subject_id": body.subject_id, "report_ids": body.report_ids,
-                                 "permissions": [str(p) for p in body.permissions], "added": added})
+                                 "permissions": grant_codes, "added": added})
     await db.commit()
     return added
 
@@ -295,10 +302,13 @@ async def get_user_effective_permissions(
         return result
 
     # ===== 메뉴 접근 =====
-    result.direct_menu_keys = list((await db.execute(
-        select(MenuPermission.menu_key).where(
-            MenuPermission.subject_type == "user", MenuPermission.subject_id == user_id)
-    )).scalars().all())
+    result.direct_menu_keys = [
+        k for k in (await db.execute(
+            select(MenuPermission.menu_key).where(
+                MenuPermission.subject_type == "user", MenuPermission.subject_id == user_id)
+        )).scalars().all()
+        if k in _VALID_MENU_KEYS
+    ]
 
     inherited_menus: dict[tuple[str, str, str], InheritedMenuItem] = {}
     for code in role_codes:
@@ -310,6 +320,8 @@ async def get_user_effective_permissions(
             select(MenuPermission.menu_key, MenuPermission.subject_id).where(
                 MenuPermission.subject_type == "group", MenuPermission.subject_id.in_(group_ids))
         )).all():
+            if key not in _VALID_MENU_KEYS:
+                continue  # 정책 변경 이전에 저장된 운영자 전용 메뉴 행은 무효
             gname = group_name_by_id.get(gid, f"group#{gid}")
             inherited_menus.setdefault((key, "group", gname), InheritedMenuItem(
                 menu_key=key, label=_MENU_LABELS.get(key, key), source_type="group", source_label=gname))

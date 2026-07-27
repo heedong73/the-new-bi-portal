@@ -50,7 +50,7 @@ PowerBIClientDep = Annotated[PowerBIClient, Depends(get_powerbi_client)]
 from fastapi import Cookie, Request
 from sqlalchemy import select, text
 from app.core.errors import UnauthenticatedError, PermissionDeniedError
-from app.core.constants import RoleCode, ALL_MENU_KEYS, ROLE_MENUS
+from app.core.constants import RoleCode, ALL_MENU_KEYS, GRANTABLE_MENU_KEYS, ROLE_MENUS
 from app.models.auth import User, UserRole, Role
 from app.services.auth import session_service
 
@@ -71,7 +71,10 @@ async def _granted_menu_keys(db: AsyncSession, user_id: int) -> set[str]:
     """사용자/소속 그룹에 개별 부여된 메뉴 권한(menu_permissions) 합집합.
 
     권한 관리 개편(그룹 중심) — 역할 고정 매핑(ROLE_MENUS)에 더해 관리자가
-    그룹 또는 사용자 단위로 통계 등 메뉴 접근을 추가 부여할 수 있다.
+    그룹 또는 사용자 단위로 통계 메뉴 접근을 추가 부여할 수 있다.
+
+    부여 가능 목록(GRANTABLE_MENU_KEYS = 통계)으로 필터한다. 정책 변경 이전에
+    저장된 운영자 전용 메뉴 행이 남아 있어도 일반 사용자에게 권한이 생기지 않는다.
     """
     rows = await db.execute(text(
         """
@@ -81,7 +84,8 @@ async def _granted_menu_keys(db: AsyncSession, user_id: int) -> set[str]:
                   SELECT group_id FROM bip.user_group_members WHERE user_id = :user_id))
         """
     ), {"user_id": user_id})
-    return {r[0] for r in rows.all()}
+    grantable = set(GRANTABLE_MENU_KEYS)
+    return {r[0] for r in rows.all() if r[0] in grantable}
 
 
 async def _compute_allowed_menus(db: AsyncSession, user_id: int, role_codes: list[str]) -> list[str]:
@@ -171,12 +175,20 @@ def require_role(*allowed: str):
 def require_menu(menu_key: str):
     """해당 메뉴(페이지) 접근 권한을 요구하는 의존성 팩토리.
 
-    역할 → 메뉴 코드 고정 매핑(ROLE_MENUS) 기반. System_Operator/로컬관리자는 전체 허용.
+    역할 → 메뉴 코드 고정 매핑(ROLE_MENUS) ∪ 부여 가능한 개별 권한 기반.
+    System_Operator/로컬관리자는 전체 허용.
+
+    부여 대상이 아닌 메뉴(GRANTABLE_MENU_KEYS 밖 = 관리자/운영 메뉴)는 개별 부여로
+    통과시키지 않는다 — 정책상 System_Operator 전용이므로 서버에서도 강제한다.
     """
+    operator_only = menu_key not in GRANTABLE_MENU_KEYS
+
     async def _checker(current=Depends(get_current_user)) -> dict:
         roles = current.get("roles", [])
         if RoleCode.SYSTEM_OPERATOR.value in roles or current.get("is_local_admin"):
             return current
+        if operator_only:
+            raise PermissionDeniedError()
         if menu_key in current.get("allowed_menus", []):
             return current
         raise PermissionDeniedError()

@@ -62,7 +62,9 @@ export default function AppLayout() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="editorial-brand-eyebrow whitespace-nowrap">SAMCHULLY GROUP</div>
-              <div className="editorial-brand-title mt-1 whitespace-nowrap">SCL BI PORTAL</div>
+              <div className="editorial-brand-title editorial-brand-title--wordmark mt-1 whitespace-nowrap">
+                SCL BI PORTAL
+              </div>
               <div className="editorial-brand-subtitle mt-1">Business Intelligence Workspace</div>
             </div>
             <button

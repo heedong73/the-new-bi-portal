@@ -74,11 +74,40 @@ def _to_response(
     )
 
 
+# 응답 플래그 → 필요한 레포트 권한. 프런트는 이 플래그로 버튼 노출을 결정하고,
+# 실제 통제는 각 엔드포인트에서 동일 권한으로 다시 검증한다.
+_PERMISSION_FLAGS: dict[str, str] = {
+    "can_manage": PermissionAction.MANAGE_REPORT,
+    "can_download": PermissionAction.DOWNLOAD,
+    "can_download_pbix": PermissionAction.DOWNLOAD_PBIX,
+    "can_manage_default_view": PermissionAction.MANAGE_DEFAULT_VIEW,
+    "can_refresh": PermissionAction.REFRESH,
+}
+
+
+async def _permission_flag_ids(db: SessionDep, current: dict) -> dict[str, set[int]]:
+    """플래그별로 해당 권한을 가진 report id 집합을 모아 반환한다."""
+    return {
+        flag: await permission_service.accessible_report_ids(
+            db, current["user_id"], action, roles=current.get("roles")
+        )
+        for flag, action in _PERMISSION_FLAGS.items()
+    }
+
+
+def _apply_permission_flags(
+    response: ReportResponse, report_id: int, flag_ids: dict[str, set[int]]
+) -> ReportResponse:
+    """조회 권한 외 액션 플래그(can_*)를 응답에 채운다."""
+    for flag, ids in flag_ids.items():
+        setattr(response, flag, report_id in ids)
+    return response
+
+
 def _discovery_response(
     item,
     *,
-    manage_ids: set[int],
-    download_ids: set[int],
+    flag_ids: dict[str, set[int]],
     favorite_ids: set[int],
 ) -> ReportResponse:
     response = _to_response(
@@ -89,8 +118,7 @@ def _discovery_response(
         last_viewed_at=item.last_viewed_at,
         view_count=item.view_count,
     )
-    response.can_manage = item.report.id in manage_ids
-    response.can_download = item.report.id in download_ids
+    _apply_permission_flags(response, item.report.id, flag_ids)
     response.is_favorite = item.report.id in favorite_ids
     return response
 
@@ -114,12 +142,7 @@ async def list_reports(
     accessible = await permission_service.accessible_report_ids(
         db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
     )
-    manage_ids = await permission_service.accessible_report_ids(
-        db, current["user_id"], PermissionAction.MANAGE_REPORT, roles=current.get("roles")
-    )
-    download_ids = await permission_service.accessible_report_ids(
-        db, current["user_id"], PermissionAction.DOWNLOAD, roles=current.get("roles")
-    )
+    flag_ids = await _permission_flag_ids(db, current)
     fav_ids = {
         rid for (rid,) in (await db.execute(
             select(ReportFavorite.report_id).where(ReportFavorite.user_id == current["user_id"])
@@ -132,9 +155,7 @@ async def list_reports(
     result = []
     for r in reports:
         if r.id in accessible:
-            resp = _to_response(r)
-            resp.can_manage = r.id in manage_ids
-            resp.can_download = r.id in download_ids
+            resp = _apply_permission_flags(_to_response(r), r.id, flag_ids)
             resp.is_favorite = r.id in fav_ids
             result.append(resp)
     return result
@@ -149,12 +170,7 @@ async def _discovery_permissions(db: SessionDep, current: dict):
     accessible_ids = await permission_service.accessible_report_ids(
         db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
     )
-    manage_ids = await permission_service.accessible_report_ids(
-        db, current["user_id"], PermissionAction.MANAGE_REPORT, roles=current.get("roles")
-    )
-    download_ids = await permission_service.accessible_report_ids(
-        db, current["user_id"], PermissionAction.DOWNLOAD, roles=current.get("roles")
-    )
+    flag_ids = await _permission_flag_ids(db, current)
     favorite_ids: set[int] = set()
     if not current.get("is_local_admin"):
         favorite_ids = {
@@ -164,7 +180,7 @@ async def _discovery_permissions(db: SessionDep, current: dict):
                 )
             )).all()
         }
-    return accessible_ids, manage_ids, download_ids, favorite_ids
+    return accessible_ids, flag_ids, favorite_ids
 
 
 @router.get("/catalog", response_model=ReportCatalogResponse)
@@ -179,7 +195,7 @@ async def report_catalog(
     offset: int = Query(default=0, ge=0),
 ):
     """VIEW 권한 범위 내 검색·최상위 폴더·최신/최근 30일 인기순 카탈로그."""
-    accessible, manage_ids, download_ids, favorite_ids = await _discovery_permissions(db, current)
+    accessible, flag_ids, favorite_ids = await _discovery_permissions(db, current)
     items, total = await report_discovery_service.catalog(
         db,
         user_id=_discovery_user_id(current),
@@ -193,12 +209,7 @@ async def report_catalog(
     )
     return ReportCatalogResponse(
         items=[
-            _discovery_response(
-                item,
-                manage_ids=manage_ids,
-                download_ids=download_ids,
-                favorite_ids=favorite_ids,
-            )
+            _discovery_response(item, flag_ids=flag_ids, favorite_ids=favorite_ids)
             for item in items
         ],
         total=total,
@@ -214,17 +225,12 @@ async def list_recent_reports(
     limit: int | None = Query(default=None, ge=1, le=100),
 ):
     """현재 사용자가 최근에 연 레포트를 마지막 조회순으로 반환한다."""
-    accessible, manage_ids, download_ids, favorite_ids = await _discovery_permissions(db, current)
+    accessible, flag_ids, favorite_ids = await _discovery_permissions(db, current)
     items = await report_discovery_service.recent(
         db, user_id=_discovery_user_id(current), accessible_ids=accessible, limit=limit
     )
     return [
-        _discovery_response(
-            item,
-            manage_ids=manage_ids,
-            download_ids=download_ids,
-            favorite_ids=favorite_ids,
-        )
+        _discovery_response(item, flag_ids=flag_ids, favorite_ids=favorite_ids)
         for item in items
     ]
 
@@ -236,17 +242,12 @@ async def list_favorites(
     limit: int | None = Query(default=None, ge=1, le=100),
 ):
     """현재 사용자의 즐겨찾기를 최근 조회순(미조회는 추가순)으로 반환한다."""
-    accessible, manage_ids, download_ids, favorite_ids = await _discovery_permissions(db, current)
+    accessible, flag_ids, favorite_ids = await _discovery_permissions(db, current)
     items = await report_discovery_service.favorites(
         db, user_id=_discovery_user_id(current), accessible_ids=accessible, limit=limit
     )
     return [
-        _discovery_response(
-            item,
-            manage_ids=manage_ids,
-            download_ids=download_ids,
-            favorite_ids=favorite_ids,
-        )
+        _discovery_response(item, flag_ids=flag_ids, favorite_ids=favorite_ids)
         for item in items
     ]
 
@@ -653,13 +654,28 @@ async def start_export(
     db: SessionDep,
     current=Depends(get_current_user),
 ):
-    """DOWNLOAD 권한 → ExportJob 생성 → export_poll 태스크 enqueue → 202."""
+    """내보내기 권한 → ExportJob 생성 → export_poll 태스크 enqueue → 202.
+
+    렌더링 파일(PDF/PPTX/PNG)은 DOWNLOAD, 원본 .pbix는 DOWNLOAD_PBIX 권한을 요구한다
+    (원본은 데이터 모델을 포함하므로 별도 통제).
+
+    page_name을 지정하면 현재 페이지 1장, 지정하지 않으면 보이는 전체 페이지를
+    내보낸다. 렌더링 포맷(PNG/PPTX/PDF)은 두 범위를 모두 지원하며, 전체 PNG는
+    Power BI 응답에 따라 페이지별 이미지가 담긴 ZIP으로 저장될 수 있다.
+    """
     report = await db.scalar(select(Report).where(Report.id == report_id))
     if report is None:
         raise NotFoundError("레포트를 찾을 수 없습니다.")
 
+    export_format = body.export_format.upper()
+
+    required_action = (
+        PermissionAction.DOWNLOAD_PBIX
+        if export_format == "PBIX"
+        else PermissionAction.DOWNLOAD
+    )
     allowed = await _perm.has_permission(
-        db, current["user_id"], report_id, PermissionAction.DOWNLOAD, roles=current.get("roles")
+        db, current["user_id"], report_id, required_action, roles=current.get("roles")
     )
     if not allowed:
         await append_audit(
@@ -670,12 +686,21 @@ async def start_export(
         await db.commit()
         raise PermissionDeniedError()
 
+    # PBIX는 원본 파일 단일 다운로드라 페이지/뷰 상태 개념이 없다.
+    is_pbix = export_format == "PBIX"
     job = ExportJob(
         mail_job_id=None,
         requested_by_user_id=current["user_id"],
         report_id=report_id,
         workspace_id=report.workspace_id,
-        export_format=body.export_format.upper(),
+        export_format=export_format,
+        page_name=None if is_pbix else body.page_name,
+        page_display_name=None if is_pbix else body.page_display_name,
+        bookmark_state=None if is_pbix else body.bookmark_state,
+        page_names_csv=(
+            None if is_pbix or body.page_name or not body.page_names
+            else ",".join(body.page_names)
+        ),
         status=ExportStatus.NOT_STARTED,
     )
     db.add(job)
@@ -685,7 +710,14 @@ async def start_export(
         db, action=AuditAction.EXPORT_RUN, result="success",
         actor_user_id=current["user_id"], actor_label=current["emp_no"],
         resource_type="report", resource_id=str(report_id),
-        meta={"export_format": body.export_format, "export_job_id": job.id},
+        meta={
+            "export_format": export_format,
+            "export_job_id": job.id,
+            "scope": "page" if body.page_name else ("file" if is_pbix else "all_pages"),
+            "page_name": body.page_name,
+            # 북마크 state 문자열 자체는 길고 의미가 없어 적용 여부만 남긴다.
+            "with_view_state": bool(body.bookmark_state) and not is_pbix,
+        },
     )
     await db.commit()
 
@@ -737,9 +769,9 @@ async def save_default_view(
     body: DefaultViewUpdate,
     *,
     db: SessionDep,
-    current=Depends(require_report_permission(PermissionAction.MANAGE_REPORT)),
+    current=Depends(require_report_permission(PermissionAction.MANAGE_DEFAULT_VIEW)),
 ):
-    """공통 기본 뷰 상태(슬라이서/필터/페이지) 저장/초기화. MANAGE_REPORT 권한 필요.
+    """공통 기본 뷰 상태(슬라이서/필터/페이지) 저장/초기화. MANAGE_DEFAULT_VIEW 권한 필요.
 
     Power BI 북마크 state 문자열을 저장하며, 이후 그 레포트를 여는 모든 뷰어가 이
     상태로 시작한다(.pbix 수정·재업로드 없이 기본 뷰만 변경). state가 비면 기본 뷰 해제.
