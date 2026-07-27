@@ -1,12 +1,8 @@
 @echo off
 REM ============================================================
-REM  Ensure the dev Redis container is running (detached).
-REM  Named container "bip-dev-redis" with --restart unless-stopped so
-REM  it auto-starts with Docker Desktop. Requires Docker running.
+REM  [사용 안 함] Redis는 이제 dev-up.cmd(docker-compose.dev.yml)가
+REM  다른 서비스와 함께 자동으로 띄운다. 별도 실행이 필요 없다.
+REM  전체 개발 스택 실행:  dev-up.cmd
 REM ============================================================
-docker start bip-dev-redis >NUL 2>&1 || docker run -d --name bip-dev-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
-if errorlevel 1 (
-  echo [WARN] Failed to start Redis container. Make sure Docker Desktop is running.
-) else (
-  docker ps --filter "name=bip-dev-redis"
-)
+echo Redis는 이제 dev-up.cmd 가 함께 띄웁니다. 전체 스택을 실행하세요:
+echo    dev-up.cmd

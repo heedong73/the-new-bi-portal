@@ -1,40 +1,28 @@
 @echo off
 REM ============================================================
-REM  Local (Windows) dev launcher
-REM  - Redis: detached Docker container (no window). Uses a named
-REM    container with --restart unless-stopped so it comes back up
-REM    automatically whenever Docker Desktop starts.
-REM  - Worker / Beat / Backend / Frontend: each in its own window
-REM    (dev with hot reload). These will be dockerized later.
+REM  개발용 단일 Docker 실행기
+REM  redis + backend(리로드) + worker + beat + frontend(Vite)를
+REM  docker compose 하나로 모두 띄운다. 창을 여러 개 열 필요 없음.
 REM
-REM  Requires Docker Desktop running.
+REM  - 접속: 프런트 http://localhost:5173 , 백엔드 http://localhost:8000
+REM  - 종료: 이 창에서 Ctrl+C  (또는 dev-down.cmd)
+REM  - 코드 변경은 자동 반영(백엔드 uvicorn --reload / 프런트 Vite HMR).
+REM  - requirements.txt 변경 시에만: dev-up.cmd --build
+REM
+REM  Docker Desktop 이 실행 중이어야 한다.
 REM ============================================================
 setlocal
 set ROOT=%~dp0
 
-echo Ensuring Redis container (detached, auto-restart)...
-docker start bip-dev-redis >NUL 2>&1 || docker run -d --name bip-dev-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
-if errorlevel 1 (
-  echo [WARN] Failed to start Redis container. Make sure Docker Desktop is running.
-)
+REM 예전 단독 redis 컨테이너가 있으면 제거(포트 6379 / 이름 충돌 방지). compose가 자체 redis를 띄운다.
+docker rm -f bip-dev-redis >NUL 2>&1
 
-echo Starting Worker / Beat / Backend / Frontend in separate windows...
-
-REM Celery worker (Windows requires solo pool)
-start "BIP Worker" cmd /k "%ROOT%backend\run_worker.cmd"
-
-REM Celery Beat (scheduler) - fires scheduled mail dispatch every minute
-start "BIP Beat" cmd /k "%ROOT%backend\run_beat.cmd"
-
-REM Backend (FastAPI, hot reload)
-start "BIP Backend" cmd /k "cd /d %ROOT%backend && .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000"
-
-REM Frontend (Vite)
-start "BIP Frontend" cmd /k "cd /d %ROOT%frontend && npm run dev"
-
+echo Starting all services via docker compose (redis / backend / worker / beat / frontend)...
+echo   Frontend: http://localhost:5173
+echo   Backend : http://localhost:8000
+echo   (stop: Ctrl+C, or run dev-down.cmd)
 echo.
-echo Done.
-echo  - Redis: runs in background as docker container "bip-dev-redis" (no window).
-echo  - 4 windows opened: Worker / Beat / Backend / Frontend. Close a window to stop that service.
-echo  - Stop Redis with: docker stop bip-dev-redis   (start again: docker start bip-dev-redis)
+
+docker compose -f "%ROOT%docker-compose.dev.yml" up %*
+
 endlocal

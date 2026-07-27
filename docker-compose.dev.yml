@@ -1,0 +1,132 @@
+# 개발용 단일 실행 구성.
+#   docker compose -f docker-compose.dev.yml up
+# 한 번으로 redis + backend(핫리로드) + worker + beat + frontend(Vite)를 모두 띄운다.
+# 더 이상 redis 컨테이너를 따로 관리하거나 dev-up.cmd로 창을 4개 열 필요가 없다.
+#
+# - DB: .env의 DATABASE_URL을 그대로 사용한다(운영 RDS 등). 이 compose는 DB를 띄우지 않는다.
+# - Redis: 이 compose가 띄우는 컨테이너를 사용한다(.env의 REDIS_URL은 아래 environment로 덮어씀).
+# - 소스는 bind mount 되어 backend(uvicorn --reload)와 frontend(Vite)는 저장 시 자동 반영된다.
+# - 마이그레이션은 자동 실행하지 않는다(운영 DB 안전). 필요할 때만 수동으로:
+#     docker compose -f docker-compose.dev.yml exec backend alembic upgrade head
+name: bip-dev
+
+networks:
+  bip-dev-net:
+    driver: bridge
+
+volumes:
+  bip_dev_reportimage:
+  bip_dev_frontend_node_modules:
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: bip-dev-redis
+    networks:
+      - bip-dev-net
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: bip-dev-backend
+    container_name: bip-dev-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
+    networks:
+      - bip-dev-net
+    env_file:
+      - .env
+    environment:
+      # .env의 REDIS_URL(localhost)을 컨테이너 네트워크 주소로 덮어쓴다.
+      REDIS_URL: redis://redis:6379/0
+      # Windows bind mount에서 파일 변경 감지가 누락되는 것을 방지(폴링 강제).
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ./backend:/app
+      - bip_dev_reportimage:/data/reportimage
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: bip-dev-backend
+    container_name: bip-dev-worker
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    networks:
+      - bip-dev-net
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+      - bip_dev_reportimage:/data/reportimage
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: bip-dev-backend
+    container_name: bip-dev-beat
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    networks:
+      - bip-dev-net
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    image: node:22-bookworm-slim
+    container_name: bip-dev-frontend
+    working_dir: /app
+    # 최초 1회 의존성 설치 후 Vite dev 서버 기동(0.0.0.0 바인딩).
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    networks:
+      - bip-dev-net
+    environment:
+      # Vite 프록시가 컨테이너 네트워크의 backend를 향하도록 지정.
+      VITE_PROXY_TARGET: http://backend:8000
+      VITE_USE_POLLING: "true"
+    volumes:
+      - ./frontend:/app
+      # 호스트(Windows) node_modules가 컨테이너를 덮어쓰지 않도록 별도 볼륨 사용.
+      - bip_dev_frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    restart: unless-stopped

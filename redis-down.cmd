@@ -1,3 +1,7 @@
 @echo off
-REM Stop the dev Redis container (keeps the container so it can be started again).
-docker stop bip-dev-redis
+REM ============================================================
+REM  [사용 안 함] 전체 개발 스택을 내리려면 dev-down.cmd 를 사용하세요.
+REM  (예전 단독 redis 컨테이너가 남아 있으면 정리)
+REM ============================================================
+docker rm -f bip-dev-redis >NUL 2>&1
+echo 전체 스택 종료는 dev-down.cmd 를 사용하세요.
