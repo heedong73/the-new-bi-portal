@@ -9,7 +9,7 @@
  */
 import { useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Building2, LayoutGrid, Shield, User, UsersRound, X } from 'lucide-react'
+import { Building2, Info, LayoutGrid, Shield, User, UsersRound, X } from 'lucide-react'
 
 import { permissionAdminApi, usersApi } from '@/api/adminApi'
 import { foldersAdminApi, reportAdminApi } from '@/api/reportAdminApi'
@@ -21,11 +21,11 @@ import ReportMultiPicker from './ReportMultiPicker'
 import GroupTreeSelector, { type GroupSelection } from './GroupTreeSelector'
 import { UserPicker } from './EntityPicker'
 
-const REPORT_PERMISSIONS: { value: PermissionAction; label: string }[] = [
+const REPORT_PERMISSIONS: { value: PermissionAction; label: string; hint?: string }[] = [
   { value: 'VIEW', label: '조회' },
   { value: 'DOWNLOAD', label: '다운로드' },
   { value: 'REFRESH', label: '새로고침' },
-  { value: 'MANAGE_REPORT', label: '교체' },
+  { value: 'MANAGE_REPORT', label: '교체', hint: "레포트 파일 교체와 함께 레포트 뷰의 '현재 뷰를 기본값으로 저장' 권한이 포함됩니다." },
   { value: 'VIEW_STATS', label: '통계 조회' },
 ]
 
@@ -272,11 +272,13 @@ function GroupDetailPanel({ groupId, groupName }: { groupId: number; groupName: 
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <span className="text-xs text-slate-400">권한(복수 선택)</span>
               {REPORT_PERMISSIONS.map((p) => (
-                <label key={p.value} className="inline-flex items-center gap-1 text-sm text-slate-600">
+                <label key={p.value} title={p.hint}
+                  className={`inline-flex items-center gap-1 text-sm text-slate-600 ${p.hint ? 'cursor-help' : ''}`}>
                   <input type="checkbox" checked={reportPerms.includes(p.value)}
                     onChange={(e) => togglePerm(p.value, e.target.checked)}
                     className="h-4 w-4 rounded border-slate-300" />
                   {p.label}
+                  {p.hint && <Info className="h-3 w-3 text-slate-400" aria-hidden />}
                 </label>
               ))}
               <button type="button"
@@ -727,11 +729,13 @@ function UserDetailPanel({ userId }: { userId: number }) {
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     <span className="text-xs text-slate-400">권한(복수 선택)</span>
                     {REPORT_PERMISSIONS.map((p) => (
-                      <label key={p.value} className="inline-flex items-center gap-1 text-sm text-slate-600">
+                      <label key={p.value} title={p.hint}
+                        className={`inline-flex items-center gap-1 text-sm text-slate-600 ${p.hint ? 'cursor-help' : ''}`}>
                         <input type="checkbox" checked={reportPerms.includes(p.value)}
                           onChange={(e) => togglePerm(p.value, e.target.checked)}
                           className="h-4 w-4 rounded border-slate-300" />
                         {p.label}
+                        {p.hint && <Info className="h-3 w-3 text-slate-400" aria-hidden />}
                       </label>
                     ))}
                     <button type="button"
