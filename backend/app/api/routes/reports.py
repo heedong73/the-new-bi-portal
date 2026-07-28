@@ -11,15 +11,16 @@ import json
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
 from celery.result import AsyncResult
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.constants import AuditAction, RoleCode, PermissionAction, SubjectType
 from app.core.deps import SessionDep, require_menu, require_report_permission, get_current_user, PowerBIClientDep, RedisDep
 from app.core.errors import NotFoundError, ConflictError, ValidationError, PermissionDeniedError
 from app.models.report import (
-    Report, Workspace, ReportFavorite, ReportPermission,
+    FavoriteFolder, Report, Workspace, ReportFavorite, ReportPermission,
     UserReportActivity, ReportViewDailyStat,
 )
 from app.models.mail import MailSchedule
@@ -27,6 +28,8 @@ from app.models.log import AuditLog
 from app.workers.celery_app import celery_app
 from app.workers.tasks.pbix_import import pbix_import as pbix_import_task
 from app.schemas.report import (
+    FavoriteFolderMoveRequest, FavoriteFolderNameRequest,
+    FavoriteFolderReorderRequest, FavoriteFolderResponse,
     ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse, DefaultViewUpdate,
     ReportCatalogResponse,
 )
@@ -143,9 +146,12 @@ async def list_reports(
         db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
     )
     flag_ids = await _permission_flag_ids(db, current)
+    personalization_user_id = _discovery_user_id(current)
     fav_ids = {
         rid for (rid,) in (await db.execute(
-            select(ReportFavorite.report_id).where(ReportFavorite.user_id == current["user_id"])
+            select(ReportFavorite.report_id).where(
+                ReportFavorite.user_id == personalization_user_id
+            )
         )).all()
     }
     stmt = select(Report)
@@ -162,8 +168,50 @@ async def list_reports(
 
 
 def _discovery_user_id(current: dict) -> int:
-    """독립 PK 공간을 쓰는 로컬 관리자가 일반 사용자의 개인화를 읽지 않게 한다."""
-    return -1 if current.get("is_local_admin") else current["user_id"]
+    """일반 사용자와 PK 공간이 다른 로컬 관리자를 고유한 음수 ID로 분리한다."""
+    user_id = int(current["user_id"])
+    return -user_id if current.get("is_local_admin") else user_id
+
+
+_FAVORITE_FOLDER_RESERVED_NAMES = {"전체", "미분류"}
+_MAX_FAVORITE_FOLDERS = 100
+
+
+def _normalize_favorite_folder_name(value: str) -> tuple[str, str]:
+    """표시 이름은 trim하고 사용자별 중복 비교용 이름은 casefold한다."""
+    name = value.strip()
+    if not name:
+        raise ValidationError("폴더 이름을 입력해 주세요.")
+    normalized_name = name.casefold()
+    if normalized_name in _FAVORITE_FOLDER_RESERVED_NAMES:
+        raise ValidationError(f"'{name}'은(는) 사용할 수 없는 폴더 이름입니다.")
+    if len(normalized_name) > 80:
+        raise ValidationError("폴더 이름은 80자 이하여야 합니다.")
+    return name, normalized_name
+
+
+def _favorite_folder_response(folder: FavoriteFolder) -> FavoriteFolderResponse:
+    return FavoriteFolderResponse(
+        id=folder.id,
+        name=folder.name,
+        sort_order=folder.sort_order,
+        created_at=folder.created_at,
+        updated_at=folder.updated_at,
+    )
+
+
+async def _owned_favorite_folder(
+    db: SessionDep, user_id: int, folder_id: int
+) -> FavoriteFolder:
+    folder = await db.scalar(
+        select(FavoriteFolder).where(
+            FavoriteFolder.id == folder_id,
+            FavoriteFolder.user_id == user_id,
+        )
+    )
+    if folder is None:
+        raise NotFoundError("즐겨찾기 폴더를 찾을 수 없습니다.")
+    return folder
 
 
 async def _discovery_permissions(db: SessionDep, current: dict):
@@ -171,15 +219,14 @@ async def _discovery_permissions(db: SessionDep, current: dict):
         db, current["user_id"], PermissionAction.VIEW, roles=current.get("roles")
     )
     flag_ids = await _permission_flag_ids(db, current)
-    favorite_ids: set[int] = set()
-    if not current.get("is_local_admin"):
-        favorite_ids = {
-            report_id for (report_id,) in (await db.execute(
-                select(ReportFavorite.report_id).where(
-                    ReportFavorite.user_id == current["user_id"]
-                )
-            )).all()
-        }
+    personalization_user_id = _discovery_user_id(current)
+    favorite_ids = {
+        report_id for (report_id,) in (await db.execute(
+            select(ReportFavorite.report_id).where(
+                ReportFavorite.user_id == personalization_user_id
+            )
+        )).all()
+    }
     return accessible_ids, flag_ids, favorite_ids
 
 
@@ -235,6 +282,135 @@ async def list_recent_reports(
     ]
 
 
+@router.get("/favorite-folders", response_model=list[FavoriteFolderResponse])
+async def list_favorite_folders(
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """현재 사용자의 개인 즐겨찾기 폴더를 지정 순서로 반환한다."""
+    user_id = _discovery_user_id(current)
+    folders = (
+        await db.execute(
+            select(FavoriteFolder)
+            .where(FavoriteFolder.user_id == user_id)
+            .order_by(FavoriteFolder.sort_order, FavoriteFolder.id)
+        )
+    ).scalars().all()
+    return [_favorite_folder_response(folder) for folder in folders]
+
+
+@router.post(
+    "/favorite-folders",
+    response_model=FavoriteFolderResponse,
+    status_code=201,
+)
+async def create_favorite_folder(
+    body: FavoriteFolderNameRequest,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """현재 사용자에게 1단계 즐겨찾기 폴더를 생성한다."""
+    user_id = _discovery_user_id(current)
+    name, normalized_name = _normalize_favorite_folder_name(body.name)
+    folder_count = int(await db.scalar(
+        select(func.count(FavoriteFolder.id)).where(FavoriteFolder.user_id == user_id)
+    ) or 0)
+    if folder_count >= _MAX_FAVORITE_FOLDERS:
+        raise ValidationError(
+            f"즐겨찾기 폴더는 최대 {_MAX_FAVORITE_FOLDERS}개까지 만들 수 있습니다."
+        )
+    max_sort_order = await db.scalar(
+        select(func.max(FavoriteFolder.sort_order)).where(
+            FavoriteFolder.user_id == user_id
+        )
+    )
+    folder = FavoriteFolder(
+        user_id=user_id,
+        name=name,
+        normalized_name=normalized_name,
+        sort_order=0 if max_sort_order is None else max_sort_order + 1,
+    )
+    db.add(folder)
+    try:
+        await db.flush()
+        await db.refresh(folder)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictError("같은 이름의 즐겨찾기 폴더가 이미 있습니다.") from exc
+    return _favorite_folder_response(folder)
+
+
+@router.put("/favorite-folders/reorder", status_code=204)
+async def reorder_favorite_folders(
+    body: FavoriteFolderReorderRequest,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """현재 사용자의 모든 개인 폴더 순서를 한 번에 변경한다."""
+    user_id = _discovery_user_id(current)
+    folders = (
+        await db.execute(
+            select(FavoriteFolder).where(FavoriteFolder.user_id == user_id)
+        )
+    ).scalars().all()
+    current_ids = {folder.id for folder in folders}
+    requested_ids = body.folder_ids
+    if len(requested_ids) != len(set(requested_ids)) or set(requested_ids) != current_ids:
+        raise ValidationError("현재 사용자의 모든 즐겨찾기 폴더를 중복 없이 전달해 주세요.")
+    by_id = {folder.id: folder for folder in folders}
+    for sort_order, folder_id in enumerate(requested_ids):
+        by_id[folder_id].sort_order = sort_order
+    await db.commit()
+
+
+@router.patch(
+    "/favorite-folders/{folder_id}",
+    response_model=FavoriteFolderResponse,
+)
+async def rename_favorite_folder(
+    folder_id: int,
+    body: FavoriteFolderNameRequest,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """현재 사용자가 소유한 개인 폴더의 이름을 변경한다."""
+    user_id = _discovery_user_id(current)
+    folder = await _owned_favorite_folder(db, user_id, folder_id)
+    name, normalized_name = _normalize_favorite_folder_name(body.name)
+    folder.name = name
+    folder.normalized_name = normalized_name
+    try:
+        await db.flush()
+        await db.refresh(folder)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictError("같은 이름의 즐겨찾기 폴더가 이미 있습니다.") from exc
+    return _favorite_folder_response(folder)
+
+
+@router.delete("/favorite-folders/{folder_id}", status_code=204)
+async def delete_favorite_folder(
+    folder_id: int,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """개인 폴더를 삭제하고 그 안의 즐겨찾기는 미분류로 보존한다."""
+    user_id = _discovery_user_id(current)
+    folder = await _owned_favorite_folder(db, user_id, folder_id)
+    await db.execute(
+        update(ReportFavorite)
+        .where(
+            ReportFavorite.user_id == user_id,
+            ReportFavorite.favorite_folder_id == folder.id,
+        )
+        .values(favorite_folder_id=None)
+    )
+    await db.delete(folder)
+    await db.commit()
+
+
 @router.get("/favorites", response_model=list[ReportResponse])
 async def list_favorites(
     db: SessionDep,
@@ -243,13 +419,49 @@ async def list_favorites(
 ):
     """현재 사용자의 즐겨찾기를 최근 조회순(미조회는 추가순)으로 반환한다."""
     accessible, flag_ids, favorite_ids = await _discovery_permissions(db, current)
+    user_id = _discovery_user_id(current)
+    folder_by_report = {
+        report_id: folder_id
+        for report_id, folder_id in (await db.execute(
+            select(
+                ReportFavorite.report_id,
+                ReportFavorite.favorite_folder_id,
+            ).where(ReportFavorite.user_id == user_id)
+        )).all()
+    }
     items = await report_discovery_service.favorites(
-        db, user_id=_discovery_user_id(current), accessible_ids=accessible, limit=limit
+        db, user_id=user_id, accessible_ids=accessible, limit=limit
     )
-    return [
+    responses = [
         _discovery_response(item, flag_ids=flag_ids, favorite_ids=favorite_ids)
         for item in items
     ]
+    for response in responses:
+        response.favorite_folder_id = folder_by_report.get(response.id)
+    return responses
+
+
+@router.put("/{report_id}/favorite-folder", status_code=204)
+async def move_favorite_to_folder(
+    report_id: int,
+    body: FavoriteFolderMoveRequest,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """즐겨찾기한 레포트를 소유한 개인 폴더 또는 미분류로 이동한다."""
+    user_id = _discovery_user_id(current)
+    favorite = await db.scalar(
+        select(ReportFavorite).where(
+            ReportFavorite.user_id == user_id,
+            ReportFavorite.report_id == report_id,
+        )
+    )
+    if favorite is None:
+        raise NotFoundError("즐겨찾기에 추가된 레포트를 찾을 수 없습니다.")
+    if body.folder_id is not None:
+        await _owned_favorite_folder(db, user_id, body.folder_id)
+    favorite.favorite_folder_id = body.folder_id
+    await db.commit()
 
 
 @router.get("/{report_id}/pages", response_model=list[ReportPageDTO])
@@ -271,17 +483,18 @@ async def list_report_pages(
 
 @router.put("/{report_id}/favorite", status_code=204)
 async def add_favorite(report_id: int, db: SessionDep, current=Depends(get_current_user)):
-    """즐겨찾기 추가 (멱등). VIEW 권한 필요."""
+    """즐겨찾기 추가 (멱등). VIEW 권한 필요. 새 항목은 미분류에 둔다."""
     ok = await permission_service.has_permission(
         db, current["user_id"], report_id, PermissionAction.VIEW, roles=current.get("roles")
     )
     if not ok:
         raise PermissionDeniedError()
+    user_id = _discovery_user_id(current)
     existing = await db.scalar(select(ReportFavorite).where(
-        ReportFavorite.user_id == current["user_id"], ReportFavorite.report_id == report_id,
+        ReportFavorite.user_id == user_id, ReportFavorite.report_id == report_id,
     ))
     if existing is None:
-        db.add(ReportFavorite(user_id=current["user_id"], report_id=report_id))
+        db.add(ReportFavorite(user_id=user_id, report_id=report_id))
         await db.flush()
     await db.commit()
 
@@ -289,8 +502,9 @@ async def add_favorite(report_id: int, db: SessionDep, current=Depends(get_curre
 @router.delete("/{report_id}/favorite", status_code=204)
 async def remove_favorite(report_id: int, db: SessionDep, current=Depends(get_current_user)):
     """즐겨찾기 해제 (멱등)."""
+    user_id = _discovery_user_id(current)
     await db.execute(delete(ReportFavorite).where(
-        ReportFavorite.user_id == current["user_id"], ReportFavorite.report_id == report_id,
+        ReportFavorite.user_id == user_id, ReportFavorite.report_id == report_id,
     ))
     await db.commit()
 

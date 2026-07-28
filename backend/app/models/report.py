@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from sqlalchemy import (
-    String, Boolean, BigInteger, Integer, ForeignKey, UniqueConstraint, Text,
+    String, Boolean, BigInteger, Integer, ForeignKey, ForeignKeyConstraint,
+    UniqueConstraint, Text,
     Date, DateTime, Index, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -87,14 +88,57 @@ class ReportPermission(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
 
+class FavoriteFolder(Base):
+    """사용자별 1단계 즐겨찾기 폴더."""
+    __tablename__ = "favorite_folders"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "normalized_name", name="uq_favorite_folders_user_name"
+        ),
+        UniqueConstraint(
+            "user_id", "id", name="uq_favorite_folders_user_id_id"
+        ),
+        Index("ix_favorite_folders_user_sort", "user_id", "sort_order", "id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class ReportFavorite(Base):
-    """사용자별 레포트 즐겨찾기."""
+    """사용자별 레포트 즐겨찾기. favorite_folder_id가 없으면 시스템 '미분류'."""
     __tablename__ = "report_favorites"
-    __table_args__ = {"schema": SCHEMA}
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "favorite_folder_id"],
+            [
+                f"{SCHEMA}.favorite_folders.user_id",
+                f"{SCHEMA}.favorite_folders.id",
+            ],
+            name="fk_report_favorites_owned_folder",
+        ),
+        Index("ix_report_favorites_user_folder", "user_id", "favorite_folder_id"),
+        {"schema": SCHEMA},
+    )
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     report_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey(f"{SCHEMA}.reports.id", ondelete="CASCADE"), primary_key=True
+    )
+    favorite_folder_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(f"{SCHEMA}.favorite_folders.id", ondelete="SET NULL"),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 

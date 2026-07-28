@@ -50,6 +50,30 @@ class ExportRequest(BaseModel):
     # 비우면 Power BI가 레포트 전체를 자체 순서로 내보낸다.
     page_names: list[str] | None = None
 
+class FavoriteFolderNameRequest(BaseModel):
+    """개인 즐겨찾기 폴더 생성/이름 변경."""
+    name: str = Field(min_length=1, max_length=80)
+
+
+class FavoriteFolderReorderRequest(BaseModel):
+    """개인 즐겨찾기 폴더 전체 순서."""
+    folder_ids: list[int] = Field(default_factory=list, max_length=100)
+
+
+class FavoriteFolderMoveRequest(BaseModel):
+    """즐겨찾기한 레포트를 개인 폴더로 이동. None이면 미분류."""
+    folder_id: int | None = None
+
+
+class FavoriteFolderResponse(BaseModel):
+    """개인 즐겨찾기 폴더."""
+    id: int
+    name: str
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class ReportResponse(BaseModel):
     """레포트 응답 (목록/상세)."""
     id: int
@@ -72,6 +96,7 @@ class ReportResponse(BaseModel):
     last_viewed_at: datetime | None = None
     view_count: int = 0  # 최근 30일 전체 사용자 조회수
     is_favorite: bool = False
+    favorite_folder_id: int | None = None  # 개인 즐겨찾기 폴더. None이면 미분류
     created_by_user_id: int | None = None
     created_by_label: str | None = None
     created_at: datetime | None = None

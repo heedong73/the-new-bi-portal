@@ -16,8 +16,11 @@ import {
 } from 'lucide-react'
 
 import { foldersApi, reportsApi } from '@/api/portalApi'
+import FavoriteFolderManager, { type FavoriteFolderSelection } from '@/components/FavoriteFolderManager'
+import FavoriteFolderPrompt from '@/components/FavoriteFolderPrompt'
 import { useAuthStore } from '@/stores/useAuthStore'
-import { reportDisplayName, type FolderTreeNode, type ReportCatalogSort, type ReportSummary } from '@/types/report'
+import { useToastStore } from '@/stores/useToastStore'
+import { reportDisplayName, type FavoriteFolder, type FolderTreeNode, type ReportCatalogSort, type ReportSummary } from '@/types/report'
 
 import './ReportsHubPage.css'
 
@@ -167,14 +170,28 @@ interface ReportItemProps {
   report: ReportSummary
   view: ViewMode
   context: HubMode
+  favoriteFolders: FavoriteFolder[]
   toggling: boolean
+  moving: boolean
   onOpen: (reportId: number) => void
   onToggleFavorite: (report: ReportSummary) => void
+  onMoveFavorite: (reportId: number, folderId: number | null) => void
 }
 
-function ReportItem({ report, view, context, toggling, onOpen, onToggleFavorite }: ReportItemProps) {
+function ReportItem({
+  report,
+  view,
+  context,
+  favoriteFolders,
+  toggling,
+  moving,
+  onOpen,
+  onToggleFavorite,
+  onMoveFavorite,
+}: ReportItemProps) {
   const favorite = Boolean(report.is_favorite)
   const viewedLabel = report.last_viewed_at ? relativeTime(report.last_viewed_at) : null
+  const personalFolder = favoriteFolders.find((folder) => folder.id === report.favorite_folder_id)
 
   return (
     <article className={`report-hub-card report-hub-card--${view}`}>
@@ -210,14 +227,34 @@ function ReportItem({ report, view, context, toggling, onOpen, onToggleFavorite 
         )}
 
         <div className="report-hub-card__meta">
-          <span title={report.folder_path ?? undefined}>
+          <span title={context === 'favorites' ? personalFolder?.name ?? '미분류' : report.folder_path ?? undefined}>
             <Folder aria-hidden="true" />
-            {report.folder_path || '미분류'}
+            {context === 'favorites' ? personalFolder?.name ?? '미분류' : report.folder_path || '미분류'}
           </span>
           {context === 'recent' && viewedLabel && (
             <span><Clock3 aria-hidden="true" />{viewedLabel}</span>
           )}
         </div>
+
+        {context === 'favorites' && (
+          <label className="report-hub-card__folder-move">
+            <span>폴더 이동</span>
+            <select
+              value={report.favorite_folder_id ?? ''}
+              onChange={(event) => onMoveFavorite(
+                report.id,
+                event.target.value ? Number(event.target.value) : null,
+              )}
+              disabled={moving}
+              aria-label={`${reportDisplayName(report)} 폴더 이동`}
+            >
+              <option value="">미분류</option>
+              {favoriteFolders.map((folder) => (
+                <option key={folder.id} value={folder.id}>{folder.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <div className="report-hub-card__footer">
           <span>{report.author_label || '작성자 미지정'}</span>
@@ -280,10 +317,13 @@ export default function ReportsHubPage() {
   const location = useLocation()
   const queryClient = useQueryClient()
   const user = useAuthStore((state) => state.user)
+  const addToast = useToastStore((state) => state.addToast)
+  const [folderPromptReport, setFolderPromptReport] = useState<ReportSummary | null>(null)
   const mode = hubMode(location.pathname)
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search])
   const query = searchParams.get('q')?.trim() ?? ''
   const requestedRootFolderId = positiveNumber(searchParams.get('root'))
+  const requestedFavoriteFolder = searchParams.get('favoriteFolder')
   const folderId = positiveNumber(searchParams.get('folder'))
   const sort: ReportCatalogSort = searchParams.get('sort') === 'popular' ? 'popular' : 'latest'
   const view: ViewMode = searchParams.get('view') === 'list' ? 'list' : 'grid'
@@ -291,6 +331,7 @@ export default function ReportsHubPage() {
   const rootsQuery = useQuery({
     queryKey: ['folder-tree', query],
     queryFn: ({ signal }) => foldersApi.tree(signal, query || undefined),
+    enabled: mode === 'home' || mode === 'catalog',
     staleTime: 60_000,
   })
   const roots = rootsQuery.data ?? []
@@ -337,44 +378,53 @@ export default function ReportsHubPage() {
     staleTime: 30_000,
   })
 
-  const favoriteItems = favoritesQuery.data ?? []
-  const favoriteRootCounts = favoriteItems.reduce((counts, report) => {
-    const rootId = report.root_folder_id
-    if (rootId != null) counts.set(rootId, (counts.get(rootId) ?? 0) + 1)
-    return counts
-  }, new Map<number, number>())
-  const favoriteRootOptions = roots.flatMap((root) => {
-    const count = favoriteRootCounts.get(root.id) ?? 0
-    return count > 0 ? [{ id: root.id, name: root.name, count }] : []
+  const favoriteFoldersQuery = useQuery({
+    queryKey: ['favorite-folders', user?.id ?? null, user?.emp_no ?? null],
+    queryFn: ({ signal }) => reportsApi.listFavoriteFolders(signal),
+    enabled: mode === 'favorites' && user != null,
+    staleTime: 30_000,
   })
-  const isValidFavoriteRoot = requestedRootFolderId != null
-    && favoriteRootOptions.some((root) => root.id === requestedRootFolderId)
-  const selectedFavoriteRootId = mode === 'favorites' && isValidFavoriteRoot
-    ? requestedRootFolderId
-    : null
-  const filteredFavoriteItems = selectedFavoriteRootId == null
+
+  const favoriteItems = favoritesQuery.data ?? []
+  const favoriteFolders = favoriteFoldersQuery.data ?? []
+  const requestedFavoriteFolderId = positiveNumber(requestedFavoriteFolder)
+  const isValidFavoriteFolder = requestedFavoriteFolderId != null
+    && favoriteFolders.some((folder) => folder.id === requestedFavoriteFolderId)
+  const selectedFavoriteFolder: FavoriteFolderSelection = requestedFavoriteFolder === 'uncategorized'
+    ? 'uncategorized'
+    : requestedFavoriteFolderId != null
+      && (favoriteFoldersQuery.isLoading || favoriteFoldersQuery.isError || isValidFavoriteFolder)
+      ? requestedFavoriteFolderId
+      : 'all'
+  const filteredFavoriteItems = selectedFavoriteFolder === 'all'
     ? favoriteItems
-    : favoriteItems.filter((report) => report.root_folder_id === selectedFavoriteRootId)
+    : selectedFavoriteFolder === 'uncategorized'
+      ? favoriteItems.filter((report) => report.favorite_folder_id == null)
+      : favoriteItems.filter((report) => report.favorite_folder_id === selectedFavoriteFolder)
 
   useEffect(() => {
-    if (mode !== 'favorites' || favoritesQuery.isLoading || rootsQuery.isLoading) return
+    if (mode !== 'favorites' || favoriteFoldersQuery.isLoading || favoriteFoldersQuery.isError) return
 
-    const hasRootParam = searchParams.has('root')
-    const hasFolderParam = searchParams.has('folder')
-    if (!hasFolderParam && (!hasRootParam || isValidFavoriteRoot)) return
+    const invalidFavoriteFolder = requestedFavoriteFolder != null
+      && requestedFavoriteFolder !== 'uncategorized'
+      && !isValidFavoriteFolder
+    const hasLegacyCatalogFilter = searchParams.has('root') || searchParams.has('folder')
+    if (!invalidFavoriteFolder && !hasLegacyCatalogFilter) return
 
     const next = new URLSearchParams(searchParams)
+    next.delete('root')
     next.delete('folder')
-    if (!isValidFavoriteRoot) next.delete('root')
+    if (invalidFavoriteFolder) next.delete('favoriteFolder')
     const suffix = next.toString()
     navigate(`${location.pathname}${suffix ? `?${suffix}` : ''}`, { replace: true })
   }, [
-    favoritesQuery.isLoading,
-    isValidFavoriteRoot,
+    favoriteFoldersQuery.isError,
+    favoriteFoldersQuery.isLoading,
+    isValidFavoriteFolder,
     location.pathname,
     mode,
     navigate,
-    rootsQuery.isLoading,
+    requestedFavoriteFolder,
     searchParams,
   ])
 
@@ -401,12 +451,34 @@ export default function ReportsHubPage() {
     mutationFn: (report: ReportSummary) => report.is_favorite
       ? reportsApi.removeFavorite(report.id)
       : reportsApi.addFavorite(report.id),
-    onSuccess: () => {
+    onSuccess: (_data, report) => {
+      if (!report.is_favorite) {
+        setFolderPromptReport(report)
+      } else if (folderPromptReport?.id === report.id) {
+        setFolderPromptReport(null)
+      }
       queryClient.invalidateQueries({ queryKey: ['report-catalog'] })
       queryClient.invalidateQueries({ queryKey: ['report-favorites'] })
       queryClient.invalidateQueries({ queryKey: ['report-recent'] })
       queryClient.invalidateQueries({ queryKey: ['favorites'] })
       queryClient.invalidateQueries({ queryKey: ['reports'] })
+    },
+  })
+
+  const moveFavoriteMutation = useMutation({
+    mutationFn: ({ reportId, folderId }: { reportId: number; folderId: number | null }) =>
+      reportsApi.moveFavoriteToFolder(reportId, folderId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['report-favorites'] })
+      queryClient.invalidateQueries({ queryKey: ['report-catalog'] })
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
+      const folderName = variables.folderId == null
+        ? '미분류'
+        : favoriteFolders.find((folder) => folder.id === variables.folderId)?.name ?? '선택한 폴더'
+      addToast(`즐겨찾기를 ‘${folderName}’(으)로 이동했습니다.`, 'success')
+    },
+    onError: (error) => {
+      addToast(error instanceof Error ? error.message : '즐겨찾기를 이동하지 못했습니다.', 'error')
     },
   })
 
@@ -439,7 +511,7 @@ export default function ReportsHubPage() {
         ? `“${query}” 검색 결과`
         : currentFolder?.name || currentRoot?.name || '전체 리포트'
   const pageDescription = mode === 'favorites'
-    ? '즐겨찾기한 리포트를 최근 조회한 순서대로 모았습니다.'
+    ? '개인 폴더로 즐겨찾기를 정리하고 최근 조회한 순서대로 확인할 수 있습니다.'
     : mode === 'recent'
       ? '가장 최근에 확인한 리포트부터 다시 이어볼 수 있습니다.'
       : null
@@ -463,11 +535,12 @@ export default function ReportsHubPage() {
     navigate(catalogDestination({ root: folderId, folder: null }))
   }
 
-  function selectFavoriteRoot(rootId: number | null) {
+  function selectFavoriteFolder(selection: FavoriteFolderSelection) {
     const next = new URLSearchParams(location.search)
+    next.delete('root')
     next.delete('folder')
-    if (rootId == null) next.delete('root')
-    else next.set('root', String(rootId))
+    if (selection === 'all') next.delete('favoriteFolder')
+    else next.set('favoriteFolder', String(selection))
     const suffix = next.toString()
     navigate(`${location.pathname}${suffix ? `?${suffix}` : ''}`)
   }
@@ -489,6 +562,9 @@ export default function ReportsHubPage() {
   }
 
   const togglingId = favoriteMutation.isPending ? favoriteMutation.variables?.id : undefined
+  const movingId = moveFavoriteMutation.isPending
+    ? moveFavoriteMutation.variables?.reportId
+    : undefined
 
   return (
     <main className={`report-hub${mode === 'home' ? '' : ' report-hub--page'}`}>
@@ -603,30 +679,15 @@ export default function ReportsHubPage() {
           </>
         )}
 
-        {mode === 'favorites' && favoriteRootOptions.length > 0 && (
-          <div className="report-hub-categories" aria-label="즐겨찾기 최상위 폴더 필터">
-            <button
-              type="button"
-              onClick={() => selectFavoriteRoot(null)}
-              className={selectedFavoriteRootId == null ? 'is-active' : ''}
-              aria-pressed={selectedFavoriteRootId == null}
-            >
-              전체
-              <span>{favoriteItems.length}</span>
-            </button>
-            {favoriteRootOptions.map((root) => (
-              <button
-                type="button"
-                key={root.id}
-                onClick={() => selectFavoriteRoot(root.id)}
-                className={selectedFavoriteRootId === root.id ? 'is-active' : ''}
-                aria-pressed={selectedFavoriteRootId === root.id}
-              >
-                {root.name}
-                <span>{root.count}</span>
-              </button>
-            ))}
-          </div>
+        {mode === 'favorites' && (
+          <FavoriteFolderManager
+            folders={favoriteFolders}
+            reports={favoriteItems}
+            selected={selectedFavoriteFolder}
+            loading={favoriteFoldersQuery.isLoading}
+            loadError={favoriteFoldersQuery.isError}
+            onSelect={selectFavoriteFolder}
+          />
         )}
 
         <div className="report-hub-toolbar">
@@ -689,9 +750,15 @@ export default function ReportsHubPage() {
                 report={report}
                 view={view}
                 context={mode}
+                favoriteFolders={favoriteFolders}
                 toggling={togglingId === report.id}
+                moving={movingId === report.id}
                 onOpen={openReport}
                 onToggleFavorite={(item) => favoriteMutation.mutate(item)}
+                onMoveFavorite={(reportId, selectedFolderId) => {
+                  if (selectedFolderId === (report.favorite_folder_id ?? null)) return
+                  moveFavoriteMutation.mutate({ reportId, folderId: selectedFolderId })
+                }}
               />
             ))}
           </div>
@@ -709,6 +776,15 @@ export default function ReportsHubPage() {
           </div>
         )}
       </section>
+
+      {folderPromptReport && (
+        <FavoriteFolderPrompt
+          open
+          reportId={folderPromptReport.id}
+          reportName={reportDisplayName(folderPromptReport)}
+          onClose={() => setFolderPromptReport(null)}
+        />
+      )}
     </main>
   )
 }

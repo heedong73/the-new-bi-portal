@@ -20,6 +20,12 @@ vi.mock('@/api/portalApi', () => ({
     catalog: vi.fn(),
     recent: vi.fn(),
     favorites: vi.fn(),
+    listFavoriteFolders: vi.fn(),
+    createFavoriteFolder: vi.fn(),
+    renameFavoriteFolder: vi.fn(),
+    reorderFavoriteFolders: vi.fn(),
+    deleteFavoriteFolder: vi.fn(),
+    moveFavoriteToFolder: vi.fn(),
     addFavorite: vi.fn(),
     removeFavorite: vi.fn(),
   },
@@ -80,6 +86,7 @@ describe('HomePage', () => {
     vi.mocked(reportsApi.catalog).mockResolvedValue({ items: [], total: 0, limit: 12, offset: 0 })
     vi.mocked(reportsApi.recent).mockResolvedValue([])
     vi.mocked(reportsApi.favorites).mockResolvedValue([])
+    vi.mocked(reportsApi.listFavoriteFolders).mockResolvedValue([])
     vi.mocked(reportsApi.addFavorite).mockResolvedValue(undefined as never)
     vi.mocked(reportsApi.removeFavorite).mockResolvedValue(undefined as never)
   })

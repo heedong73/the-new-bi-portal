@@ -10,7 +10,7 @@ import { useTaskStore } from '@/stores/useTaskStore'
 import type { EmbedInfo, RefreshStatus, ReportSummary } from '@/types/report'
 
 vi.mock('@/api/portalApi', () => ({
-  reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn(), liveRefreshStatus: vi.fn(), replacePbix: vi.fn(), favorites: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn(), recordView: vi.fn() },
+  reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn(), liveRefreshStatus: vi.fn(), replacePbix: vi.fn(), favorites: vi.fn(), listFavoriteFolders: vi.fn(), createFavoriteFolder: vi.fn(), moveFavoriteToFolder: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn(), recordView: vi.fn() },
   datasetsApi: { triggerRefresh: vi.fn(), cancelRefresh: vi.fn() },
 }))
 

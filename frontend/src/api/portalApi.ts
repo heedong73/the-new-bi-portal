@@ -1,7 +1,7 @@
 /** 레포트 카탈로그/폴더 API 래퍼 (BIP 포털). */
 import apiClient, { API_BASE_URL } from '@/api/client'
 import type {
-  EmbedInfo, ExportFormat, ExportStatusResponse, FolderTreeNode, RefreshStatus,
+  EmbedInfo, ExportFormat, ExportStatusResponse, FavoriteFolder, FolderTreeNode, RefreshStatus,
   ReportCatalogParams, ReportCatalogResponse, ReportSummary,
 } from '@/types/report'
 
@@ -83,6 +83,22 @@ export const reportsApi = {
     )
   },
 
+  /** GET /api/reports/favorite-folders — 현재 사용자의 개인 즐겨찾기 폴더. */
+  listFavoriteFolders: (signal?: AbortSignal) =>
+    apiClient.get<FavoriteFolder[]>('/api/reports/favorite-folders', { signal }),
+  /** POST /api/reports/favorite-folders — 개인 즐겨찾기 폴더 생성. */
+  createFavoriteFolder: (name: string) =>
+    apiClient.post<FavoriteFolder>('/api/reports/favorite-folders', { name }),
+  /** PATCH /api/reports/favorite-folders/{id} — 개인 즐겨찾기 폴더 이름 변경. */
+  renameFavoriteFolder: (folderId: number, name: string) =>
+    apiClient.patch<FavoriteFolder>(`/api/reports/favorite-folders/${folderId}`, { name }),
+  /** PUT /api/reports/favorite-folders/reorder — 개인 폴더 전체 순서 변경. */
+  reorderFavoriteFolders: (folderIds: number[]) =>
+    apiClient.put<void>('/api/reports/favorite-folders/reorder', { folder_ids: folderIds }),
+  /** DELETE /api/reports/favorite-folders/{id} — 폴더만 삭제하고 항목은 미분류로 이동. */
+  deleteFavoriteFolder: (folderId: number) =>
+    apiClient.del<void>(`/api/reports/favorite-folders/${folderId}`),
+
   /** GET /api/reports/favorites — 최근 조회순 내 즐겨찾기 레포트 목록. */
   favorites: (limit?: number, signal?: AbortSignal) =>
     apiClient.get<ReportSummary[]>('/api/reports/favorites', {
@@ -95,6 +111,11 @@ export const reportsApi = {
   /** DELETE /api/reports/{id}/favorite — 즐겨찾기 해제. */
   removeFavorite: (reportDbId: number) =>
     apiClient.del<void>(`/api/reports/${reportDbId}/favorite`),
+  /** PUT /api/reports/{id}/favorite-folder — 개인 폴더 또는 미분류로 이동. */
+  moveFavoriteToFolder: (reportDbId: number, folderId: number | null) =>
+    apiClient.put<void>(`/api/reports/${reportDbId}/favorite-folder`, {
+      folder_id: folderId,
+    }),
 
   /** POST /api/reports/{id}/export — Export 요청(내보내기/원본 다운로드 권한). 202 {export_job_id}.
    *

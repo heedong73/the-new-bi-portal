@@ -27,6 +27,16 @@ export interface ReportSummary {
   last_viewed_at?: string | null
   view_count?: number
   is_favorite?: boolean
+  favorite_folder_id?: number | null
+}
+
+/** 사용자별 1단계 즐겨찾기 폴더. */
+export interface FavoriteFolder {
+  id: number
+  name: string
+  sort_order: number
+  created_at: string
+  updated_at: string
 }
 
 /** Export 다운로드 포맷. PDF/PPTX/PNG=렌더링, PBIX=원본 파일. */

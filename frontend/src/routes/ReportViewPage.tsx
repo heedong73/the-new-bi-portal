@@ -23,6 +23,7 @@ import { reportDisplayName, type RefreshStatus, type ExportFormat } from '@/type
 import { useTaskStore } from '@/stores/useTaskStore'
 import { useBeforeUnload } from '@/hooks/useBeforeUnload'
 import PowerBIEmbed from '@/components/embed/PowerBIEmbed'
+import FavoriteFolderPrompt from '@/components/FavoriteFolderPrompt'
 import RefreshStatusBadge from '@/components/refresh/RefreshStatusBadge'
 
 const REFRESH_TERMINAL_FAIL = ['Failed', 'Disabled']
@@ -351,13 +352,15 @@ export default function ReportViewPage() {
     defaultViewMutation.mutate(null)
   }
 
-  // 즐겨찾기 토글
+  // 즐겨찾기 토글. 새로 추가한 경우에는 비차단 폴더 선택 패널을 연다.
+  const [folderPromptOpen, setFolderPromptOpen] = useState(false)
   const favoriteMutation = useMutation({
-    mutationFn: () =>
-      report?.is_favorite
+    mutationFn: (wasFavorite: boolean) =>
+      wasFavorite
         ? reportsApi.removeFavorite(reportDbId)
         : reportsApi.addFavorite(reportDbId),
-    onSuccess: () => {
+    onSuccess: (_data, wasFavorite) => {
+      setFolderPromptOpen(!wasFavorite)
       queryClient.invalidateQueries({ queryKey: ['reports'] })
       queryClient.invalidateQueries({ queryKey: ['favorites'] })
       queryClient.invalidateQueries({ queryKey: ['report-catalog'] })
@@ -625,7 +628,7 @@ export default function ReportViewPage() {
               aria-label={isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
               aria-pressed={isFavorite}
               disabled={favoriteMutation.isPending}
-              onClick={() => favoriteMutation.mutate()}
+              onClick={() => favoriteMutation.mutate(isFavorite)}
               className="shrink-0 rounded-full p-1 transition hover:bg-slate-100 disabled:opacity-50"
             >
               <Star className={`h-5 w-5 ${isFavorite ? 'fill-yellow-400 text-yellow-400' : 'text-slate-400'}`} />
@@ -995,6 +998,15 @@ export default function ReportViewPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {report && folderPromptOpen && (
+        <FavoriteFolderPrompt
+          open
+          reportId={reportDbId}
+          reportName={reportDisplayName(report)}
+          onClose={() => setFolderPromptOpen(false)}
+        />
       )}
     </div>
   )
