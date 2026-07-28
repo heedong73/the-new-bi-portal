@@ -21,8 +21,9 @@ Transport policy (Requirement 3.5, 4.9, 19.2, 20.1, 20.5):
   times; exhaustion raises :class:`PowerBIRateLimitError` (R4.9).
 - **5xx**: exponential backoff retry up to 3 times; exhaustion raises
   :class:`PowerBIUpstreamError`.
-- **Structured log** per attempt: ``{method, url, status_code, elapsed_ms,
-  retry_count}`` (R20.1). The bearer token / secrets are **never** placed in a
+- **Structured log** per attempt by default: ``{method, url, status_code, elapsed_ms,
+  retry_count}`` (R20.1). Development workers may suppress successful first attempts
+  while retaining failures and retries. The bearer token / secrets are **never** placed in a
   log event (R20.5); the masking processor in ``core/logging.py`` is a second
   line of defence.
 
@@ -34,6 +35,7 @@ are tz-aware UTC, and ``raw_json`` preserves each refresh item verbatim
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -59,6 +61,10 @@ from app.services.powerbi.client import (
 from app.services.powerbi.token_service import TokenServiceProtocol
 
 _log = get_logger("app.powerbi.live")
+
+# httpx도 성공 요청을 INFO로 기록하므로 구조화 powerbi_request와 같은 요청이 두 번
+# 보이지 않게 한다. 오류/재시도 정보는 아래 클라이언트의 구조화 로그가 담당한다.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # httpx timeouts (design: connect 5s, read 30s). write/pool kept generous.
 _TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=30.0)
@@ -309,14 +315,19 @@ class LivePowerBIClient:
                 ) from exc
             elapsed_ms = round((asyncio.get_event_loop().time() - started) * 1000, 1)
 
-            _log.info(
-                "powerbi_request",
-                method="DELETE",
-                url=url,
-                status_code=response.status_code,
-                elapsed_ms=elapsed_ms,
-                retry_count=retry_count,
-            )
+            if (
+                self._settings.POWERBI_LOG_SUCCESS_REQUESTS
+                or response.status_code >= 400
+                or retry_count > 0
+            ):
+                _log.info(
+                    "powerbi_request",
+                    method="DELETE",
+                    url=url,
+                    status_code=response.status_code,
+                    elapsed_ms=elapsed_ms,
+                    retry_count=retry_count,
+                )
 
             if response.status_code < 400:
                 return
@@ -375,8 +386,9 @@ class LivePowerBIClient:
         - **5xx**: backoff retry up to 3 times; exhaustion raises
           :class:`PowerBIUpstreamError`.
 
-        Every attempt logs ``{method, url, status_code, elapsed_ms,
-        retry_count}`` (R20.1) and never logs the bearer token (R20.5).
+        By default every attempt logs ``{method, url, status_code, elapsed_ms,
+        retry_count}`` (R20.1); development may suppress successful first attempts. Secrets
+        are never logged (R20.5).
         """
         url = f"{self._base_url}{path}"
         auth_retries = 0
@@ -392,15 +404,22 @@ class LivePowerBIClient:
                 url, headers, params
             )
 
-            # Structured log per attempt — token/secret never included (R20.5).
-            _log.info(
-                "powerbi_request",
-                method="GET",
-                url=url,
-                status_code=status_code,
-                elapsed_ms=elapsed_ms,
-                retry_count=retry_count,
-            )
+            # 운영 기본값은 모든 시도를 기록한다. 개발 worker에서는 정상 첫 시도를
+            # 숨기되 transport/HTTP 오류와 재시도 결과는 항상 남긴다.
+            if (
+                self._settings.POWERBI_LOG_SUCCESS_REQUESTS
+                or transport_error is not None
+                or status_code >= 400
+                or retry_count > 0
+            ):
+                _log.info(
+                    "powerbi_request",
+                    method="GET",
+                    url=url,
+                    status_code=status_code,
+                    elapsed_ms=elapsed_ms,
+                    retry_count=retry_count,
+                )
 
             # --- Transport failure (no HTTP status) -> treat like 5xx backoff.
             if transport_error is not None:

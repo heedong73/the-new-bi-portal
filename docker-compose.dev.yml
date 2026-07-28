@@ -77,6 +77,8 @@ services:
       - .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      # 30분 수집 시 성공 요청 수백 건은 숨기고 실패·재시도·완료 요약만 남긴다.
+      POWERBI_LOG_SUCCESS_REQUESTS: "false"
     volumes:
       - ./backend:/app
       - bip_dev_reportimage:/data/reportimage

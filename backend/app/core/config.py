@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     POWERBI_WORKSPACE_ID: str = ""
     POWERBI_API_BASE_URL: str = "https://api.powerbi.com/v1.0/myorg"
     POWERBI_VERIFY_SSL: bool = False
+    # 기본은 요청별 추적(R20.1)을 유지한다. 개발 worker는 compose에서 성공 로그만 숨긴다.
+    POWERBI_LOG_SUCCESS_REQUESTS: bool = True
 
     # HR Auth
     HR_PWD_HASH_ROUNDS: int = 3
@@ -49,7 +51,7 @@ class Settings(BaseSettings):
     SMTP_STARTTLS: bool = False
 
     # Job intervals
-    COLLECT_INTERVAL_MINUTES: int = 5
+    COLLECT_INTERVAL_MINUTES: int = 30
     EXPORT_POLL_INTERVAL_SEC: int = 5
     EXPORT_POLL_TIMEOUT_SEC: int = 600
     MAIL_RETRY_MAX: int = 3
