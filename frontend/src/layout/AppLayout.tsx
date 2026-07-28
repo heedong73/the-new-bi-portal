@@ -29,6 +29,8 @@ export default function AppLayout() {
   const allowedMenus = user?.allowed_menus ?? []
   const isOperator = roles.includes('System_Operator')
   const canStats = isOperator || allowedMenus.includes('stats')
+  // 전광판 재생은 통계와 동일한 부여 대상 메뉴다(로비/현장 모니터 등 특정 대상 전용).
+  const canDisplay = isOperator || allowedMenus.includes('display_boards')
   const canAdmin = isOperator || ADMIN_GROUP_MENUS.some((m) => allowedMenus.includes(m))
   const lastLoginLabel = formatLastLogin(user?.last_login_at)
 
@@ -84,22 +86,25 @@ export default function AppLayout() {
           <nav className="editorial-nav flex-1 space-y-1 overflow-y-auto">
             <SidebarFolderTree />
 
-            <div className="space-y-1 pt-2">
-              <div className="portal-discovery-nav__divider mb-3" />
-              <p className="portal-discovery-nav__label px-3 pb-1">인사이트</p>
-              {canStats && (
-                <NavLink to="/stats" className={() => itemCls(statsActive)}>
-                  <BarChart3 className="h-4 w-4" />
-                  통계
-                </NavLink>
-              )}
-              {/* 전광판은 메뉴 권한 대상이 아니라 로그인 사용자 전체에게 노출한다.
-                  실제로 볼 수 있는 화면은 레포트 VIEW 권한으로 서버가 필터한다. */}
-              <NavLink to="/display" className={() => itemCls(displayActive)}>
-                <MonitorPlay className="h-4 w-4" />
-                KPI 전광판
-              </NavLink>
-            </div>
+            {(canStats || canDisplay) && (
+              <div className="space-y-1 pt-2">
+                <div className="portal-discovery-nav__divider mb-3" />
+                <p className="portal-discovery-nav__label px-3 pb-1">인사이트</p>
+                {canStats && (
+                  <NavLink to="/stats" className={() => itemCls(statsActive)}>
+                    <BarChart3 className="h-4 w-4" />
+                    통계
+                  </NavLink>
+                )}
+                {/* 권한이 있어도 실제 표시 화면은 레포트 VIEW 권한으로 서버가 필터한다. */}
+                {canDisplay && (
+                  <NavLink to="/display" className={() => itemCls(displayActive)}>
+                    <MonitorPlay className="h-4 w-4" />
+                    KPI 전광판
+                  </NavLink>
+                )}
+              </div>
+            )}
 
             <div className="space-y-1 pt-2">
               <div className="portal-discovery-nav__divider mb-3" />

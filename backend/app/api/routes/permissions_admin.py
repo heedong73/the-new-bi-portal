@@ -37,8 +37,8 @@ router = APIRouter(prefix="/api/permission-admin", tags=["permission-admin"])
 
 _require_operator = require_menu("admin_groups")
 
-# 개별 부여/조회 대상 메뉴 = 통계뿐. 관리자/운영 메뉴는 System_Operator 전용이라
-# 부여 자체를 허용하지 않는다(require_menu에서도 개별 부여로는 통과되지 않는다).
+# 개별 부여/조회 대상 메뉴 = 통계, KPI 전광판(재생). 관리자/운영 메뉴는 System_Operator
+# 전용이라 부여 자체를 허용하지 않는다(require_menu에서도 개별 부여로는 통과되지 않는다).
 _VALID_MENU_KEYS = set(GRANTABLE_MENU_KEYS)
 
 
@@ -74,21 +74,36 @@ async def list_subjects_for_menu(menu_key: str, db: SessionDep, _op=Depends(_req
             ))
 
     if group_ids:
-        groups = (await db.execute(select(UserGroup).where(UserGroup.id.in_(group_ids)))).scalars().all()
+        groups = (
+            await db.execute(
+                select(UserGroup)
+                .where(UserGroup.id.in_(group_ids))
+                .order_by(UserGroup.name, UserGroup.id)
+            )
+        ).scalars().all()
         for g in groups:
-            items.append(MenuSubjectItem(subject_type="group", subject_id=g.id, label=g.name, source="group"))
-        # 그룹 권한으로 이 메뉴에 접근하는 개별 사용자도 함께 표시(회수는 그룹에서만 가능)
+            items.append(MenuSubjectItem(
+                subject_type="group", subject_id=g.id, label=g.name, source="group"
+            ))
+
+        # 그룹별 접기/펼치기를 위해 구성원을 그룹-사용자 멤버십 단위로 반환한다.
+        # 한 사용자가 여러 권한 그룹에 속하면 각 그룹 아래에 나타나는 것이 의도된 동작이다.
         member_rows = (await db.execute(text(
             """
-            SELECT DISTINCT u.id, u.name, u.external_id
+            SELECT m.group_id, u.id, u.name, u.external_id
             FROM bip.user_group_members m
             JOIN bip.users u ON u.id = m.user_id
             WHERE m.group_id = ANY(:gids)
+            ORDER BY m.group_id, u.name, u.external_id, u.id
             """
         ), {"gids": group_ids})).all()
-        for uid, uname, ext_id in member_rows:
+        for group_id, uid, uname, ext_id in member_rows:
             items.append(MenuSubjectItem(
-                subject_type="user", subject_id=uid, label=f"{uname}({ext_id})", source="group",
+                subject_type="user",
+                subject_id=uid,
+                label=f"{uname}({ext_id})",
+                source="group",
+                source_group_id=group_id,
             ))
 
     return items

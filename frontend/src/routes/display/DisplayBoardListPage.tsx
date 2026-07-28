@@ -6,10 +6,11 @@
  * 사용자 제스처 없이 전체화면 진입을 허용하지 않으므로, 플레이어 진입 후에
  * 요청하면 차단된다.
  */
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Maximize2, Monitor, Play } from 'lucide-react'
 
+import { ApiError } from '@/api/client'
 import { displayBoardsApi } from '@/api/displayApi'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { formatDwell } from '@/types/display'
@@ -25,6 +26,9 @@ export default function DisplayBoardListPage() {
     staleTime: 30_000,
   })
   const boards = boardsQuery.data ?? []
+  // 전광판 재생은 부여 대상 메뉴 권한이 필요하다. 사이드바에서는 숨기지만 URL 직접
+  // 입력으로 들어오면 서버가 403을 주므로 안내 문구를 구분해 보여준다.
+  const forbidden = boardsQuery.error instanceof ApiError && boardsQuery.error.status === 403
 
   /** 전체화면을 먼저 요청(사용자 제스처 유지)한 뒤 플레이어로 이동한다. */
   function playFullscreen(boardId: number) {
@@ -60,6 +64,18 @@ export default function DisplayBoardListPage() {
         <p className="flex items-center gap-2 text-sm text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin" /> 불러오는 중…
         </p>
+      ) : forbidden ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
+          <Monitor className="mx-auto mb-2 h-7 w-7 text-slate-300" />
+          <p className="text-sm text-slate-500">KPI 전광판 사용 권한이 없습니다.</p>
+          <p className="mt-1 text-xs text-slate-400">
+            필요하시면{' '}
+            <Link to="/service-center" className="font-medium text-blue-600 hover:underline">
+              서비스 센터
+            </Link>
+            에 KPI 전광판 요청을 남겨 주세요.
+          </p>
+        </div>
       ) : boardsQuery.isError ? (
         <p role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">
           전광판 목록을 불러오지 못했습니다.
@@ -68,9 +84,17 @@ export default function DisplayBoardListPage() {
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center">
           <Monitor className="mx-auto mb-2 h-7 w-7 text-slate-300" />
           <p className="text-sm text-slate-500">재생할 수 있는 전광판이 없습니다.</p>
-          {isOperator && (
+          {isOperator ? (
             <p className="mt-1 text-xs text-slate-400">
               관리자 콘솔 · KPI 전광판에서 플레이리스트를 만들어 주세요.
+            </p>
+          ) : (
+            <p className="mt-1 text-xs text-slate-400">
+              전광판 구성은 운영자가 진행합니다.{' '}
+              <Link to="/service-center" className="font-medium text-blue-600 hover:underline">
+                서비스 센터
+              </Link>
+              에 KPI 전광판 요청을 남겨 주세요.
             </p>
           )}
         </div>

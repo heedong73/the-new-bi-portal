@@ -10,6 +10,7 @@ class MenuKey(StrEnum):
     """메뉴(페이지) 권한 키 — 역할 → 메뉴 고정 매핑(ROLE_MENUS)에서 사용."""
     HOME = "home"                          # 홈(레포트 조회)
     STATS = "stats"                        # 통계
+    DISPLAY_BOARDS = "display_boards"      # KPI 전광판 재생(부여 대상)
     MAIL_SCHEDULES = "mail_schedules"      # 메일 스케줄
     MAIL_JOBS = "mail_jobs"                # 메일 이력
     MONITORING_REFRESH = "monitoring_refresh"  # Refresh 현황
@@ -26,6 +27,7 @@ class MenuKey(StrEnum):
 MENU_CATALOG: list[tuple[str, str]] = [
     (MenuKey.HOME, "홈 (레포트 조회)"),
     (MenuKey.STATS, "통계"),
+    (MenuKey.DISPLAY_BOARDS, "KPI 전광판"),
     (MenuKey.MAIL_SCHEDULES, "메일 스케줄"),
     (MenuKey.MAIL_JOBS, "메일 이력"),
     (MenuKey.MONITORING_REFRESH, "Refresh 현황"),
@@ -44,7 +46,11 @@ ALL_MENU_KEYS: list[str] = [k for k, _ in MENU_CATALOG]
 # 나머지 메뉴(관리자 계열, 운영 상태, Refresh 현황, 메일 이력/스케줄)는 정책상
 # System_Operator 전용이므로 부여 대상이 아니다 — 부여해도 무효가 되도록
 # menu_permissions 읽기/쓰기 양쪽에서 이 목록으로 필터한다.
-GRANTABLE_MENU_KEYS: list[str] = [MenuKey.STATS]
+#
+# KPI 전광판(display_boards)은 재생 화면 기준이다. 로비/현장 모니터 등 특정 대상만
+# 쓰는 기능이라 기본 비노출이고, 필요한 그룹/사용자에게만 부여한다. 전광판 "구성"은
+# admin_display_boards(System_Operator 전용)로 별도 통제한다.
+GRANTABLE_MENU_KEYS: list[str] = [MenuKey.STATS, MenuKey.DISPLAY_BOARDS]
 
 # 부여 가능한 메뉴만 담은 카탈로그 (권한 관리 화면 노출용).
 GRANTABLE_MENU_CATALOG: list[tuple[str, str]] = [
@@ -53,7 +59,7 @@ GRANTABLE_MENU_CATALOG: list[tuple[str, str]] = [
 
 # 역할 → 메뉴 접근 권한 (코드 고정 매핑, 편집 불가). System_Operator는 항상 전체.
 # 서비스 센터는 메뉴 권한 대상이 아니라 로그인한 모든 사용자에게 노출된다.
-# 통계 등 General_User 기본값 밖의 메뉴는 관리자가 menu_permissions로
+# 통계·KPI 전광판 등 General_User 기본값 밖의 메뉴는 관리자가 menu_permissions로
 # 그룹/사용자 단위 추가 부여한다(권한 관리 개편 — 확인사항 2).
 ROLE_MENUS: dict[str, list[str]] = {
     RoleCode.GENERAL_USER: [MenuKey.HOME],
@@ -143,10 +149,16 @@ class RecipientType(StrEnum):
 
 
 class RequestType(StrEnum):
-    """서비스 센터 요청 유형 (R17)."""
+    """서비스 센터 요청 유형 (R17).
+
+    DISPLAY_BOARD는 KPI 전광판 구성 요청이다. 전광판은 사용자가 직접 만들 수 없고
+    System_Operator가 관리자 콘솔에서 구성하므로, 요청 창구를 유형으로 분리해
+    "어떤 레포트를 어떤 순서/시간으로 띄워달라"는 요청을 받는다.
+    """
     INQUIRY = "inquiry"       # 문의
     ERROR = "error"           # 에러
     IMPROVEMENT = "improvement"  # 개선요청
+    DISPLAY_BOARD = "display_board"  # KPI 전광판 구성 요청
 
 
 class RequestStatus(StrEnum):

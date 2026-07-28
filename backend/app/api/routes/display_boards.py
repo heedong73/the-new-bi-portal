@@ -6,8 +6,10 @@
 권한 모델
   * 구성 관리(생성/수정/삭제/슬라이드 편집): ``admin_display_boards`` 메뉴 =
     System_Operator 전용(GRANTABLE_MENU_KEYS 밖이므로 개별 부여로 통과되지 않는다).
-  * 재생(목록/상세/Embed): 로그인 사용자. 단, 슬라이드는 **레포트 VIEW 권한으로 필터**하여
-    전광판을 통해 권한 없는 레포트가 노출되지 않게 한다(R8/R24와 동일한 기준).
+  * 재생(목록/상세/Embed): ``display_boards`` 메뉴 권한이 필요하다. 통계와 같은 부여 대상
+    메뉴이므로 기본 비노출이고, 로비/현장 모니터 등 실제 사용 그룹에만 부여한다.
+    권한이 있어도 슬라이드는 **레포트 VIEW 권한으로 필터**하여 전광판을 통해 권한 없는
+    레포트가 노출되지 않게 한다(R8/R24와 동일한 기준).
 
 장시간 무인 운영 고려
   * Embed Token은 슬라이드가 아니라 **레포트 단위**로 발급한다. 같은 레포트의 여러
@@ -22,7 +24,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.constants import AuditAction, PermissionAction, RoleCode
-from app.core.deps import SessionDep, TokenServiceDep, get_current_user, require_menu
+from app.core.deps import SessionDep, TokenServiceDep, require_menu
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.models.display import DisplayBoard, DisplayBoardSlide
 from app.models.report import Report
@@ -45,6 +47,8 @@ from app.services.powerbi.embed_service import get_embed_info
 router = APIRouter(prefix="/api/display-boards", tags=["display-boards"])
 
 _require_operator = require_menu("admin_display_boards")
+# 재생(목록/상세/Embed)은 부여 대상 메뉴 권한으로 통제한다. System_Operator는 항상 통과.
+_require_play = require_menu("display_boards")
 
 
 def _is_operator(current: dict) -> bool:
@@ -170,7 +174,7 @@ async def _touch_board(db: SessionDep, board: DisplayBoard) -> None:
 @router.get("", response_model=list[DisplayBoardResponse])
 async def list_display_boards(
     db: SessionDep,
-    current=Depends(get_current_user),
+    current=Depends(_require_play),
 ):
     """재생 가능한 전광판 목록.
 
@@ -228,7 +232,7 @@ async def list_display_boards_for_manage(
 async def get_display_board(
     board_id: int,
     db: SessionDep,
-    current=Depends(get_current_user),
+    current=Depends(_require_play),
 ):
     """재생용 전광판 상세.
 
@@ -258,7 +262,7 @@ async def get_display_board_embed(
     report_id: int,
     db: SessionDep,
     token_service: TokenServiceDep,
-    current=Depends(get_current_user),
+    current=Depends(_require_play),
 ):
     """전광판 슬라이드 재생용 Embed Token 발급.
 

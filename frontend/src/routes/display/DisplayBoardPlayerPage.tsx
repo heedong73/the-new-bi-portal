@@ -453,14 +453,16 @@ export default function DisplayBoardPlayerPage() {
   }
 
   if (boardQuery.isError) {
-    const notFound = boardQuery.error instanceof ApiError && boardQuery.error.status === 404
+    const status = boardQuery.error instanceof ApiError ? boardQuery.error.status : null
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-slate-950 text-slate-200">
         <AlertTriangle className="h-7 w-7 text-amber-400" />
         <p role="alert">
-          {notFound
-            ? '전광판을 찾을 수 없거나 재생이 중지되었습니다.'
-            : '전광판을 불러오지 못했습니다.'}
+          {status === 403
+            ? 'KPI 전광판 사용 권한이 없습니다.'
+            : status === 404
+              ? '전광판을 찾을 수 없거나 재생이 중지되었습니다.'
+              : '전광판을 불러오지 못했습니다.'}
         </p>
         <button
           type="button"

@@ -23,11 +23,16 @@ class MenuPermissionItem(BaseModel):
 
 
 class MenuSubjectItem(BaseModel):
-    """메뉴별 접근 주체 조회 응답 항목 (관리 화면의 '메뉴 관리' 탭용)."""
+    """메뉴별 접근 주체 조회 응답 항목 (관리 화면의 '메뉴 권한' 탭용).
+
+    source='group'인 사용자에는 source_group_id를 함께 내려 그룹별 구성원으로 묶는다.
+    한 사용자가 여러 권한 그룹에 속하면 그룹마다 한 항목씩 반환된다.
+    """
     subject_type: str  # user | group
     subject_id: int
     label: str  # 사용자명(사번) 또는 그룹명
-    source: str  # "group" | "direct" — group이면 그룹 권한으로 얻은 개별 사용자
+    source: str  # "group" | "direct"
+    source_group_id: int | None = None
 
 
 class GroupCompanyScopeSetRequest(BaseModel):

@@ -71,9 +71,9 @@ async def _granted_menu_keys(db: AsyncSession, user_id: int) -> set[str]:
     """사용자/소속 그룹에 개별 부여된 메뉴 권한(menu_permissions) 합집합.
 
     권한 관리 개편(그룹 중심) — 역할 고정 매핑(ROLE_MENUS)에 더해 관리자가
-    그룹 또는 사용자 단위로 통계 메뉴 접근을 추가 부여할 수 있다.
+    그룹 또는 사용자 단위로 통계·KPI 전광판 메뉴 접근을 추가 부여할 수 있다.
 
-    부여 가능 목록(GRANTABLE_MENU_KEYS = 통계)으로 필터한다. 정책 변경 이전에
+    부여 가능 목록(GRANTABLE_MENU_KEYS = 통계, KPI 전광판)으로 필터한다. 정책 변경 이전에
     저장된 운영자 전용 메뉴 행이 남아 있어도 일반 사용자에게 권한이 생기지 않는다.
     """
     rows = await db.execute(text(

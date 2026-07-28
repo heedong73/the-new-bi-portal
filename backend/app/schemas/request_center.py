@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-RequestTypeStr = Literal["inquiry", "error", "improvement"]
+RequestTypeStr = Literal["inquiry", "error", "improvement", "display_board"]
 RequestStatusStr = Literal["pending", "received", "rejected", "done"]
 
 

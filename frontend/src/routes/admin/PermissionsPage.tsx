@@ -1,17 +1,17 @@
 /** 권한 관리 — 그룹 중심 메뉴 권한 · 허용 계열사 · 레포트 다중 권한 부여 통합 화면.
  *
- * - 그룹 관리: 그룹을 고르면 메뉴 접근(통계) 토글, 허용 계열사(최상위 폴더) 다중 선택,
- *   레포트를 다중 선택해 권한(조회/내보내기/원본 다운로드/새로고침/교체/기본 뷰 관리/
- *   통계 조회)을 한 번에 부여.
- * - 통계 접근: 통계 메뉴에 접근 가능한 주체(그룹/개별 사용자) 목록을 보여준다.
- *   그룹 권한으로 얻은 사용자는 여기서 회수할 수 없다(그룹 관리에서 조정).
+ * - 그룹 관리: 그룹을 고르면 메뉴 접근(통계·KPI 전광판) 토글, 허용 계열사(최상위 폴더)
+ *   다중 선택, 레포트를 다중 선택해 권한(조회/내보내기/원본 다운로드/새로고침/교체/
+ *   기본 뷰 관리/통계 조회)을 한 번에 부여.
+ * - 메뉴 권한: 부여 대상 메뉴(통계·KPI 전광판)별로 접근 가능한 주체(그룹/개별 사용자)
+ *   목록을 보여준다. 그룹 권한으로 얻은 사용자는 여기서 회수할 수 없다(그룹 관리에서 조정).
  *   관리자·운영 메뉴는 System_Operator 전용이라 개별 부여 대상이 아니다.
  *
  * 기존 레포트 관리 화면의 레포트별 '권한' 버튼(ReportPermissionPanel)은 병행 유지한다.
  */
 import { useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart3, Building2, LayoutGrid, Shield, User, UsersRound, X } from 'lucide-react'
+import { Building2, LayoutGrid, Shield, User, UsersRound, X } from 'lucide-react'
 
 import { permissionAdminApi, usersApi } from '@/api/adminApi'
 import { foldersAdminApi, reportAdminApi } from '@/api/reportAdminApi'
@@ -64,7 +64,7 @@ export default function PermissionsPage() {
       <div className="mb-4">
         <h2 className="portal-content-page-title">권한 관리</h2>
         <p className="mt-1 text-sm text-slate-500">
-          그룹·개인 단위로 통계 메뉴 접근, 허용 계열사, 레포트 권한을 한 화면에서 관리합니다.
+          그룹·개인 단위로 메뉴 접근, 허용 계열사, 레포트 권한을 한 화면에서 관리합니다.
           관리자·운영 메뉴는 시스템 운영자만 접근합니다.
         </p>
       </div>
@@ -73,8 +73,8 @@ export default function PermissionsPage() {
         <TabButton active={tab === 'groups'} onClick={() => setTab('groups')} icon={<UsersRound className="h-4 w-4" />}>
           그룹 관리
         </TabButton>
-        <TabButton active={tab === 'menus'} onClick={() => setTab('menus')} icon={<BarChart3 className="h-4 w-4" />}>
-          통계 접근
+        <TabButton active={tab === 'menus'} onClick={() => setTab('menus')} icon={<LayoutGrid className="h-4 w-4" />}>
+          메뉴 권한
         </TabButton>
         <TabButton active={tab === 'personal'} onClick={() => setTab('personal')} icon={<User className="h-4 w-4" />}>
           개인별 권한
@@ -313,10 +313,12 @@ function GroupDetailPanel({ groupId, groupName }: { groupId: number; groupName: 
   )
 }
 
-// ===== 통계 접근 =====
+// ===== 메뉴 권한 =====
 
 function MenuPermissionsView() {
   const [selectedMenu, setSelectedMenu] = useState<string>(MENU_CATALOG[0]?.[0] ?? '')
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set())
+  const [addUserId, setAddUserId] = useState<number | null>(null)
 
   const subjectsQuery = useQuery({
     queryKey: ['menu-subjects', selectedMenu],
@@ -335,7 +337,14 @@ function MenuPermissionsView() {
       const current = await permissionAdminApi.getMenuPermissions('group', groupId)
       await permissionAdminApi.setMenuPermissions('group', groupId, current.filter((k) => k !== selectedMenu))
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['menu-subjects', selectedMenu] }),
+    onSuccess: (_data, groupId) => {
+      setExpandedGroupIds((current) => {
+        const next = new Set(current)
+        next.delete(groupId)
+        return next
+      })
+      qc.invalidateQueries({ queryKey: ['menu-subjects', selectedMenu] })
+    },
   })
   const revokeUserMutation = useMutation({
     mutationFn: async (userId: number) => {
@@ -358,22 +367,42 @@ function MenuPermissionsView() {
   const groupItems = subjects.filter((s) => s.subject_type === 'group')
   const directUserItems = subjects.filter((s) => s.subject_type === 'user' && s.source === 'direct')
   const viaGroupUserItems = subjects.filter((s) => s.subject_type === 'user' && s.source === 'group')
+  const groupMembersById = new Map<number, typeof viaGroupUserItems>()
+  for (const member of viaGroupUserItems) {
+    if (member.source_group_id === null) continue
+    const members = groupMembersById.get(member.source_group_id) ?? []
+    members.push(member)
+    groupMembersById.set(member.source_group_id, members)
+  }
+  const inheritedUserCount = new Set(viaGroupUserItems.map((s) => s.subject_id)).size
 
   const users = usersQuery.data ?? []
   const directUserIds = new Set(directUserItems.map((s) => s.subject_id))
   const availableUsers = users.filter((u) => !directUserIds.has(u.id))
-  const [addUserId, setAddUserId] = useState<number | null>(null)
+
+  function selectMenu(menuKey: string) {
+    setSelectedMenu(menuKey)
+    setExpandedGroupIds(new Set())
+  }
+
+  function toggleGroup(groupId: number) {
+    setExpandedGroupIds((current) => {
+      const next = new Set(current)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
+      return next
+    })
+  }
 
   return (
     <div className="grid grid-cols-1 gap-6">
-      {/* 부여 대상 메뉴가 통계 하나뿐이라 메뉴 선택 목록 없이 바로 주체를 보여준다.
-          메뉴가 다시 늘어나면 MENU_CATALOG 기반 선택 목록을 복원하면 된다. */}
+      {/* 부여 대상 메뉴가 하나뿐이면 선택 목록 없이 바로 주체를 보여준다. */}
       {MENU_CATALOG.length > 1 && (
         <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
           <ul className="space-y-0.5">
             {MENU_CATALOG.map(([key, label]) => (
               <li key={key}>
-                <button type="button" onClick={() => setSelectedMenu(key)}
+                <button type="button" onClick={() => selectMenu(key)}
                   className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm ${
                     selectedMenu === key ? 'bg-blue-600 text-white' : 'text-slate-700 hover:bg-slate-100'
                   }`}>
@@ -391,8 +420,9 @@ function MenuPermissionsView() {
           {MENU_CATALOG.find(([k]) => k === selectedMenu)?.[1] ?? selectedMenu} — 접근 가능 주체
         </h3>
         <p className="mb-4 text-xs text-slate-400">
-          통계 메뉴는 그룹 또는 개별 사용자에게 부여할 수 있습니다. 레포트별 통계 범위는 각 레포트의
-          &apos;통계 조회&apos; 권한으로 결정됩니다.
+          이 메뉴는 그룹 또는 개별 사용자에게 부여할 수 있습니다.
+          {selectedMenu === 'stats' && ' 레포트별 통계 범위는 각 레포트의 \u2018통계 조회\u2019 권한으로 결정됩니다.'}
+          {selectedMenu === 'display_boards' && ' 전광판에서 실제로 표시되는 화면은 각 레포트의 \u2018조회\u2019 권한으로 결정됩니다.'}
         </p>
 
         {subjectsQuery.isLoading ? (
@@ -400,21 +430,84 @@ function MenuPermissionsView() {
         ) : (
           <div className="space-y-5">
             <div>
-              <h4 className="mb-2 text-xs font-bold uppercase text-slate-400">그룹 권한</h4>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-bold uppercase text-slate-400">그룹 권한</h4>
+                  {groupItems.length > 0 && (
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      그룹을 선택하면 소속 사용자를 확인할 수 있습니다.
+                    </p>
+                  )}
+                </div>
+                {groupItems.length > 0 && (
+                  <span className="text-xs text-slate-400">
+                    {groupItems.length}개 그룹 · 사용자 {inheritedUserCount}명
+                  </span>
+                )}
+              </div>
               {groupItems.length === 0 ? (
                 <p className="text-sm text-slate-400">그룹 권한으로 접근 가능한 그룹이 없습니다.</p>
               ) : (
-                <ul className="space-y-1">
-                  {groupItems.map((s) => (
-                    <li key={`g-${s.subject_id}`} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span className="flex items-center gap-1.5 text-slate-700"><UsersRound className="h-3.5 w-3.5 text-blue-500" /> {s.label}</span>
-                      <button type="button" onClick={() => revokeGroupMutation.mutate(s.subject_id)}
-                        aria-label={`${s.label} 그룹 메뉴 권한 회수`}
-                        className="rounded-full p-1 text-slate-400 hover:bg-red-50 hover:text-red-500">
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </li>
-                  ))}
+                <ul className="space-y-1.5">
+                  {groupItems.map((group) => {
+                    const expanded = expandedGroupIds.has(group.subject_id)
+                    const members = groupMembersById.get(group.subject_id) ?? []
+                    const panelId = `menu-group-${selectedMenu}-${group.subject_id}`
+                    return (
+                      <li key={`g-${group.subject_id}`} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                        <div className="flex items-center gap-2 bg-slate-50 px-2 py-1.5">
+                          <button
+                            type="button"
+                            aria-expanded={expanded}
+                            aria-controls={panelId}
+                            onClick={() => toggleGroup(group.subject_id)}
+                            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left text-sm text-slate-700 hover:bg-slate-100"
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`inline-block text-[10px] text-slate-400 transition-transform ${expanded ? 'rotate-90' : ''}`}
+                            >
+                              ▶
+                            </span>
+                            <UsersRound className="h-4 w-4 shrink-0 text-blue-500" />
+                            <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
+                            <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-xs text-slate-500">
+                              {members.length}명
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={revokeGroupMutation.isPending}
+                            onClick={() => revokeGroupMutation.mutate(group.subject_id)}
+                            aria-label={`${group.label} 그룹 메뉴 권한 회수`}
+                            title="그룹 메뉴 권한 회수"
+                            className="shrink-0 rounded-full p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        {expanded && (
+                          <div id={panelId} className="border-t border-slate-200 bg-white">
+                            {members.length === 0 ? (
+                              <p className="px-9 py-3 text-xs text-slate-400">소속 사용자가 없습니다.</p>
+                            ) : (
+                              <ul className="max-h-72 overflow-y-auto py-1">
+                                {members.map((member) => (
+                                  <li
+                                    key={`g-${group.subject_id}-u-${member.subject_id}`}
+                                    className="flex items-center justify-between gap-3 px-9 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                                  >
+                                    <span className="min-w-0 truncate">{member.label}</span>
+                                    <span className="shrink-0 text-xs text-slate-400">그룹 상속</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
             </div>
@@ -439,13 +532,13 @@ function MenuPermissionsView() {
               {directUserItems.length === 0 ? (
                 <p className="text-sm text-slate-400">개별 부여된 사용자가 없습니다.</p>
               ) : (
-                <ul className="space-y-1">
+                <ul className="max-h-72 space-y-1 overflow-y-auto pr-1">
                   {directUserItems.map((s) => (
                     <li key={`u-${s.subject_id}`} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <span className="text-slate-700">{s.label}</span>
+                      <span className="min-w-0 truncate text-slate-700">{s.label}</span>
                       <button type="button" onClick={() => revokeUserMutation.mutate(s.subject_id)}
                         aria-label={`${s.label} 메뉴 권한 회수`}
-                        className="rounded-full p-1 text-slate-400 hover:bg-red-50 hover:text-red-500">
+                        className="shrink-0 rounded-full p-1 text-slate-400 hover:bg-red-50 hover:text-red-500">
                         <X className="h-3.5 w-3.5" />
                       </button>
                     </li>
@@ -453,20 +546,6 @@ function MenuPermissionsView() {
                 </ul>
               )}
             </div>
-
-            {viaGroupUserItems.length > 0 && (
-              <div>
-                <h4 className="mb-2 text-xs font-bold uppercase text-slate-400">그룹 소속으로 접근 (여기서 회수 불가)</h4>
-                <ul className="space-y-1">
-                  {viaGroupUserItems.map((s) => (
-                    <li key={`gu-${s.subject_id}`} className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-slate-500">
-                      <span>{s.label}</span>
-                      <span className="text-xs text-slate-400">그룹 권한</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         )}
       </div>

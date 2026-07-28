@@ -4,6 +4,12 @@
  *  - "홈"과 "서비스 센터"는 로그인한 모든 사용자의 기본 메뉴라 부여/회수 대상이 아니다.
  *  - 관리자 계열, 운영 상태, Refresh 현황, 메일 이력/스케줄은 System_Operator 전용이므로
  *    개별 부여 대상이 아니다(백엔드 require_menu도 개별 부여로는 통과시키지 않는다).
- *  - 따라서 실제로 부여 여부를 결정할 메뉴는 "통계" 하나다.
+ *  - "KPI 전광판"은 재생 화면 기준이다. 로비/현장 모니터처럼 특정 대상만 쓰는 기능이라
+ *    기본 비노출이고 필요한 그룹/사용자에게만 부여한다. 전광판 구성(관리자 콘솔)은
+ *    admin_display_boards로 별도 통제하므로 이 목록에 없다.
+ *  - 따라서 부여 여부를 결정할 메뉴는 "통계"와 "KPI 전광판"이다.
  */
-export const MENU_CATALOG: [string, string][] = [['stats', '통계']]
+export const MENU_CATALOG: [string, string][] = [
+  ['stats', '통계'],
+  ['display_boards', 'KPI 전광판'],
+]

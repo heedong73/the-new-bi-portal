@@ -1,6 +1,7 @@
 /** 서비스 센터(요청) 타입 — 백엔드 /api/requests 응답/요청과 1:1 매핑. (R17) */
 
-export type RequestType = 'inquiry' | 'error' | 'improvement'
+/** display_board = KPI 전광판 구성 요청(사용자가 직접 만들 수 없고 운영자가 구성). */
+export type RequestType = 'inquiry' | 'error' | 'improvement' | 'display_board'
 export type RequestStatus = 'pending' | 'received' | 'rejected' | 'done'
 
 /** 첨부 파일 메타 (파일 본체는 다운로드 엔드포인트로 제공). */
@@ -76,7 +77,16 @@ export const REQUEST_TYPE_LABEL: Record<RequestType, string> = {
   inquiry: '문의',
   error: '에러',
   improvement: '개선요청',
+  display_board: 'KPI 전광판 요청',
 }
+
+/** 유형 선택/필터 노출 순서 (라벨은 REQUEST_TYPE_LABEL 사용). */
+export const REQUEST_TYPE_OPTIONS: RequestType[] = [
+  'inquiry',
+  'error',
+  'improvement',
+  'display_board',
+]
 
 /** 상태 표시 라벨. */
 export const REQUEST_STATUS_LABEL: Record<RequestStatus, string> = {

@@ -1,7 +1,8 @@
 /** 서비스 센터 — 서비스 요청 목록 + 작성 + 상세(대화/관리자 처리).
  *
  * - 일반 사용자: 본인 요청만. System_Operator: 전체 + 상세에서 관리자 처리.
- * - 유형: 문의/에러/개선요청. 상태: 대기/접수/반려/완료. (R17)
+ * - 유형: 문의/에러/개선요청/KPI 전광판 요청. 상태: 대기/접수/반려/완료. (R17)
+ * - 전광판은 사용자가 직접 만들 수 없고 운영자가 구성하므로 전용 요청 유형을 둔다.
  */
 import { useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -15,6 +16,7 @@ import {
   REQUEST_STATUS_DOT,
   REQUEST_STATUS_LABEL,
   REQUEST_TYPE_LABEL,
+  REQUEST_TYPE_OPTIONS,
   formatFileSize,
   type RequestStatus,
   type RequestType,
@@ -25,7 +27,18 @@ const PAGE_SIZE = 20
 const MAX_MB = 10
 const ACCEPT = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.log,.zip'
 const ALLOWED_EXTS = ['png','jpg','jpeg','gif','webp','bmp','pdf','doc','docx','xls','xlsx','ppt','pptx','txt','csv','log','zip']
-const TYPE_ICON: Record<RequestType, string> = { inquiry: '💬', error: '🐞', improvement: '✨' }
+const TYPE_ICON: Record<RequestType, string> = {
+  inquiry: '💬',
+  error: '🐞',
+  improvement: '✨',
+  display_board: '📺',
+}
+
+/** 유형별 작성 안내 — 전광판은 필요한 정보가 정해져 있어 양식을 미리 알려준다. */
+const TYPE_HINT: Partial<Record<RequestType, string>> = {
+  display_board:
+    '전광판은 운영자가 구성합니다. 표시할 레포트(및 페이지), 순서, 화면별 노출 시간, 설치할 모니터 위치를 적어주세요.',
+}
 
 function extOf(name: string): string {
   const i = name.lastIndexOf('.')
@@ -109,9 +122,9 @@ export default function ServiceCenterPage() {
         <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value as RequestType | ''); setPage(1) }}
           aria-label="구분 필터" className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600">
           <option value="">구분</option>
-          <option value="inquiry">문의</option>
-          <option value="error">에러</option>
-          <option value="improvement">개선요청</option>
+          {REQUEST_TYPE_OPTIONS.map((t) => (
+            <option key={t} value={t}>{REQUEST_TYPE_LABEL[t]}</option>
+          ))}
         </select>
         <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as RequestStatus | ''); setPage(1) }}
           aria-label="상태 필터" className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600">
@@ -272,10 +285,15 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
             <select value={type} onChange={(e) => setType(e.target.value as RequestType | '')} aria-label="구분"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
               <option value="">구분 선택</option>
-              <option value="inquiry">문의</option>
-              <option value="error">에러</option>
-              <option value="improvement">개선요청</option>
+              {REQUEST_TYPE_OPTIONS.map((t) => (
+                <option key={t} value={t}>{REQUEST_TYPE_LABEL[t]}</option>
+              ))}
             </select>
+            {type !== '' && TYPE_HINT[type] && (
+              <p className="mt-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                {TYPE_HINT[type]}
+              </p>
+            )}
           </label>
 
           {/* 첨부 */}

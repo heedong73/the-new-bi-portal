@@ -26,7 +26,12 @@ logger = get_logger(__name__)
 
 _APP = "BI 포털"
 
-_TYPE_LABEL = {"inquiry": "문의", "error": "에러", "improvement": "개선요청"}
+_TYPE_LABEL = {
+    "inquiry": "문의",
+    "error": "에러",
+    "improvement": "개선요청",
+    "display_board": "KPI 전광판 요청",
+}
 _STATUS_LABEL = {
     "pending": "대기",
     "received": "접수",

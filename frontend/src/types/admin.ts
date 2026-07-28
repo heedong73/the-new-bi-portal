@@ -151,12 +151,15 @@ export interface GroupTreeResponse {
   ungrouped: GroupResponse[]
 }
 
-/** 메뉴별 접근 주체 조회 항목('메뉴 관리' 탭). source=group이면 그룹 권한으로 얻은 사용자. */
+/** 메뉴별 접근 주체 조회 항목('메뉴 권한' 탭).
+ * source=group인 사용자에는 상속 원천 그룹 ID가 포함되며, 여러 그룹 소속이면 그룹마다 반환된다.
+ */
 export interface MenuSubjectItem {
   subject_type: 'user' | 'group'
   subject_id: number
   label: string
   source: 'direct' | 'group'
+  source_group_id: number | null
 }
 
 /** 그룹의 허용 계열사(최상위 폴더) 스코프 항목. */
