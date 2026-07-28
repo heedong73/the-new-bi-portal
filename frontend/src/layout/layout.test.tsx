@@ -79,7 +79,7 @@ describe('AppLayout 메뉴 (역할별)', () => {
   it('System_Operator는 관리자/통계 메뉴와 모든 소제목을 본다', async () => {
     vi.mocked(authApi.me).mockResolvedValue(OPERATOR)
     wrap('/')
-    expect(await screen.findByText('관리자 콘솔')).toBeInTheDocument()
+    expect(await screen.findByText('ADMIN')).toBeInTheDocument()
     expect(screen.getByText('통계')).toBeInTheDocument()
     expect(screen.getByText('KPI 전광판')).toBeInTheDocument()
     expect(screen.getByText('인사이트')).toBeInTheDocument()
@@ -101,7 +101,7 @@ describe('AppLayout 메뉴 (역할별)', () => {
     expect(screen.queryByText('인사이트')).not.toBeInTheDocument()
     expect(screen.queryByText('KPI 전광판')).not.toBeInTheDocument()
     expect(screen.queryByText('관리')).not.toBeInTheDocument()
-    expect(screen.queryByText('관리자 콘솔')).not.toBeInTheDocument()
+    expect(screen.queryByText('ADMIN')).not.toBeInTheDocument()
     expect(screen.queryByText('통계')).not.toBeInTheDocument()
   })
 

@@ -62,16 +62,23 @@ export default function AppLayout() {
       >
         <div className="flex h-full w-64 flex-col">
           <div className="editorial-sidebar__brand flex items-center gap-3 border-b px-4 py-4">
-            <span className="editorial-brand-mark shrink-0">
-              <img src="/logo.png" alt="삼천리 로고" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="editorial-brand-eyebrow whitespace-nowrap">SAMCHULLY GROUP</div>
-              <div className="editorial-brand-title editorial-brand-title--wordmark mt-1 whitespace-nowrap">
-                SCL BI PORTAL
+            <NavLink
+              to="/reports"
+              end
+              aria-label="레포트 탐색 홈으로 이동"
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            >
+              <span className="editorial-brand-mark shrink-0">
+                <img src="/logo.png" alt="삼천리 로고" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="editorial-brand-eyebrow whitespace-nowrap">SAMCHULLY GROUP</div>
+                <div className="editorial-brand-title editorial-brand-title--wordmark mt-1 whitespace-nowrap">
+                  SCL BI PORTAL
+                </div>
+                <div className="editorial-brand-subtitle mt-1">Business Intelligence Workspace</div>
               </div>
-              <div className="editorial-brand-subtitle mt-1">Business Intelligence Workspace</div>
-            </div>
+            </NavLink>
             <button
               type="button"
               onClick={toggleSidebar}
@@ -121,7 +128,7 @@ export default function AppLayout() {
                 <p className="portal-discovery-nav__label px-3 pb-1">관리</p>
                 <NavLink to="/admin" className={() => itemCls(adminActive)}>
                   <Settings className="h-4 w-4" />
-                  관리자 콘솔
+                  ADMIN
                 </NavLink>
               </div>
             )}

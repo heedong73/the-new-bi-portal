@@ -17,8 +17,8 @@ export default function AdminDashboard() {
     <div className="editorial-admin-dashboard">
       <div className="editorial-page-heading">
         <p className="editorial-page-kicker">System Operations</p>
-        <h1 className="editorial-compact-page-title">관리자 콘솔</h1>
-        <p>운영 현황을 확인하고 리포트, 사용자, 권한 및 자동화 작업을 한 흐름으로 관리하세요.</p>
+        <h1 className="editorial-compact-page-title">ADMIN CENTER</h1>
+        <p>운영 현황을 확인하고 리포트, 사용자, 권한 및 메일 발송을 한 흐름으로 관리하세요.</p>
       </div>
 
       {items.length === 0 ? (
