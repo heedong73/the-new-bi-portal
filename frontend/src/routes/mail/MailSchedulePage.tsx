@@ -13,6 +13,8 @@ import { reportAdminApi } from '@/api/reportAdminApi'
 import { usersApi, groupsApi } from '@/api/adminApi'
 import ReportPickerTree from './ReportPickerTree'
 import RichTextEditor from '@/components/RichTextEditor'
+import { UserPicker } from '@/routes/admin/EntityPicker'
+import { useSidebarStore } from '@/stores/useSidebarStore'
 import type {
   MailSchedule,
   MailScheduleCreate,
@@ -36,6 +38,11 @@ const RECIPIENT_FIELD_BADGE: Record<RecipientField, string> = {
   cc: 'bg-sky-50 text-sky-700',
   bcc: 'bg-violet-50 text-violet-700',
 }
+// 수신자 칸(받는사람/참조/숨은참조)은 인원이 많아지면 세로로 계속 길어진다.
+// 이 개수를 넘는 칸만 자동으로 접고, 접힌 상태에서도 앞쪽 몇 개는 남겨 확인 가능하게 한다.
+// 3명까지는 한 줄에 들어가 접을 이유가 없으므로 4명부터 접기 버튼을 노출한다.
+const RECIPIENT_COLLAPSE_THRESHOLD = 3
+const RECIPIENT_COLLAPSED_PREVIEW = 3
 const WEEKDAYS: { v: number; l: string }[] = [
   { v: 0, l: '일' }, { v: 1, l: '월' }, { v: 2, l: '화' }, { v: 3, l: '수' },
   { v: 4, l: '목' }, { v: 5, l: '금' }, { v: 6, l: '토' },
@@ -93,6 +100,8 @@ function toForm(s: MailSchedule): MailScheduleCreate {
 
 export default function MailSchedulePage() {
   const queryClient = useQueryClient()
+  // 관리자 사이드바가 펼쳐졌을 때 모달의 왼쪽 경계를 사이드바 오른쪽에 맞춘다.
+  const sidebarCollapsed = useSidebarStore((s) => s.collapsed)
   const [editingId, setEditingId] = useState<number | 'new' | null>(null)
   const [form, setForm] = useState<MailScheduleCreate>(emptyForm())
   // 삭제 확인 대상 스케줄 (null = 확인창 닫힘)
@@ -155,8 +164,16 @@ export default function MailSchedulePage() {
 
   const schedules = listQuery.data ?? []
 
-  function openNew() { setForm(emptyForm()); setEditingId('new') }
-  function openEdit(s: MailSchedule) { setForm(toForm(s)); setEditingId(s.id) }
+  function openNew() {
+    setExpandedRecipFields(new Set())
+    setForm(emptyForm())
+    setEditingId('new')
+  }
+  function openEdit(s: MailSchedule) {
+    setExpandedRecipFields(new Set())
+    setForm(toForm(s))
+    setEditingId(s.id)
+  }
 
   function setField<K extends keyof MailScheduleCreate>(key: K, value: MailScheduleCreate[K]) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -217,6 +234,17 @@ export default function MailSchedulePage() {
   }
 
   // 수신자 입력창(1개) → 추가 버튼으로 칸(받는사람/참조/숨은참조)별 chip 그룹에 append.
+  // 사용자가 직접 펼친 수신 칸. 임계치를 넘지 않는 칸은 이 값과 무관하게 항상 펼쳐 보인다.
+  const [expandedRecipFields, setExpandedRecipFields] = useState<Set<RecipientField>>(new Set())
+  function toggleRecipFieldExpand(fld: RecipientField) {
+    setExpandedRecipFields((cur) => {
+      const next = new Set(cur)
+      if (next.has(fld)) next.delete(fld)
+      else next.add(fld)
+      return next
+    })
+  }
+
   const [newRecipField, setNewRecipField] = useState<RecipientField>('to')
   const [newRecipType, setNewRecipType] = useState<RecipientType>('USER')
   const [newRecipEmail, setNewRecipEmail] = useState('')
@@ -240,6 +268,25 @@ export default function MailSchedulePage() {
   }
   function removeRecipient(i: number) {
     setForm((f) => ({ ...f, recipients: f.recipients.filter((_, idx) => idx !== i) }))
+  }
+  // To/Cc/Bcc 의미는 유지하고, 선택한 칸 안의 이전·다음 수신자와 배열 위치만 맞바꾼다.
+  // 저장 API는 이 배열 위치를 sort_order로 기록하므로 재편집과 실제 발송에도 반영된다.
+  function moveRecipient(field: RecipientField, indexInField: number, dir: -1 | 1) {
+    setExpandedRecipFields((current) => new Set(current).add(field))
+    setForm((current) => {
+      const indexes = current.recipients.reduce<number[]>((result, recipient, index) => {
+        if ((recipient.field ?? 'to') === field) result.push(index)
+        return result
+      }, [])
+      const targetIndexInField = indexInField + dir
+      if (targetIndexInField < 0 || targetIndexInField >= indexes.length) return current
+
+      const recipients = [...current.recipients]
+      const from = indexes[indexInField]
+      const to = indexes[targetIndexInField]
+      ;[recipients[from], recipients[to]] = [recipients[to], recipients[from]]
+      return { ...current, recipients }
+    })
   }
   const newRecipValid = newRecipType === 'EMAIL' ? newRecipEmail.trim() !== '' : newRecipId !== ''
 
@@ -303,8 +350,14 @@ export default function MailSchedulePage() {
 
       {/* 생성/수정 폼 (모달) */}
       {editingId !== null && (
-        <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
-          <div className="my-8 w-full max-w-7xl rounded-2xl bg-white p-6 shadow-2xl">
+        <div
+          className={`fixed inset-y-0 right-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 transition-[left] duration-300 ${
+            sidebarCollapsed ? 'left-0' : 'left-64'
+          }`}
+        >
+          {/* 펼친 관리자 사이드바의 오른쪽 영역에서만 가운데 정렬한다.
+              최대 폭만 88rem에서 92rem으로 조금 늘려 사이드바는 침범하지 않는다. */}
+          <div className="my-8 w-full max-w-[92rem] rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-800">
                 {editingId === 'new' ? '새 메일 스케줄' : '메일 스케줄 수정'}
@@ -325,14 +378,15 @@ export default function MailSchedulePage() {
 
               {/* 2. 레포트 (폴더 트리에서 선택) */}
               <Field label="레포트">
-                <div className="mb-1 text-xs text-slate-500">
+                {/* 선택 결과는 트리보다 눈에 먼저 들어와야 해서 기본(text-xs) 대비 10% 키운다. */}
+                <div className="mb-1 text-[13.2px] text-slate-500">
                   {form.report_id > 0 ? <>선택됨: <span className="font-medium text-slate-700">{reportName(form.report_id)}</span></> : '폴더에서 레포트를 선택하세요.'}
                 </div>
                 <ReportPickerTree value={form.report_id} onChange={(id) => selectReport(id)} />
               </Field>
 
-              {/* 3. 레포트 페이지 선택 (페이지명 다중선택) */}
-              <Field label="레포트 페이지 선택 (다중 선택)">
+              {/* 3. 레포트 페이지 선택 + 발송 순서 */}
+              <Field label="레포트 페이지 선택 및 발송 순서">
                 {form.report_id <= 0 ? (
                   <p className="text-xs text-slate-400">먼저 레포트를 선택하세요.</p>
                 ) : pagesQuery.isLoading ? (
@@ -343,61 +397,74 @@ export default function MailSchedulePage() {
                   <p className="text-xs text-slate-400">선택 가능한 페이지가 없습니다.</p>
                 ) : (
                   <div className="space-y-1 rounded-lg border border-slate-300 p-2">
-                    {apiPages.map((p) => {
-                      const checked = form.pages.some((fp) => fp.page_name === p.name)
-                      return (
+                    {[...form.pages]
+                      .sort((a, b) => a.sort_order - b.sort_order)
+                      .map((p, idx, arr) => {
+                        const apiPage = apiPages.find((candidate) => candidate.name === p.page_name)
+                        const pageLabel = apiPage?.display_name || p.caption || p.page_name
+                        return (
+                          <div key={p.page_name} className="flex items-center gap-2 rounded bg-blue-50 px-1 py-0.5 text-sm">
+                            <input
+                              type="checkbox"
+                              checked
+                              aria-label={`${pageLabel} 선택 해제`}
+                              onChange={(e) => togglePage(p.page_name, p.caption ?? '', e.target.checked)}
+                              className="h-4 w-4 shrink-0 rounded border-slate-300"
+                            />
+                            <span className="w-5 shrink-0 text-center text-xs font-medium text-blue-600">{idx + 1}</span>
+                            <span className="min-w-0 flex-1 truncate text-slate-700">{pageLabel}</span>
+                            {!apiPage && <span className="shrink-0 text-xs text-amber-500">(목록에 없음)</span>}
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => movePage(idx, -1)}
+                              aria-label={`${pageLabel} 발송 순서 위로`}
+                              className="rounded p-1 text-slate-400 hover:bg-white disabled:opacity-30"
+                            >
+                              <ArrowUp className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === arr.length - 1}
+                              onClick={() => movePage(idx, 1)}
+                              aria-label={`${pageLabel} 발송 순서 아래로`}
+                              className="rounded p-1 text-slate-400 hover:bg-white disabled:opacity-30"
+                            >
+                              <ArrowDown className="h-4 w-4" />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    {apiPages
+                      .filter((p) => !form.pages.some((selected) => selected.page_name === p.name))
+                      .map((p) => (
                         <label key={p.name} className="flex items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-slate-50">
-                          <input type="checkbox" checked={checked}
+                          <input
+                            type="checkbox"
+                            checked={false}
+                            aria-label={`${p.display_name} 선택`}
                             onChange={(e) => togglePage(p.name, p.display_name, e.target.checked)}
-                            className="h-4 w-4 rounded border-slate-300" />
-                          <span className="text-slate-700">{p.display_name}</span>
-                          <span className="text-xs text-slate-400">({p.name})</span>
+                            className="h-4 w-4 shrink-0 rounded border-slate-300"
+                          />
+                          <span className="w-5 shrink-0 text-center text-xs text-slate-300">—</span>
+                          {/* 내부 페이지 식별자(p.name)는 운영자에게 의미가 없어 노출하지 않는다. */}
+                          <span className="min-w-0 flex-1 truncate text-slate-700">{p.display_name}</span>
                         </label>
-                      )
-                    })}
-                    {extraPages.map((p) => (
-                      <label key={p.page_name} className="flex items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-slate-50">
-                        <input type="checkbox" checked
-                          onChange={() => togglePage(p.page_name, p.caption ?? '', false)}
-                          className="h-4 w-4 rounded border-slate-300" />
-                        <span className="text-slate-700">{p.caption || p.page_name}</span>
-                        <span className="text-xs text-amber-500">(목록에 없음)</span>
-                      </label>
-                    ))}
+                      ))}
                   </div>
                 )}
               </Field>
 
-              {/* 3-1. 선택된 페이지 발송 순서 (PNG 삽입 순서) */}
-              {form.pages.length > 0 && (
-                <Field label="발송 순서 (PNG 삽입 순서)">
-                  <ol className="space-y-1">
-                    {[...form.pages].sort((a, b) => a.sort_order - b.sort_order).map((p, idx, arr) => (
-                      <li key={p.page_name} className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-sm">
-                        <span className="w-5 shrink-0 text-center text-xs font-medium text-slate-400">{idx + 1}</span>
-                        <span className="flex-1 truncate text-slate-700">{p.caption || p.page_name}</span>
-                        <button type="button" disabled={idx === 0} onClick={() => movePage(idx, -1)} aria-label="위로"
-                          className="rounded p-1 text-slate-400 hover:bg-slate-100 disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button>
-                        <button type="button" disabled={idx === arr.length - 1} onClick={() => movePage(idx, 1)} aria-label="아래로"
-                          className="rounded p-1 text-slate-400 hover:bg-slate-100 disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button>
-                        <button type="button" onClick={() => togglePage(p.page_name, p.caption ?? '', false)} aria-label="제거"
-                          className="rounded p-1 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
-                      </li>
-                    ))}
-                  </ol>
-                </Field>
-              )}
-
               {/* 4. Export 형식 + 이미지 리사이즈 */}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Export 형식">
-                  <select value={form.export_format} onChange={(e) => setField('export_format', e.target.value)} className={inputCls}>
+                  <select value={form.export_format} onChange={(e) => setField('export_format', e.target.value)} className={compactInputCls}>
                     <option>PNG</option><option>PDF</option><option>PPTX</option>
                   </select>
                 </Field>
                 <Field label="이미지 리사이즈(px, 선택)">
                   <input type="number" value={form.image_resize_px ?? ''}
-                    onChange={(e) => setField('image_resize_px', e.target.value ? Number(e.target.value) : null)} className={inputCls} />
+                    onChange={(e) => setField('image_resize_px', e.target.value ? Number(e.target.value) : null)} className={compactInputCls} />
                   <p className="mt-1 text-xs text-slate-400">메일 본문 이미지를 이 폭(px)으로 비율 유지하며 축소합니다. 비우면 원본 그대로. 원본보다 큰 값은 확대하지 않습니다.</p>
                 </Field>
               </div>
@@ -435,12 +502,12 @@ export default function MailSchedulePage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <select value={newRecipField} aria-label="수신 칸"
                     onChange={(e) => setNewRecipField(e.target.value as RecipientField)}
-                    className={`${rowInputCls} w-24 shrink-0`}>
+                    className={`${rowInputCls} ${rowSelectWidthCls} shrink-0`}>
                     {RECIPIENT_FIELDS.map((fld) => <option key={fld} value={fld}>{RECIPIENT_FIELD_LABEL[fld]}</option>)}
                   </select>
                   <select value={newRecipType} aria-label="수신자 유형"
                     onChange={(e) => { setNewRecipType(e.target.value as RecipientType); setNewRecipEmail(''); setNewRecipId('') }}
-                    className={`${rowInputCls} w-24 shrink-0`}>
+                    className={`${rowInputCls} ${rowSelectWidthCls} shrink-0`}>
                     {RECIPIENT_TYPES.map((t) => <option key={t} value={t}>{RECIPIENT_LABEL[t]}</option>)}
                   </select>
                   {newRecipType === 'EMAIL' ? (
@@ -448,13 +515,17 @@ export default function MailSchedulePage() {
                       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRecipientFromInput() } }}
                       onChange={(e) => setNewRecipEmail(e.target.value)} className={`${rowInputCls} flex-1 min-w-0`} />
                   ) : newRecipType === 'USER' ? (
-                    <select value={newRecipId} aria-label="수신자 사용자"
-                      onChange={(e) => setNewRecipId(e.target.value)} className={`${rowInputCls} flex-1 min-w-0`}>
-                      <option value="">사용자 선택…</option>
-                      {users.map((u) => (
-                        <option key={u.id} value={u.id}>{u.name} ({u.emp_no}){u.email ? ` · ${u.email}` : ''}</option>
-                      ))}
-                    </select>
+                    // 사용자는 수가 많아 인라인 검색이 필요하다(이름·사번·이메일·부서로 검색).
+                    <UserPicker
+                      users={users}
+                      value={newRecipId ? Number(newRecipId) : null}
+                      onChange={(id) => setNewRecipId(id === null ? '' : String(id))}
+                      loading={usersQuery.isLoading}
+                      ariaLabel="수신자 사용자"
+                      placeholder="사용자 검색…"
+                      dense
+                      className="w-[13rem] max-w-full shrink-0"
+                    />
                   ) : newRecipType === 'GROUP' ? (
                     <select value={newRecipId} aria-label="수신자 그룹"
                       onChange={(e) => setNewRecipId(e.target.value)} className={`${rowInputCls} flex-1 min-w-0`}>
@@ -467,9 +538,10 @@ export default function MailSchedulePage() {
                     <input type="number" value={newRecipId} placeholder="부서 ID" aria-label="수신자 부서 ID"
                       onChange={(e) => setNewRecipId(e.target.value)} className={`${rowInputCls} flex-1 min-w-0`} />
                   )}
+                  {/* 입력 컨트롤과 높이를 맞춘 추가 버튼. */}
                   <button type="button" onClick={addRecipientFromInput} disabled={!newRecipValid}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50">
-                    <Plus className="h-4 w-4" /> 추가
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-[0.6rem] py-[0.4rem] text-[11px] font-medium text-white hover:bg-blue-500 disabled:opacity-50">
+                    <Plus className="h-[0.8rem] w-[0.8rem]" /> 추가
                   </button>
                 </div>
 
@@ -479,22 +551,44 @@ export default function MailSchedulePage() {
                     const items = form.recipients
                       .map((r, i) => ({ r, i }))
                       .filter((it) => (it.r.field ?? 'to') === fld)
+                    // 임계치 이하면 접을 필요가 없어 그대로 전부 보여준다.
+                    const collapsible = items.length > RECIPIENT_COLLAPSE_THRESHOLD
+                    const expanded = !collapsible || expandedRecipFields.has(fld)
+                    const visibleItems = expanded ? items : items.slice(0, RECIPIENT_COLLAPSED_PREVIEW)
+                    const hiddenCount = items.length - visibleItems.length
                     return (
                       <div key={fld} className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5">
-                        <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${RECIPIENT_FIELD_BADGE[fld]}`}>
+                        <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${RECIPIENT_FIELD_BADGE[fld]}`}>
                           {RECIPIENT_FIELD_LABEL[fld]}
+                          {items.length > 0 && <span className="ml-1 font-semibold">{items.length}</span>}
                         </span>
                         {items.length === 0 ? (
-                          <span className="mt-1 text-xs text-slate-300">없음</span>
+                          <span className="mt-1 text-[11px] text-slate-300">없음</span>
                         ) : (
-                          <div className="flex flex-1 flex-wrap gap-1">
-                            {items.map((it) => {
+                          <div className="flex flex-1 flex-wrap items-center gap-1">
+                            {visibleItems.map((it, indexInField) => {
                               const label = recipientLabel(it.r)
                               return (
                                 <span key={it.i}
-                                  className={`inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-2 pr-1 text-xs ${label ? 'text-slate-700' : 'text-amber-600'}`}>
-                                  <span className="text-[10px] text-slate-400">{RECIPIENT_LABEL[it.r.recipient_type]}</span>
+                                  className={`inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-2 pr-1 text-[11px] ${label ? 'text-slate-700' : 'text-amber-600'}`}>
+                                  <span className="text-[11px] text-slate-400">{RECIPIENT_LABEL[it.r.recipient_type]}</span>
                                   <span className="max-w-[11rem] truncate">{label ?? '미선택'}</span>
+                                  {items.length > 1 && (
+                                    <span className="inline-flex items-center">
+                                      <button type="button" disabled={indexInField === 0}
+                                        onClick={() => moveRecipient(fld, indexInField, -1)}
+                                        aria-label={`${label ?? '수신자'} 위로 이동`}
+                                        className="rounded-full p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 disabled:pointer-events-none disabled:opacity-25">
+                                        <ArrowUp className="h-3 w-3" />
+                                      </button>
+                                      <button type="button" disabled={indexInField === items.length - 1}
+                                        onClick={() => moveRecipient(fld, indexInField, 1)}
+                                        aria-label={`${label ?? '수신자'} 아래로 이동`}
+                                        className="rounded-full p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 disabled:pointer-events-none disabled:opacity-25">
+                                        <ArrowDown className="h-3 w-3" />
+                                      </button>
+                                    </span>
+                                  )}
                                   <button type="button" onClick={() => removeRecipient(it.i)} aria-label="수신자 삭제"
                                     className="rounded-full p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-500">
                                     <X className="h-3 w-3" />
@@ -502,6 +596,13 @@ export default function MailSchedulePage() {
                                 </span>
                               )
                             })}
+                            {collapsible && (
+                              <button type="button" onClick={() => toggleRecipFieldExpand(fld)}
+                                aria-expanded={expanded}
+                                className="inline-flex items-center rounded-full border border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-500 hover:bg-slate-100">
+                                {expanded ? '접기' : `+${hiddenCount}개 더보기`}
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -514,17 +615,17 @@ export default function MailSchedulePage() {
               <div className="rounded-lg border border-slate-200 px-3 py-3">
                 <p className="mb-2 text-sm font-medium text-slate-700">발송 스케줄</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="주기">
+                  <Field label="주기" labelSize="xs">
                     <select value={form.schedule_freq ?? 'daily'}
-                      onChange={(e) => setField('schedule_freq', e.target.value as ScheduleFreq)} className={inputCls}>
+                      onChange={(e) => setField('schedule_freq', e.target.value as ScheduleFreq)} className={compactInputCls}>
                       <option value="daily">매일</option>
                       <option value="weekly">매주</option>
                       <option value="monthly">매월</option>
                     </select>
                   </Field>
-                  <Field label="시간">
+                  <Field label="시간" labelSize="xs">
                     <input type="time" value={form.schedule_time ?? ''}
-                      onChange={(e) => setField('schedule_time', e.target.value)} className={inputCls} />
+                      onChange={(e) => setField('schedule_time', e.target.value)} className={compactInputCls} />
                   </Field>
                 </div>
 
@@ -536,7 +637,7 @@ export default function MailSchedulePage() {
                         const on = (form.schedule_days ?? []).includes(d.v)
                         return (
                           <button key={d.v} type="button" onClick={() => toggleWeekday(d.v, !on)}
-                            className={`h-8 w-8 rounded-full text-sm ${on ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                            className={`h-8 w-8 rounded-full text-[12px] ${on ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                             {d.l}
                           </button>
                         )
@@ -547,22 +648,23 @@ export default function MailSchedulePage() {
 
                 {form.schedule_freq === 'monthly' && (
                   <div className="mt-2">
-                    <Field label="매월 며칠">
+                    <Field label="매월 며칠" labelSize="xs">
+                      {/* 같은 발송 스케줄 패널이라 주기·시간과 같은 축소 폰트를 쓴다. */}
                       <input type="number" min={1} max={31} value={form.schedule_day_of_month ?? 1}
                         onChange={(e) => setField('schedule_day_of_month', Number(e.target.value))}
-                        className={`${inputCls} w-28`} />
+                        className={`${compactInputCls} w-28`} />
                     </Field>
                   </div>
                 )}
 
                 <div className="mt-2 grid grid-cols-2 gap-3">
-                  <Field label="시작일 (선택)">
+                  <Field label="시작일 (선택)" labelSize="xs">
                     <input type="date" value={form.start_date ?? ''}
-                      onChange={(e) => setField('start_date', e.target.value || null)} className={inputCls} />
+                      onChange={(e) => setField('start_date', e.target.value || null)} className={compactInputCls} />
                   </Field>
-                  <Field label="종료일 (선택)">
+                  <Field label="종료일 (선택)" labelSize="xs">
                     <input type="date" value={form.end_date ?? ''}
-                      onChange={(e) => setField('end_date', e.target.value || null)} className={inputCls} />
+                      onChange={(e) => setField('end_date', e.target.value || null)} className={compactInputCls} />
                   </Field>
                 </div>
               </div>
@@ -607,7 +709,11 @@ export default function MailSchedulePage() {
 
       {/* 삭제 확인 모달 */}
       {confirmDelete && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-900/40 p-4">
+        <div
+          className={`fixed inset-y-0 right-0 z-20 flex items-center justify-center bg-slate-900/40 p-4 transition-[left] duration-300 ${
+            sidebarCollapsed ? 'left-0' : 'left-64'
+          }`}
+        >
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
             <h2 className="text-lg font-bold text-slate-800">메일 스케줄 삭제</h2>
             <p className="mt-2 text-sm text-slate-600">
@@ -646,9 +752,15 @@ export default function MailSchedulePage() {
   )
 }
 
-const inputCls = 'rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 w-full'
-// 수신자 행처럼 flex 안에서 폭을 직접 제어하는 입력용(위 inputCls의 w-full 충돌 방지)
-const rowInputCls = 'rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500'
+// 스케줄명·메일 제목·보내는 사람 이메일 입력값은 항목 제목(14px)보다 1px 작게 둔다.
+const inputCls = 'rounded-lg border border-slate-300 px-3 py-2 text-[13px] outline-none focus:border-blue-500 w-full'
+// 수신자 행처럼 flex 안에서 폭을 직접 제어하는 입력용(위 inputCls의 w-full 충돌 방지).
+const rowInputCls = 'mail-recipient-control rounded-lg border border-slate-300 px-[0.6rem] py-[0.4rem] text-[12px] outline-none focus:border-blue-500'
+// 수신 칸/대상 유형 선택은 고정 폭으로 유지한다.
+const rowSelectWidthCls = 'w-[4.8rem]'
+// 네이티브 select/date/time/number 내부 글자는 브라우저 기본 스타일이 개입할 수 있어
+// mail-compact-control CSS에서도 13px을 !important로 강제한다.
+const compactInputCls = 'mail-compact-control rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-blue-500 w-full'
 
 function freqSummary(s: MailSchedule): string {
   if (!s.schedule_freq) return s.cron_expr ?? '-'
@@ -663,10 +775,20 @@ function freqSummary(s: MailSchedule): string {
   return `매일 ${time}`.trim()
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/** 항목 제목. 기본값은 '수신자'·'발송 스케줄' 제목과 동일한 14px이며,
+ *  발송 스케줄 패널 안의 하위 항목은 labelSize="xs"로 한 단계 작게 유지한다. */
+function Field({
+  label,
+  children,
+  labelSize = 'sm',
+}: {
+  label: string
+  children: React.ReactNode
+  labelSize?: 'sm' | 'xs'
+}) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-600">{label}</span>
+      <span className={`mb-1 block font-medium text-slate-600 ${labelSize === 'sm' ? 'text-sm' : 'text-xs'}`}>{label}</span>
       {children}
     </label>
   )

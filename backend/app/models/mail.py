@@ -67,6 +67,10 @@ class MailRecipient(Base):
     field: Mapped[str] = mapped_column(
         String(8), server_default="to", default="to", nullable=False
     )
+    # 요청 배열의 전역 위치. 같은 수신 칸 안에서의 상대 순서와 실제 발송 순서를 보존한다.
+    sort_order: Mapped[int] = mapped_column(
+        Integer, server_default="0", default=0, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
 
 class MailSchedulePage(Base):

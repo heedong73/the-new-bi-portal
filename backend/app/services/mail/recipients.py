@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 class ResolvedRecipients:
     """전개된 수신자 이메일 — 받는사람(to)/참조(cc)/숨은참조(bcc)로 그룹.
 
-    - to/cc/bcc 는 각각 소문자 정규화 + 정렬된 이메일 리스트.
+    - to/cc/bcc 는 각각 소문자 정규화 + 설정 순서를 유지한 이메일 리스트.
     - 우선순위(to > cc > bcc)로 전역 중복 제거: 같은 주소가 여러 칸에 걸리면
       가장 높은 칸에만 남는다(중복 발송 방지).
     """
@@ -64,11 +64,13 @@ async def _emails_for_user_ids(db: AsyncSession, user_ids: list[int]) -> list[st
         return []
     rows = (
         await db.execute(
-            select(User.email).where(
+            select(User.email)
+            .where(
                 User.id.in_(user_ids),
                 User.is_active.is_(True),
                 User.email.is_not(None),
             )
+            .order_by(User.id)
         )
     ).all()
     return [r[0] for r in rows if r[0]]
@@ -77,20 +79,22 @@ async def _emails_for_user_ids(db: AsyncSession, user_ids: list[int]) -> list[st
 async def resolve_recipients(
     db: AsyncSession, mail_schedule_id: int
 ) -> ResolvedRecipients:
-    """스케줄의 수신자 행을 실제 이메일 집합으로 전개한다.
+    """스케줄의 수신자 행을 실제 이메일 목록으로 전개한다.
 
     각 수신자 행의 field(to/cc/bcc)에 따라 그룹으로 분류하고, 소문자 정규화 +
-    우선순위(to > cc > bcc) 중복 제거 후 반환한다.
+    설정 순서를 유지하면서 우선순위(to > cc > bcc)로 중복 제거한 뒤 반환한다.
     """
     recipients = (
         await db.execute(
-            select(MailRecipient).where(
-                MailRecipient.mail_schedule_id == mail_schedule_id
-            )
+            select(MailRecipient)
+            .where(MailRecipient.mail_schedule_id == mail_schedule_id)
+            .order_by(MailRecipient.sort_order, MailRecipient.id)
         )
     ).scalars().all()
 
-    buckets: dict[str, set[str]] = {"to": set(), "cc": set(), "bcc": set()}
+    # 각 칸 안에서는 설정된 수신자 순서와 한 수신자가 전개한 이메일 순서를 유지한다.
+    buckets: dict[str, list[str]] = {"to": [], "cc": [], "bcc": []}
+    seen_by_bucket: dict[str, set[str]] = {"to": set(), "cc": set(), "bcc": set()}
 
     for r in recipients:
         rtype = r.recipient_type
@@ -126,18 +130,21 @@ async def resolve_recipients(
         target = r.field if r.field in buckets else "to"
         for e in emails:
             norm = _normalize(e)
-            if norm:
-                buckets[target].add(norm)
+            if norm and norm not in seen_by_bucket[target]:
+                seen_by_bucket[target].add(norm)
+                buckets[target].append(norm)
 
-    # 우선순위 중복 제거: to > cc > bcc
-    to_set = buckets["to"]
-    cc_set = buckets["cc"] - to_set
-    bcc_set = buckets["bcc"] - to_set - cc_set
+    # 칸 간 중복은 우선순위(to > cc > bcc)로 제거하되 각 칸의 첫 등장 순서는 유지한다.
+    to_recipients = buckets["to"]
+    to_seen = set(to_recipients)
+    cc_recipients = [email for email in buckets["cc"] if email not in to_seen]
+    blocked_for_bcc = to_seen | set(cc_recipients)
+    bcc_recipients = [email for email in buckets["bcc"] if email not in blocked_for_bcc]
 
     resolved = ResolvedRecipients(
-        to=sorted(to_set),
-        cc=sorted(cc_set),
-        bcc=sorted(bcc_set),
+        to=to_recipients,
+        cc=cc_recipients,
+        bcc=bcc_recipients,
     )
     logger.info(
         "recipients_resolved",

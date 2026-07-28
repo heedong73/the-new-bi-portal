@@ -60,7 +60,7 @@ async def _build_response(db: SessionDep, schedule: MailSchedule) -> MailSchedul
         await db.execute(
             select(MailRecipient)
             .where(MailRecipient.mail_schedule_id == schedule.id)
-            .order_by(MailRecipient.id)
+            .order_by(MailRecipient.sort_order, MailRecipient.id)
         )
     ).scalars().all()
 
@@ -184,13 +184,14 @@ async def create_mail_schedule(
     await db.flush()  # id 확보
 
     # 수신자 저장
-    for r in body.recipients:
+    for sort_order, r in enumerate(body.recipients):
         db.add(MailRecipient(
             mail_schedule_id=schedule.id,
             recipient_type=r.recipient_type,
             recipient_id=r.recipient_id,
             email=str(r.email) if r.email else None,
             field=r.field,
+            sort_order=sort_order,
         ))
 
     # 페이지 저장
@@ -285,13 +286,14 @@ async def update_mail_schedule(
         await db.execute(
             delete(MailRecipient).where(MailRecipient.mail_schedule_id == schedule_id)
         )
-        for r in body.recipients:
+        for sort_order, r in enumerate(body.recipients):
             db.add(MailRecipient(
                 mail_schedule_id=schedule_id,
                 recipient_type=r.recipient_type,
                 recipient_id=r.recipient_id,
                 email=str(r.email) if r.email else None,
                 field=r.field,
+                sort_order=sort_order,
             ))
 
     # pages 교체

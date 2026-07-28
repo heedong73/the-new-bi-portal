@@ -78,13 +78,6 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-
 ::selection {
   background: rgb(7 93 131 / 18%);
   color: #102531;
@@ -377,6 +370,39 @@ textarea {
   border-color: #1684a9;
   box-shadow: 0 0 0 3px rgb(22 132 169 / 10%);
   outline: none;
+}
+
+/* 메일 스케줄 수신자 입력·검색은 화면 전용 클래스로 12px을 직접 강제해
+ * 전역 스타일이나 브라우저 네이티브 스타일의 덮어쓰기를 막는다. */
+.mail-recipient-control,
+.mail-recipient-control option,
+.mail-recipient-picker-option,
+.mail-recipient-picker-option *,
+.mail-recipient-picker-message {
+  font-size: 12px !important;
+}
+
+/* 폴더/레포트 트리의 항목명과 검색 입력은 13px로 맞춘다. */
+.mail-report-tree-item,
+.mail-report-tree-search {
+  font-size: 13px !important;
+}
+
+/* 메일 스케줄의 짧은 네이티브 입력값(Export/리사이즈/주기/시간/기간).
+ * Windows Chromium의 select/date/time 내부는 유틸리티 font-size를 그대로 상속하지
+ * 않는 경우가 있어 컨트롤과 shadow DOM 편집 필드 양쪽에 13px을 강제한다. */
+.mail-compact-control,
+.mail-compact-control option,
+.mail-compact-control::-webkit-datetime-edit,
+.mail-compact-control::-webkit-datetime-edit-fields-wrapper,
+.mail-compact-control::-webkit-datetime-edit-text,
+.mail-compact-control::-webkit-datetime-edit-hour-field,
+.mail-compact-control::-webkit-datetime-edit-minute-field,
+.mail-compact-control::-webkit-datetime-edit-ampm-field,
+.mail-compact-control::-webkit-datetime-edit-year-field,
+.mail-compact-control::-webkit-datetime-edit-month-field,
+.mail-compact-control::-webkit-datetime-edit-day-field {
+  font-size: 13px !important;
 }
 
 .editorial-content :where(table) {
