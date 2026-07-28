@@ -37,7 +37,7 @@ const TYPE_ICON: Record<RequestType, string> = {
 /** 유형별 작성 안내 — 전광판은 필요한 정보가 정해져 있어 양식을 미리 알려준다. */
 const TYPE_HINT: Partial<Record<RequestType, string>> = {
   display_board:
-    '전광판은 운영자가 구성합니다. 표시할 레포트(및 페이지), 순서, 화면별 노출 시간, 설치할 모니터 위치를 적어주세요.',
+    '대시보드 전광판은 운영자가 구성합니다.\n표시할 레포트(및 페이지), 순서, 화면별 노출 시간(초) 등을 알려주세요.',
 }
 
 function extOf(name: string): string {
@@ -289,8 +289,9 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
                 <option key={t} value={t}>{REQUEST_TYPE_LABEL[t]}</option>
               ))}
             </select>
+            {/* 안내 문구의 줄바꿈(\n)을 그대로 보여준다. */}
             {type !== '' && TYPE_HINT[type] && (
-              <p className="mt-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              <p className="mt-1.5 whitespace-pre-line rounded-lg bg-blue-50 px-3 py-2 text-[13.8px] leading-relaxed text-blue-700">
                 {TYPE_HINT[type]}
               </p>
             )}

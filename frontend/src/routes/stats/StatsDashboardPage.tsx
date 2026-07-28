@@ -147,13 +147,15 @@ function HourlyChart({ data, height = 240 }: { data: HourlyPoint[]; height?: num
   )
 }
 
-function TopReportsBar({ data, selectedReportId, onSelect, height = 240, nameAxisWidth = 100 }: {
+function TopReportsBar({ data, selectedReportId, onSelect, height = 240, nameAxisWidth = 100, tooltipFontSize }: {
   data: TopReport[]
   selectedReportId?: number | null
   onSelect?: (reportId: number | null) => void
   height?: number
   /** Y축(레포트명) 폭. 넓힐수록 이름이 덜 잘리고 막대(그래프) 영역은 그만큼 줄어든다. */
   nameAxisWidth?: number
+  /** 툴팁 글자 크기(px). 미지정 시 Recharts 기본 크기를 유지한다. */
+  tooltipFontSize?: number
 }) {
   const rows = data.map((r) => ({
     id: r.report_id,
@@ -180,7 +182,10 @@ function TopReportsBar({ data, selectedReportId, onSelect, height = 240, nameAxi
           <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} axisLine={false} tickLine={false} />
           <YAxis type="category" dataKey="name" width={nameAxisWidth} tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
             tickFormatter={(v: string) => (v.length > maxChars ? `${v.slice(0, maxChars)}…` : v)} />
-          <Tooltip cursor={{ fill: '#f8fafc' }} />
+          <Tooltip
+            cursor={{ fill: '#f8fafc' }}
+            contentStyle={tooltipFontSize == null ? undefined : { fontSize: tooltipFontSize }}
+          />
           <Bar
             dataKey="count" name="조회수" radius={[0, 6, 6, 0]}
             cursor={onSelect ? 'pointer' : undefined}
@@ -713,7 +718,7 @@ function OperatorStats() {
 
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             <SectionCard title="레포트 조회수 TOP 10">
-              <TopReportsBar data={u?.top_reports ?? []} height={280} nameAxisWidth={190} />
+              <TopReportsBar data={u?.top_reports ?? []} height={280} nameAxisWidth={190} tooltipFontSize={14} />
             </SectionCard>
             <SectionCard title="시간대별 조회 · 사용자 (0~23시)">
               <HourlyChart data={u?.hourly ?? []} height={280} />
