@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Shield, X, Upload, Folder, FolderPlus,
   ChevronRight, ChevronDown, Pencil, Trash2, FileBarChart, FolderInput,
-  ArrowUp, ArrowDown,
+  ArrowUp, ArrowDown, Info, Copy, Check,
 } from 'lucide-react'
 
 import { reportAdminApi, foldersAdminApi } from '@/api/reportAdminApi'
@@ -14,6 +14,27 @@ import { useBeforeUnload } from '@/hooks/useBeforeUnload'
 import ReportPermissionPanel from './ReportPermissionPanel'
 import FolderTreePicker from './FolderTreePicker'
 import AuthorPicker from './AuthorPicker'
+
+interface TechnicalInfoField {
+  key: string
+  label: string
+  value: string | null
+}
+
+function technicalInfoFields(report: ReportAdmin): TechnicalInfoField[] {
+  return [
+    { key: 'portal', label: '포털 내부 ID', value: String(report.id) },
+    { key: 'report', label: 'Power BI Report ID', value: report.report_id },
+    { key: 'workspace', label: 'Workspace ID', value: report.workspace_id },
+    { key: 'dataset', label: 'Dataset ID', value: report.dataset_id ?? null },
+  ]
+}
+
+function formatTechnicalInfo(report: ReportAdmin): string {
+  return technicalInfoFields(report)
+    .map((field) => `${field.label}: ${field.value || '-'}`)
+    .join('\n')
+}
 
 export default function ReportsPage() {
   const queryClient = useQueryClient()
@@ -35,11 +56,39 @@ export default function ReportsPage() {
   const [editAuthor, setEditAuthor] = useState('')
   // 레포트 삭제 확인
   const [deleteTarget, setDeleteTarget] = useState<ReportAdmin | null>(null)
+  // 저빈도 운영·장애 대응용 기술 식별자
+  const [technicalInfoReport, setTechnicalInfoReport] = useState<ReportAdmin | null>(null)
+  const [copiedTechnicalKey, setCopiedTechnicalKey] = useState<string | null>(null)
+  const [technicalCopyError, setTechnicalCopyError] = useState(false)
   const pbixInputRef = useRef<HTMLInputElement>(null)
   // 트리 펼침/폴더 추가 대상
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const [addParentId, setAddParentId] = useState<number | null | 'root'>(null)
   const [newFolderName, setNewFolderName] = useState('')
+
+  function openTechnicalInfo(report: ReportAdmin) {
+    setTechnicalInfoReport(report)
+    setCopiedTechnicalKey(null)
+    setTechnicalCopyError(false)
+  }
+
+  function closeTechnicalInfo() {
+    setTechnicalInfoReport(null)
+    setCopiedTechnicalKey(null)
+    setTechnicalCopyError(false)
+  }
+
+  async function copyTechnicalValue(key: string, value: string | null) {
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedTechnicalKey(key)
+      setTechnicalCopyError(false)
+    } catch {
+      setCopiedTechnicalKey(null)
+      setTechnicalCopyError(true)
+    }
+  }
 
   const reportsQuery = useQuery({
     queryKey: ['admin-reports'],
@@ -203,12 +252,16 @@ export default function ReportsPage() {
     }
     return (
       <div key={r.id}
-        className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_130px_minmax(0,1.4fr)_280px] items-center gap-3 rounded-md py-2 pr-2 text-sm hover:bg-slate-50">
+        className="grid grid-cols-[minmax(0,1.35fr)_110px_150px_130px_minmax(0,1.65fr)_280px] items-center gap-3 rounded-md py-2 pr-2 text-sm hover:bg-slate-50">
         <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: depth * 20 + 4 }}>
           <FileBarChart className="h-4 w-4 shrink-0 text-blue-500" />
-          <span className="truncate text-slate-800" title={name}>{name}</span>
+          <span className="min-w-0 flex-1 truncate text-slate-800" title={name}>{name}</span>
+          <button type="button" onClick={() => openTechnicalInfo(r)}
+            title="레포트 기술 정보" aria-label={`${name} 기술 정보`}
+            className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-blue-600">
+            <Info className="h-3.5 w-3.5" />
+          </button>
         </div>
-        <span className="truncate font-mono text-xs text-slate-500" title={r.report_id}>{r.report_id}</span>
         <span className="text-slate-500">{r.created_at ? r.created_at.slice(0, 10) : '-'}</span>
         <span className="truncate text-slate-500" title={r.created_by_label ?? ''}>{r.created_by_label || '알 수 없음'}</span>
         <span className="truncate text-slate-500" title={r.author_label ?? ''}>{r.author_label || '-'}</span>
@@ -342,9 +395,8 @@ export default function ReportsPage() {
       {/* 트리 */}
       <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
         {/* 컬럼 헤더 */}
-        <div className="grid grid-cols-[minmax(0,1.2fr)_190px_110px_150px_130px_minmax(0,1.4fr)_280px] items-center gap-3 border-b border-slate-200 px-2 py-2.5 text-xs font-extrabold text-slate-500">
+        <div className="grid grid-cols-[minmax(0,1.35fr)_110px_150px_130px_minmax(0,1.65fr)_280px] items-center gap-3 border-b border-slate-200 px-2 py-2.5 text-xs font-extrabold text-slate-500">
           <span className="pl-1">레포트명</span>
-          <span>레포트 ID</span>
           <span>등록일</span>
           <span>생성자</span>
           <span>작성자</span>
@@ -385,6 +437,69 @@ export default function ReportsPage() {
             <ReportPermissionPanel reportId={permsReportId} />
             <div className="mt-4 flex justify-end">
               <button type="button" onClick={() => setPermsReportId(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 레포트 기술 정보 모달 — 목록에서는 숨기고 운영/장애 대응 시에만 확인 */}
+      {technicalInfoReport && (
+        <div className="fixed inset-0 z-10 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4">
+          <div role="dialog" aria-modal="true" aria-label="레포트 기술 정보" className="my-12 w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Info className="h-5 w-5 text-blue-600" />
+                  <h3 className="text-lg font-bold text-slate-800">레포트 기술 정보</h3>
+                </div>
+                <p className="mt-1 text-sm text-slate-600">
+                  {technicalInfoReport.display_name || technicalInfoReport.report_name || technicalInfoReport.report_id}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">운영 확인과 장애 대응에 사용하는 읽기 전용 식별자입니다.</p>
+              </div>
+              <button type="button" aria-label="닫기" onClick={closeTechnicalInfo} className="shrink-0 text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              {technicalInfoFields(technicalInfoReport).map((field) => (
+                <div key={field.key} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-semibold text-slate-600">{field.label}</span>
+                    <button type="button" disabled={!field.value}
+                      onClick={() => void copyTechnicalValue(field.key, field.value)}
+                      aria-label={`${field.label} 복사`}
+                      className="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:text-slate-300 disabled:hover:bg-transparent">
+                      {copiedTechnicalKey === field.key ? (
+                        <><Check className="h-3.5 w-3.5" /> 복사됨</>
+                      ) : (
+                        <><Copy className="h-3.5 w-3.5" /> 복사</>
+                      )}
+                    </button>
+                  </div>
+                  <code className={`mt-1 block break-all font-mono text-xs ${field.value ? 'text-slate-700' : 'text-slate-400'}`}>
+                    {field.value || '없음'}
+                  </code>
+                </div>
+              ))}
+            </div>
+
+            {technicalCopyError && (
+              <p role="alert" className="mt-3 text-xs text-red-600">클립보드에 복사하지 못했습니다. 브라우저 권한을 확인하세요.</p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button"
+                onClick={() => void copyTechnicalValue('all', formatTechnicalInfo(technicalInfoReport))}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50">
+                {copiedTechnicalKey === 'all' ? (
+                  <><Check className="h-4 w-4" /> 전체 정보 복사됨</>
+                ) : (
+                  <><Copy className="h-4 w-4" /> 전체 정보 복사</>
+                )}
+              </button>
+              <button type="button" onClick={closeTechnicalInfo}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">닫기</button>
             </div>
           </div>
         </div>
