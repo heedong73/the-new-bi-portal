@@ -81,12 +81,16 @@ describe('AppLayout 메뉴 (역할별)', () => {
     wrap('/')
     expect(await screen.findByText('관리자 콘솔')).toBeInTheDocument()
     expect(screen.getByText('통계')).toBeInTheDocument()
+    expect(screen.getByText('KPI 전광판')).toBeInTheDocument()
     expect(screen.getByText('인사이트')).toBeInTheDocument()
     expect(screen.getByText('지원')).toBeInTheDocument()
     expect(screen.getByText('관리')).toBeInTheDocument()
   })
 
-  it('General_User는 지원 소제목과 서비스 센터만 본다', async () => {
+  // KPI 전광판은 메뉴 권한 대상이 아니라 로그인 사용자 공통 기능이므로 일반 사용자도
+  // 인사이트 소제목과 전광판 링크를 본다(실제 표시 화면은 레포트 VIEW 권한으로 필터).
+  // 통계·관리 계열은 여전히 권한이 있어야 노출된다.
+  it('General_User는 전광판·서비스 센터만 보고 통계·관리는 보지 못한다', async () => {
     vi.mocked(authApi.me).mockResolvedValue(GENERAL)
     wrap('/')
     expect(await screen.findByText('홈')).toBeInTheDocument()
@@ -95,7 +99,7 @@ describe('AppLayout 메뉴 (역할별)', () => {
     expect(screen.queryByRole('search')).not.toBeInTheDocument()
     expect(screen.getByText('지원')).toBeInTheDocument()
     expect(screen.getByText('서비스 센터')).toBeInTheDocument()
-    expect(screen.queryByText('인사이트')).not.toBeInTheDocument()
+    expect(screen.getByText('KPI 전광판')).toBeInTheDocument()
     expect(screen.queryByText('관리')).not.toBeInTheDocument()
     expect(screen.queryByText('관리자 콘솔')).not.toBeInTheDocument()
     expect(screen.queryByText('통계')).not.toBeInTheDocument()

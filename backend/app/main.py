@@ -12,6 +12,7 @@ from app.api.routes import roles as roles_routes
 from app.api.routes import folders as folders_routes
 from app.api.routes import reports as reports_routes
 from app.api.routes import datasets as datasets_routes
+from app.api.routes import display_boards as display_boards_routes
 from app.api.routes import exports as exports_routes
 from app.api.routes import monitoring as monitoring_routes
 from app.api.routes import refresh as refresh_routes
@@ -62,6 +63,7 @@ app.include_router(roles_routes.router)
 app.include_router(folders_routes.router)
 app.include_router(reports_routes.router)
 app.include_router(datasets_routes.router)
+app.include_router(display_boards_routes.router)
 app.include_router(exports_routes.router)
 app.include_router(monitoring_routes.router)
 app.include_router(refresh_routes.router)

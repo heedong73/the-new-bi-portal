@@ -4,7 +4,9 @@
  */
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { BarChart3, Settings, LogOut, PanelLeftClose, Menu, MessagesSquare } from 'lucide-react'
+import {
+  BarChart3, Settings, LogOut, PanelLeftClose, Menu, MessagesSquare, MonitorPlay,
+} from 'lucide-react'
 
 import { authApi } from '@/api/authApi'
 import { useAuthStore } from '@/stores/useAuthStore'
@@ -32,6 +34,7 @@ export default function AppLayout() {
 
   const path = location.pathname
   const statsActive = path.startsWith('/stats')
+  const displayActive = path.startsWith('/display')
   const serviceActive = path.startsWith('/service-center')
   const adminActive = path.startsWith('/admin') || path.startsWith('/mail') || path.startsWith('/monitoring')
   const itemCls = (active: boolean) =>
@@ -81,16 +84,22 @@ export default function AppLayout() {
           <nav className="editorial-nav flex-1 space-y-1 overflow-y-auto">
             <SidebarFolderTree />
 
-            {canStats && (
-              <div className="space-y-1 pt-2">
-                <div className="portal-discovery-nav__divider mb-3" />
-                <p className="portal-discovery-nav__label px-3 pb-1">인사이트</p>
+            <div className="space-y-1 pt-2">
+              <div className="portal-discovery-nav__divider mb-3" />
+              <p className="portal-discovery-nav__label px-3 pb-1">인사이트</p>
+              {canStats && (
                 <NavLink to="/stats" className={() => itemCls(statsActive)}>
                   <BarChart3 className="h-4 w-4" />
                   통계
                 </NavLink>
-              </div>
-            )}
+              )}
+              {/* 전광판은 메뉴 권한 대상이 아니라 로그인 사용자 전체에게 노출한다.
+                  실제로 볼 수 있는 화면은 레포트 VIEW 권한으로 서버가 필터한다. */}
+              <NavLink to="/display" className={() => itemCls(displayActive)}>
+                <MonitorPlay className="h-4 w-4" />
+                KPI 전광판
+              </NavLink>
+            </div>
 
             <div className="space-y-1 pt-2">
               <div className="portal-discovery-nav__divider mb-3" />

@@ -4,6 +4,7 @@ from app.models.report import (
     Workspace, ReportFolder, Dataset, Report, ReportPermission, ReportFavorite,
     UserReportActivity, ReportViewDailyStat,
 )
+from app.models.display import DisplayBoard, DisplayBoardSlide
 from app.models.refresh import RefreshRun, RefreshSchedule
 from app.models.mail import (
     MailSchedule,
@@ -21,6 +22,7 @@ __all__ = [
     "UserGroup", "UserGroupMember",
     "Workspace", "ReportFolder", "Dataset", "Report", "ReportPermission", "ReportFavorite",
     "UserReportActivity", "ReportViewDailyStat",
+    "DisplayBoard", "DisplayBoardSlide",
     "RefreshRun", "RefreshSchedule",
     "MailSchedule", "MailRecipient", "MailSchedulePage",
     "MailJob", "ExportJob", "ReportImagePath",

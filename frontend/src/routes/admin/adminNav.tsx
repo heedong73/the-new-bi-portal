@@ -5,7 +5,7 @@
  */
 import {
   FileBarChart, Users, UsersRound, ShieldCheck,
-  CalendarClock, Mail, CalendarOff, RefreshCw, Activity, Inbox, History,
+  CalendarClock, Mail, CalendarOff, RefreshCw, Activity, Inbox, History, MonitorPlay,
 } from 'lucide-react'
 
 export interface AdminItem {
@@ -26,6 +26,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
     title: '콘텐츠',
     items: [
       { to: '/admin/reports', label: '레포트 관리', Icon: FileBarChart, menu: 'admin_reports', desc: '레포트 게시·폴더·권한·교체' },
+      { to: '/admin/display-boards', label: 'KPI 전광판', Icon: MonitorPlay, menu: 'admin_display_boards', desc: '전광판 플레이리스트·순서·노출 시간' },
     ],
   },
   {

@@ -13,6 +13,9 @@ import UsersPage from '@/routes/admin/UsersPage'
 import GroupsPage from '@/routes/admin/GroupsPage'
 import PermissionsPage from '@/routes/admin/PermissionsPage'
 import ReportsPage from '@/routes/admin/ReportsPage'
+import DisplayBoardsPage from '@/routes/admin/DisplayBoardsPage'
+import DisplayBoardListPage from '@/routes/display/DisplayBoardListPage'
+import DisplayBoardPlayerPage from '@/routes/display/DisplayBoardPlayerPage'
 import HolidaysPage from '@/routes/admin/HolidaysPage'
 import AuditLogsPage from '@/routes/admin/AuditLogsPage'
 import StatsDashboardPage from '@/routes/stats/StatsDashboardPage'
@@ -44,13 +47,18 @@ function App() {
                 <Route path="/reports/catalog" element={<HomePage />} />
                 <Route path="/reports/:reportId" element={<ReportViewPage />} />
                 <Route path="/stats" element={<StatsDashboardPage />} />
+                <Route path="/display" element={<DisplayBoardListPage />} />
                 <Route path="/service-center" element={<ServiceCenterPage />} />
               </Route>
+
+              {/* KPI 전광판 재생 — 전체화면 전용(사이드바/헤더 없음). */}
+              <Route path="/display/:boardId/play" element={<DisplayBoardPlayerPage />} />
 
               {/* 관리자 콘솔 — 전용 셸(별도 레이아웃). /admin 인덱스=대시보드. URL 유지. */}
               <Route element={<AdminConsoleLayout />}>
                 <Route path="/admin" element={<AdminDashboard />} />
                 <Route path="/admin/reports" element={<ReportsPage />} />
+                <Route path="/admin/display-boards" element={<DisplayBoardsPage />} />
                 <Route path="/admin/users" element={<UsersPage />} />
                 <Route path="/admin/groups" element={<GroupsPage />} />
                 <Route path="/admin/permissions" element={<PermissionsPage />} />

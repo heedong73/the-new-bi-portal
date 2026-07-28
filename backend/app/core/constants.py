@@ -15,6 +15,7 @@ class MenuKey(StrEnum):
     MONITORING_REFRESH = "monitoring_refresh"  # Refresh 현황
     MONITORING_OPS = "monitoring_ops"      # 운영 상태
     ADMIN_REPORTS = "admin_reports"        # 관리자-레포트 관리
+    ADMIN_DISPLAY_BOARDS = "admin_display_boards"  # 관리자-KPI 전광판 구성
     ADMIN_USERS = "admin_users"            # 관리자-사용자
     ADMIN_GROUPS = "admin_groups"          # 관리자-그룹
     ADMIN_HOLIDAYS = "admin_holidays"      # 관리자-공휴일
@@ -30,6 +31,7 @@ MENU_CATALOG: list[tuple[str, str]] = [
     (MenuKey.MONITORING_REFRESH, "Refresh 현황"),
     (MenuKey.MONITORING_OPS, "운영 상태"),
     (MenuKey.ADMIN_REPORTS, "관리자 · 레포트 관리"),
+    (MenuKey.ADMIN_DISPLAY_BOARDS, "관리자 · KPI 전광판"),
     (MenuKey.ADMIN_USERS, "관리자 · 사용자"),
     (MenuKey.ADMIN_GROUPS, "관리자 · 그룹"),
     (MenuKey.ADMIN_HOLIDAYS, "관리자 · 공휴일"),
