@@ -86,7 +86,9 @@ export interface TrendsResponse {
 }
 /** 레포트별 상세 — 부서별 조회 정보 한 행. */
 export interface ReportDetailRow {
+  department_id: number | null // null=부서 미지정. 시간대별 드릴다운 필터 키
   department: string
+  company: string | null // 계열사(인사 조직 최상위)
   views: number
   unique_users: number
   last_access: string | null // tz-aware ISO(UTC)
@@ -153,4 +155,118 @@ export interface MonitoringStatus {
   recent_jobs: { refresh: RecentJob[]; mail: RecentJob[]; export: RecentJob[] }
   recent_failures: { refresh: number; mail: number; export: number }
   has_recent_failures: boolean
+}
+
+
+/** 역할별 통계 정보구조 capability. */
+export interface StatsCapabilities {
+  scope: 'global' | 'author'
+  is_operator: boolean
+  is_executive: boolean
+  can_view_global_activity: boolean
+  can_view_system_operations: boolean
+  can_export_raw_events: boolean
+}
+
+/** 팀별 활동(P1). */
+export interface TeamActivityRow {
+  department_id: number | null
+  department: string // 인사 부서명(코드로만 남은 부서는 인사 뷰 이름으로 보정)
+  company: string | null // 계열사
+  division: string | null // 본부(없으면 바로 위 상위 조직)
+  org_path: string | null // 계열사 아래 ~ 팀 직전까지 상위 경로
+  eligible_users: number
+  active_users: number
+  adoption_rate: number | null
+  report_views: number
+  downloads: number
+  logins: number | null
+  engaged_views: number
+  last_activity: string | null
+}
+
+/** 사용자별 활동(P1). */
+export interface UserActivityRow {
+  user_id: number
+  emp_no?: string | null
+  user_name?: string | null
+  department: string
+  company?: string | null // 계열사
+  is_active: boolean
+  report_views: number
+  reports_viewed: number
+  downloads: number
+  login_count: number | null
+  engaged_views: number
+  duration_seconds: number
+  last_activity: string | null
+}
+
+/** 레포트별 성과·참여(P1/P2). */
+export interface ReportPerformanceRow {
+  report_id: number
+  report_name: string
+  company: string
+  owner_user_id: number | null
+  owner_label: string | null
+  is_published: boolean
+  views: number
+  unique_viewers: number
+  downloads: number
+  engaged_views: number
+  engaged_rate: number
+  repeat_viewers: number
+  avg_duration_seconds: number
+  reach_rate: number | null
+  previous_views: number
+  views_change_pct: number | null
+  declining: boolean
+  last_viewed_at: string | null
+  days_since_last_view: number | null
+}
+
+export interface LifecycleSummary {
+  created: number
+  updated: number
+  deleted: number
+}
+export interface LifecycleEvent {
+  event_id: number
+  occurred_at: string | null
+  action: 'report_create' | 'report_update' | 'report_delete'
+  report_id: number | null
+  report_name: string
+  company: string
+  owner_label: string | null
+  actor_name: string | null
+}
+export interface LifecycleResponse {
+  summary: LifecycleSummary
+  events: LifecycleEvent[]
+}
+
+export interface InsightMetrics {
+  views: number
+  unique_viewers: number
+  downloads: number
+  engaged_views: number
+  repeat_viewers: number
+  login_count: number | null
+  unique_login_users: number | null
+  engaged_rate?: number
+  repeat_rate?: number
+}
+export interface StatsInsights {
+  period: {
+    current_from: string
+    current_to: string
+    previous_from: string
+    previous_to: string
+  }
+  current: InsightMetrics
+  previous: InsightMetrics
+  changes_pct: Record<string, number | null>
+  inactive_cutoff_days: number
+  inactive_reports: ReportPerformanceRow[]
+  declining_reports: ReportPerformanceRow[]
 }

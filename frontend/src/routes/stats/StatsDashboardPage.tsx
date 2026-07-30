@@ -1,18 +1,14 @@
-/** 통계 대시보드 (T-39, 고도화) — 요구사항 R18.
+/** 통계 대시보드 (P0~P2 고도화).
  *
- * - System_Operator: 전역 통계. [메인] · [추이] · [상세 조회] 3탭 + 기간/계열사 필터.
- *   - 메인: KPI(접속자 고유/전체·총 레포트(+신규)·접속 레포트·총 뷰) + 계열사별 레포트 수
- *     + 레포트 조회수 TOP10 + 시간대별(0~23시) 조회/사용자.
- *   - 추이: 주별/월별 접속자·누적 레포트·조회 수.
- *   - 상세: 계열사/레포트/기간별 부서 조회 상세(조회수·고유 사용자·최근 접속) + CSV.
- * - 그 외(General_User 등 운영자가 아닌 사용자): 관리자가 VIEW_STATS를 부여한
- *   레포트만 선택해 조회(스코프). 통계 메뉴 자체는 관리자가 그룹/사용자 단위로
- *   접근을 부여해야 보인다(권한 관리 개편 — Super_User 역할 폐지).
+ * - System_Operator / Executive_Stats_Reader: 전역 요약, 팀·사용자·레포트,
+ *   생명주기, 활용 인사이트, 상세 드릴다운, 추이.
+ * - 작성자/VIEW_STATS 권한자: 소유 또는 위임받은 레포트 범위의 사용자 현황,
+ *   레포트별 성과, 유효 체류·재방문·기간 비교 인사이트.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { startOfDay, endOfDay, format, subDays } from 'date-fns'
-import { Users, UserCheck, Eye, FileText, FolderOpen, Download, CalendarClock, FileBarChart, Building2, Table2 } from 'lucide-react'
+import { Users, UserCheck, Eye, FileText, FolderOpen, Download, CalendarClock, FileBarChart, Building2, Table2, Search, X } from 'lucide-react'
 import {
   ResponsiveContainer, ComposedChart, BarChart, Bar, Line, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -21,8 +17,15 @@ import {
 import { statsApi } from '@/api/dashboardApi'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { BOM, escapeCsvField } from '@/utils/csv'
+import {
+  InsightsPanel,
+  LifecyclePanel,
+  ReportPerformanceTable,
+  TeamActivityTable,
+  UserActivityTable,
+} from './StatsAnalysisPanels'
 import type {
-  CompanyReports, HourlyPoint, RawViewEvent, ReportDetailRow, ReportDetailUserRow, StatsHighlights, StatsOverview, TopReport, TrendPoint,
+  CompanyReports, HourlyPoint, RawViewEvent, ReportDetailRow, ReportDetailUserRow, StatsHighlights, StatsOverview, StatsReport, TopReport, TrendPoint,
 } from '@/types/dashboard'
 
 // ── 날짜 유틸 ────────────────────────────────────────────────────────────────
@@ -124,6 +127,147 @@ function SimplePeriodFilter({ fromDate, toDate, onChange }: {
         )}
       </div>
     </FilterCard>
+  )
+}
+
+/** 기간을 바꾼 직후 모든 증감 지표의 비교 기준을 알 수 있게 필터 바로 아래에 둔다. */
+function PeriodComparisonNote() {
+  return (
+    <p className="text-xs text-slate-400">
+      <span className="font-medium text-slate-500">증감률 기준:</span>{' '}
+      선택 기간 직전의 동일 기간과 비교합니다. 예: 최근 7일 선택 시 그 전 7일과 비교합니다.
+    </p>
+  )
+}
+
+/** 레포트가 많아지면 기본 <select>로는 원하는 이름을 찾기 어려워서, 이름을
+ * 입력해 바로 걸러낼 수 있는 인라인 검색 드롭다운. 키보드(위/아래/Enter/Esc)와
+ * 마우스 모두로 조작 가능하고, 바깥을 클릭하면 닫힌다. */
+function ReportSearchSelect({ reports, value, onChange, placeholder, ariaLabel }: {
+  reports: StatsReport[]
+  value: number | null
+  onChange: (id: number | null) => void
+  placeholder: string
+  ariaLabel: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [highlight, setHighlight] = useState(0)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const selected = value != null ? reports.find((r) => r.id === value) ?? null : null
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return reports
+    return reports.filter((r) => r.name.toLowerCase().includes(q))
+  }, [reports, query])
+
+  useEffect(() => {
+    if (!open) return
+    function handleOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  }, [open])
+
+  function openList() {
+    setOpen(true)
+    setQuery('')
+    setHighlight(0)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  function pick(id: number | null) {
+    onChange(id)
+    setOpen(false)
+    setQuery('')
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlight((h) => Math.min(h + 1, filtered.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlight((h) => Math.max(h - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const r = filtered[highlight]
+      if (r) pick(r.id)
+    } else if (e.key === 'Escape') {
+      setOpen(false)
+      setQuery('')
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="relative min-w-[220px]">
+      {open ? (
+        <div className="flex items-center gap-1.5 rounded-md border border-blue-400 bg-white px-2 py-1 ring-2 ring-blue-100">
+          <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setHighlight(0) }}
+            onKeyDown={handleKeyDown}
+            placeholder="레포트명 검색…"
+            aria-label={ariaLabel}
+            className="w-full min-w-0 text-sm font-medium text-slate-800 outline-none"
+          />
+          <button type="button" onClick={() => { setOpen(false); setQuery('') }} aria-label="닫기"
+            className="shrink-0 text-slate-400 hover:text-slate-600">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={openList}
+          aria-label={ariaLabel}
+          className="flex w-full items-center justify-between gap-1.5 rounded-md border border-slate-300 px-2 py-1 text-left text-sm font-medium text-slate-800 hover:border-slate-400"
+        >
+          <span className="truncate">{selected ? selected.name : placeholder}</span>
+          <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        </button>
+      )}
+      {open && (
+        <ul role="listbox" className="absolute left-0 top-full z-30 mt-1 max-h-64 w-full min-w-[240px] overflow-y-auto rounded-md border border-slate-200 bg-white py-1 text-sm shadow-lg">
+          <li>
+            <button
+              type="button"
+              onClick={() => pick(null)}
+              className={`block w-full px-3 py-1.5 text-left ${value == null ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}
+            >
+              {placeholder}
+            </button>
+          </li>
+          {filtered.length === 0 ? (
+            <li className="px-3 py-1.5 text-slate-400">검색 결과 없음</li>
+          ) : (
+            filtered.map((r, i) => (
+              <li key={r.id}>
+                <button
+                  type="button"
+                  onClick={() => pick(r.id)}
+                  onMouseEnter={() => setHighlight(i)}
+                  className={`block w-full truncate px-3 py-1.5 text-left ${
+                    i === highlight ? 'bg-blue-50 text-blue-700' : r.id === value ? 'font-medium text-blue-700' : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {r.name}
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
   )
 }
 
@@ -298,11 +442,28 @@ function CompanyCards({ data, selected, onSelect }: {
   )
 }
 
+/** 상세 탭 부서 드릴다운 선택값. id=null은 부서 미지정 사용자 묶음. */
+type DepartmentSelection = { id: number | null; name: string }
+
+/** 부서 드릴다운 쿼리 캐시 키. 부서명이 아니라 ID 기준으로 구분한다. */
+function deptFilterKey(selection: DepartmentSelection | null): string {
+  if (selection == null) return ''
+  return selection.id == null ? 'none' : `d${selection.id}`
+}
+
+/** 부서 드릴다운 API 파라미터. 미지정 부서는 별도 플래그로 전달한다. */
+function deptFilterQuery(selection: DepartmentSelection | null) {
+  if (selection == null) return {}
+  return selection.id == null
+    ? { unassignedDepartment: true }
+    : { departmentId: selection.id }
+}
+
 function DetailTable({ rows, onExport, selectedDepartment, onSelectDepartment }: {
   rows: ReportDetailRow[]
   onExport: () => void
-  selectedDepartment?: string | null
-  onSelectDepartment?: (department: string | null) => void
+  selectedDepartment?: DepartmentSelection | null
+  onSelectDepartment?: (department: DepartmentSelection | null) => void
 }) {
   return (
     <SectionCard
@@ -336,16 +497,20 @@ function DetailTable({ rows, onExport, selectedDepartment, onSelectDepartment }:
               <tr><td colSpan={4} className="py-6 text-center text-slate-400">데이터 없음</td></tr>
             )}
             {rows.map((r) => {
-              const active = selectedDepartment === r.department
+              const active = selectedDepartment != null
+                && selectedDepartment.id === r.department_id
               return (
-                <tr key={r.department}
+                <tr key={r.department_id ?? 'none'}
                   className={`border-b border-slate-50 ${active ? 'bg-blue-50' : ''}`}>
                   <td className="py-1">
                     {onSelectDepartment ? (
                       <button type="button"
-                        onClick={() => onSelectDepartment(active ? null : r.department)}
+                        onClick={() => onSelectDepartment(
+                          active ? null : { id: r.department_id, name: r.department },
+                        )}
                         className={`w-full rounded px-2 py-1 text-left transition hover:bg-blue-100 ${active ? 'font-semibold text-blue-700' : 'text-slate-700'}`}>
                         {r.department}
+                        {r.company ? <span className="ml-1 text-xs text-slate-400">{r.company}</span> : null}
                       </button>
                     ) : (
                       <span className="px-2 py-1 text-slate-700">{r.department}</span>
@@ -492,10 +657,11 @@ function exportRawEventsCsv(rows: RawViewEvent[], filename: string) {
 }
 
 function exportDetailCsv(rows: ReportDetailRow[], filename: string) {
-  const header = ['부서', '조회수', '고유 사용자', '최근 접속']
+  const header = ['계열사', '부서', '조회수', '고유 사용자', '최근 접속']
   const lines = [header.map(escapeCsvField).join(',')]
   for (const r of rows) {
     lines.push([
+      r.company ?? '',
       r.department,
       r.views,
       r.unique_users,
@@ -540,11 +706,16 @@ function OverviewKpis({ o, periodActive }: { o: StatsOverview; periodActive: boo
   )
 }
 
-// ── 운영자 대시보드 (전역, 3탭) ──────────────────────────────────────────────
-type Tab = 'main' | 'trends' | 'detail'
+// ── 전역 대시보드 (운영자/담당임원, 역할별 분석 탭) ─────────────────────────
+type Tab = 'main' | 'teams' | 'users' | 'reports' | 'lifecycle' | 'insights' | 'detail' | 'trends'
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'main', label: '메인' },
-  { key: 'detail', label: '상세 조회' },
+  { key: 'main', label: '요약' },
+  { key: 'teams', label: '팀별' },
+  { key: 'users', label: '사용자별' },
+  { key: 'reports', label: '레포트별' },
+  { key: 'lifecycle', label: '추가·수정·삭제' },
+  { key: 'insights', label: '활용 인사이트' },
+  { key: 'detail', label: '상세 드릴다운' },
   { key: 'trends', label: '추이' },
 ]
 
@@ -556,7 +727,7 @@ function OperatorStats() {
   const [granularity, setGranularity] = useState<'day' | 'week' | 'month'>('month')
   const [detailReportId, setDetailReportId] = useState<number | null>(null)
   // 상세 조회 탭: 부서/사용자 선택(상호 배타) → 시간대별 차트 드릴다운
-  const [detailDept, setDetailDept] = useState<string | null>(null)
+  const [detailDept, setDetailDept] = useState<DepartmentSelection | null>(null)
   const [detailUser, setDetailUser] = useState<{ id: number; name: string } | null>(null)
 
   const fromParam = fromDate ? startOfDay(parseYmd(fromDate)).toISOString() : undefined
@@ -596,6 +767,36 @@ function OperatorStats() {
     enabled: tab === 'main',
     staleTime: 60_000,
   })
+  const teamsQuery = useQuery({
+    queryKey: ['stats-teams', ...pk],
+    queryFn: ({ signal }) => statsApi.teams(base, signal),
+    enabled: tab === 'teams',
+    staleTime: 60_000,
+  })
+  const usersQuery = useQuery({
+    queryKey: ['stats-users', ...pk],
+    queryFn: ({ signal }) => statsApi.users(base, signal),
+    enabled: tab === 'users',
+    staleTime: 60_000,
+  })
+  const performanceQuery = useQuery({
+    queryKey: ['stats-report-performance', ...pk],
+    queryFn: ({ signal }) => statsApi.reportPerformance(base, signal),
+    enabled: tab === 'reports',
+    staleTime: 60_000,
+  })
+  const lifecycleQuery = useQuery({
+    queryKey: ['stats-lifecycle', ...pk],
+    queryFn: ({ signal }) => statsApi.lifecycle(base, signal),
+    enabled: tab === 'lifecycle',
+    staleTime: 60_000,
+  })
+  const insightsQuery = useQuery({
+    queryKey: ['stats-insights', ...pk],
+    queryFn: ({ signal }) => statsApi.insights(base, signal),
+    enabled: tab === 'insights',
+    staleTime: 60_000,
+  })
   const trendsQuery = useQuery({
     queryKey: ['stats-trends', granularity, ...pk],
     queryFn: ({ signal }) => statsApi.trends(granularity, base, signal),
@@ -617,9 +818,9 @@ function OperatorStats() {
     staleTime: 60_000,
   })
   const detailHourlyQuery = useQuery({
-    queryKey: ['stats-detail-hourly', detailDept ?? '', detailUser?.id ?? '', ...pk],
+    queryKey: ['stats-detail-hourly', deptFilterKey(detailDept), detailUser?.id ?? '', ...pk],
     queryFn: ({ signal }) =>
-      statsApi.hourly({ ...base, department: detailDept ?? undefined, userId: detailUser?.id }, signal),
+      statsApi.hourly({ ...base, ...deptFilterQuery(detailDept), userId: detailUser?.id }, signal),
     enabled: tab === 'detail',
     staleTime: 60_000,
   })
@@ -629,7 +830,7 @@ function OperatorStats() {
     onSuccess: (rows) => exportRawEventsCsv(rows, 'report-view-raw-events.csv'),
   })
 
-  function selectDept(d: string | null) {
+  function selectDept(d: DepartmentSelection | null) {
     setDetailDept(d)
     setDetailUser(null)
   }
@@ -650,7 +851,7 @@ function OperatorStats() {
       </div>
 
       {/* 탭 */}
-      <div className="mb-4 flex gap-1 border-b border-slate-200">
+      <div className="mb-4 flex flex-wrap gap-1 border-b border-slate-200">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -670,37 +871,36 @@ function OperatorStats() {
 
       {/* 필터 바: 기간 + 계열사 + 레포트 (작성자 화면과 동일한 스타일, 좌측 정렬).
           계열사를 먼저 골라야 레포트 목록이 그 계열사로 좁혀지므로 계열사를 앞에 둔다. */}
-      <div className="mb-5 flex flex-wrap items-center gap-2.5">
-        <SimplePeriodFilter fromDate={fromDate} toDate={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
-        <FilterCard icon={Building2} label="계열사">
-          <select
-            value={companyId ?? ''}
-            onChange={(e) => {
-              setCompanyId(e.target.value ? Number(e.target.value) : null)
-              setDetailReportId(null)
-            }}
-            aria-label="계열사 필터"
-            className="min-w-[140px] rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-800"
-          >
-            <option value="">전체</option>
-            {companies.map((c) => (
-              <option key={String(c.company_id)} value={c.company_id ?? ''}>{c.label}</option>
-            ))}
-          </select>
-        </FilterCard>
-        <FilterCard icon={FileBarChart} label="레포트">
-          <select
-            value={detailReportId ?? ''}
-            onChange={(e) => setDetailReportId(e.target.value ? Number(e.target.value) : null)}
-            aria-label="레포트 선택"
-            className="min-w-[200px] rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-800"
-          >
-            <option value="">전체 레포트</option>
-            {reports.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
-        </FilterCard>
+      <div className="mb-5 space-y-1.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <SimplePeriodFilter fromDate={fromDate} toDate={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
+          <FilterCard icon={Building2} label="계열사">
+            <select
+              value={companyId ?? ''}
+              onChange={(e) => {
+                setCompanyId(e.target.value ? Number(e.target.value) : null)
+                setDetailReportId(null)
+              }}
+              aria-label="계열사 필터"
+              className="min-w-[140px] rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-800"
+            >
+              <option value="">전체</option>
+              {companies.map((c) => (
+                <option key={String(c.company_id)} value={c.company_id ?? ''}>{c.label}</option>
+              ))}
+            </select>
+          </FilterCard>
+          <FilterCard icon={FileBarChart} label="레포트">
+            <ReportSearchSelect
+              reports={reports}
+              value={detailReportId}
+              onChange={setDetailReportId}
+              placeholder="전체 레포트"
+              ariaLabel="레포트 선택"
+            />
+          </FilterCard>
+        </div>
+        <PeriodComparisonNote />
       </div>
 
       {/* ── 메인 탭 ── */}
@@ -725,6 +925,35 @@ function OperatorStats() {
             </SectionCard>
           </div>
         </div>
+      )}
+
+      {tab === 'teams' && (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-400">활성/대상과 활용률은 현재 활성 등록 사용자 기준이며, 조회·다운로드·로그인은 선택 기간 기준입니다.</p>
+          <TeamActivityTable rows={teamsQuery.data ?? []} loading={teamsQuery.isLoading} />
+        </div>
+      )}
+
+      {tab === 'users' && (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-400">사용자별 레포트 조회·유효 조회·가시 체류시간·다운로드 요청·로그인 활동입니다.</p>
+          <UserActivityTable rows={usersQuery.data ?? []} loading={usersQuery.isLoading} />
+        </div>
+      )}
+
+      {tab === 'reports' && (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-400">도달률은 현재 활성 등록 사용자, 직전기간 비교는 선택 기간 바로 앞의 동일 길이 기간 기준입니다.</p>
+          <ReportPerformanceTable rows={performanceQuery.data ?? []} loading={performanceQuery.isLoading} />
+        </div>
+      )}
+
+      {tab === 'lifecycle' && (
+        <LifecyclePanel data={lifecycleQuery.data} loading={lifecycleQuery.isLoading} />
+      )}
+
+      {tab === 'insights' && (
+        <InsightsPanel data={insightsQuery.data} loading={insightsQuery.isLoading} />
       )}
 
       {/* ── 추이 탭 ── */}
@@ -796,7 +1025,7 @@ function OperatorStats() {
               <SectionCard
                 title={
                   detailDept
-                    ? `시간대별 조회 · 사용자 — ${detailDept}`
+                    ? `시간대별 조회 · 사용자 — ${detailDept.name}`
                     : detailUser
                       ? `시간대별 조회 · 사용자 — ${detailUser.name}`
                       : '시간대별 조회 · 사용자 (전체)'
@@ -876,7 +1105,7 @@ function ScopedUserStats() {
   const [fromDate, setFromDate] = useState(() => format(subDays(new Date(), 7), 'yyyy-MM-dd'))
   const [toDate, setToDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   // 부서/사용자 선택(상호 배타) → 시간대별 차트 드릴다운
-  const [detailDept, setDetailDept] = useState<string | null>(null)
+  const [detailDept, setDetailDept] = useState<DepartmentSelection | null>(null)
   const [detailUser, setDetailUser] = useState<{ id: number; name: string } | null>(null)
 
   const reportsQuery = useQuery({
@@ -910,6 +1139,18 @@ function ScopedUserStats() {
     enabled: canQuery,
     staleTime: 60_000,
   })
+  const performanceQuery = useQuery({
+    queryKey: ['stats-report-performance', ...pk],
+    queryFn: ({ signal }) => statsApi.reportPerformance(base, signal),
+    enabled: canQuery,
+    staleTime: 60_000,
+  })
+  const insightsQuery = useQuery({
+    queryKey: ['stats-insights', ...pk],
+    queryFn: ({ signal }) => statsApi.insights(base, signal),
+    enabled: canQuery,
+    staleTime: 60_000,
+  })
   const hourlyQuery = useQuery({
     queryKey: ['stats-hourly-main', ...pk],
     queryFn: ({ signal }) => statsApi.hourly(base, signal),
@@ -929,9 +1170,9 @@ function ScopedUserStats() {
     staleTime: 60_000,
   })
   const drilldownHourlyQuery = useQuery({
-    queryKey: ['stats-detail-hourly', detailDept ?? '', detailUser?.id ?? '', ...pk],
+    queryKey: ['stats-detail-hourly', deptFilterKey(detailDept), detailUser?.id ?? '', ...pk],
     queryFn: ({ signal }) =>
-      statsApi.hourly({ ...base, department: detailDept ?? undefined, userId: detailUser?.id }, signal),
+      statsApi.hourly({ ...base, ...deptFilterQuery(detailDept), userId: detailUser?.id }, signal),
     enabled: canQuery && (!!detailDept || !!detailUser),
     staleTime: 60_000,
   })
@@ -941,7 +1182,7 @@ function ScopedUserStats() {
     onSuccess: (rows) => exportRawEventsCsv(rows, 'report-view-raw-events.csv'),
   })
 
-  function selectDept(d: string | null) {
+  function selectDept(d: DepartmentSelection | null) {
     setDetailDept(d)
     setDetailUser(null)
   }
@@ -965,7 +1206,7 @@ function ScopedUserStats() {
   const drilldownActive = !!detailDept || !!detailUser
   const centerHourlyData = drilldownActive ? (drilldownHourlyQuery.data ?? []) : (hourlyQuery.data ?? [])
   const centerHourlyTitle = detailDept
-    ? `시간대별 조회 · 사용자 — ${detailDept}`
+    ? `시간대별 조회 · 사용자 — ${detailDept.name}`
     : detailUser
       ? `시간대별 조회 · 사용자 — ${detailUser.name}`
       : '시간대별 조회 · 사용자 (0~23시)'
@@ -983,21 +1224,20 @@ function ScopedUserStats() {
       ) : (
         <div className="space-y-5">
           {/* 기간 필터 + 레포트 선택: 기본값 전체, 선택 시 그 레포트로 드릴다운. 별도 카드지만 좌측에 붙여 배치 */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            <SimplePeriodFilter fromDate={fromDate} toDate={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
-            <FilterCard icon={FileBarChart} label="레포트">
-              <select
-                value={selectedId ?? ''}
-                onChange={(e) => selectTopReport(e.target.value ? Number(e.target.value) : null)}
-                aria-label="통계 레포트 선택"
-                className="min-w-[200px] rounded-md border border-slate-300 px-2 py-1 text-sm font-medium text-slate-800"
-              >
-                <option value="">전체 레포트 ({statReports.length}개)</option>
-                {statReports.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-            </FilterCard>
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <SimplePeriodFilter fromDate={fromDate} toDate={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
+              <FilterCard icon={FileBarChart} label="레포트">
+                <ReportSearchSelect
+                  reports={statReports}
+                  value={selectedId}
+                  onChange={selectTopReport}
+                  placeholder={`전체 레포트 (${statReports.length}개)`}
+                  ariaLabel="통계 레포트 선택"
+                />
+              </FilterCard>
+            </div>
+            <PeriodComparisonNote />
           </div>
 
           {selectedReportName && (
@@ -1010,6 +1250,19 @@ function ScopedUserStats() {
           )}
 
           {o && <AuthorKpis o={o} h={h} />}
+
+          <div className="space-y-3">
+            <h2 className="text-sm font-bold text-slate-700">활용 인사이트</h2>
+            <InsightsPanel data={insightsQuery.data} loading={insightsQuery.isLoading} />
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <h2 className="text-sm font-bold text-slate-700">내 레포트별 성과</h2>
+              <p className="mt-1 text-xs text-slate-400">조회자·유효 체류·재방문·다운로드와 직전 동일 기간 비교입니다.</p>
+            </div>
+            <ReportPerformanceTable rows={performanceQuery.data ?? []} loading={performanceQuery.isLoading} />
+          </div>
 
           {/* 좌: 시간대별(넓게) / 우: TOP5(중복 미제거 조회수) */}
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -1071,6 +1324,8 @@ function ScopedUserStats() {
 
 export default function StatsDashboardPage() {
   const user = useAuthStore((s) => s.user)
-  const isOperator = (user?.roles ?? []).includes('System_Operator')
-  return isOperator ? <OperatorStats /> : <ScopedUserStats />
+  const roles = user?.roles ?? []
+  const hasGlobalStats = roles.includes('System_Operator')
+    || roles.includes('Executive_Stats_Reader')
+  return hasGlobalStats ? <OperatorStats /> : <ScopedUserStats />
 }

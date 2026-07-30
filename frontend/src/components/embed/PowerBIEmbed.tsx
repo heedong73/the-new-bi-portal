@@ -16,9 +16,11 @@ interface Props {
   embed: EmbedInfo
   /** 임베드된 Report 인스턴스 콜백 (보기 옵션 제어용). */
   onReport?: (report: Report | null) => void
+  /** Power BI가 실제 화면을 처음 렌더링한 뒤 조회 세션을 시작하기 위한 콜백. */
+  onRendered?: () => void
 }
 
-export default function PowerBIEmbed({ embed, onReport }: Props) {
+export default function PowerBIEmbed({ embed, onReport, onRendered }: Props) {
   return (
     <ReactPowerBIEmbed
       embedConfig={{
@@ -39,6 +41,9 @@ export default function PowerBIEmbed({ embed, onReport }: Props) {
           background: models.BackgroundType.Default,
         },
       }}
+      eventHandlers={new Map([
+        ['rendered', () => onRendered?.()],
+      ])}
       cssClassName="h-full w-full"
       getEmbeddedComponent={(embedObject) => {
         onReport?.(embedObject as Report)

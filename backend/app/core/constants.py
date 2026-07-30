@@ -4,6 +4,8 @@ from enum import StrEnum
 class RoleCode(StrEnum):
     GENERAL_USER = "General_User"
     SYSTEM_OPERATOR = "System_Operator"
+    # 전역 통계만 읽는 담당임원 역할. 관리자 메뉴·변경 권한은 부여하지 않는다.
+    EXECUTIVE_STATS_READER = "Executive_Stats_Reader"
 
 
 class MenuKey(StrEnum):
@@ -64,6 +66,7 @@ GRANTABLE_MENU_CATALOG: list[tuple[str, str]] = [
 ROLE_MENUS: dict[str, list[str]] = {
     RoleCode.GENERAL_USER: [MenuKey.HOME],
     RoleCode.SYSTEM_OPERATOR: list(ALL_MENU_KEYS),
+    RoleCode.EXECUTIVE_STATS_READER: [MenuKey.HOME, MenuKey.STATS],
 }
 
 
@@ -123,6 +126,7 @@ class AuditAction(StrEnum):
     REPORT_DELETE = "report_delete"
     REPORT_VISIBILITY_CHANGE = "report_visibility_change"
     EXPORT_RUN = "export_run"
+    EXPORT_DOWNLOAD = "export_download"  # 파일 open 성공 후 기록한 다운로드 요청
     MAIL_SEND = "mail_send"
     MAIL_SCHEDULE_CREATE = "mail_schedule_create"
     MAIL_SCHEDULE_UPDATE = "mail_schedule_update"

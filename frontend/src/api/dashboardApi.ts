@@ -3,15 +3,21 @@ import apiClient from '@/api/client'
 import type {
   CompanyItem,
   HourlyPoint,
+  LifecycleResponse,
   MonitoringStatus,
   RawViewEvent,
   ReportDetailRow,
   ReportDetailUserRow,
+  ReportPerformanceRow,
+  StatsCapabilities,
   StatsHighlights,
+  StatsInsights,
   StatsOverview,
   StatsReport,
   StatsUsage,
+  TeamActivityRow,
   TrendsResponse,
+  UserActivityRow,
 } from '@/types/dashboard'
 
 /** 통계 공통 질의 파라미터. reportId/companyId는 상호 배타(둘 중 하나). from/to는 ISO. */
@@ -30,9 +36,12 @@ const q = (query: StatsQuery, extra: Record<string, unknown> = {}) => ({
   ...extra,
 })
 
-/** 시간대별 조회(hourly) 드릴다운 필터. department/user_id는 상세 탭 선택 시 지정. */
+/** 시간대별 조회(hourly) 드릴다운 필터. 상세 탭에서 부서/사용자 선택 시 지정.
+ * 부서는 표시 이름이 아니라 부서 ID로 필터링한다(부서명이 코드→한글명으로 바뀐
+ * 이력이 있어도 같은 범위로 묶기 위함). 부서 미지정 사용자는 unassignedDepartment. */
 export interface HourlyQuery extends StatsQuery {
-  department?: string
+  departmentId?: number
+  unassignedDepartment?: boolean
   userId?: number
 }
 
@@ -58,10 +67,15 @@ export const statsApi = {
   /** GET /api/stats/report-detail-users — 레포트별(또는 계열사별) 사용자 조회 상세. */
   reportDetailUsers: (query: StatsQuery = {}, signal?: AbortSignal) =>
     apiClient.get<ReportDetailUserRow[]>('/api/stats/report-detail-users', { query: q(query), signal }),
-  /** GET /api/stats/hourly — 시간대별(0~23시) 조회/사용자. department/userId로 드릴다운. */
+  /** GET /api/stats/hourly — 시간대별(0~23시) 조회/사용자. 부서 ID/사용자로 드릴다운. */
   hourly: (query: HourlyQuery = {}, signal?: AbortSignal) =>
     apiClient.get<HourlyPoint[]>('/api/stats/hourly', {
-      query: { ...q(query), department: query.department, user_id: query.userId },
+      query: {
+        ...q(query),
+        department_id: query.departmentId,
+        unassigned_department: query.unassignedDepartment ? true : undefined,
+        user_id: query.userId,
+      },
       signal,
     }),
   /** GET /api/stats/highlights — 기간 필터와 무관한 상시 지표(오늘/어제 접속 등). */
@@ -70,6 +84,26 @@ export const statsApi = {
   /** GET /api/stats/raw-events — 레포트 조회 로우 이벤트(엑셀/CSV 다운로드용). */
   rawEvents: (query: StatsQuery = {}, signal?: AbortSignal) =>
     apiClient.get<RawViewEvent[]>('/api/stats/raw-events', { query: q(query), signal }),
+  /** 현재 사용자의 통계 범위/역할 capability. */
+  capabilities: (signal?: AbortSignal) =>
+    apiClient.get<StatsCapabilities>('/api/stats/capabilities', { signal }),
+  /** 팀별 조회·다운로드·로그인·유효 참여. */
+  teams: (query: StatsQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<TeamActivityRow[]>('/api/stats/teams', { query: q(query), signal }),
+  /** 사용자별 조회·다운로드·로그인·체류. */
+  users: (query: StatsQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<UserActivityRow[]>('/api/stats/users', { query: q(query), signal }),
+  /** 레포트별 성과·재방문·도달·직전기간 비교. */
+  reportPerformance: (query: StatsQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<ReportPerformanceRow[]>('/api/stats/report-performance', {
+      query: q(query), signal,
+    }),
+  /** 감사 원장 기준 레포트 생성·수정·삭제. */
+  lifecycle: (query: StatsQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<LifecycleResponse>('/api/stats/lifecycle', { query: q(query), signal }),
+  /** 참여도·활용률·미사용/급감 인사이트. */
+  insights: (query: StatsQuery = {}, signal?: AbortSignal) =>
+    apiClient.get<StatsInsights>('/api/stats/insights', { query: q(query), signal }),
 }
 
 export const monitoringApi = {

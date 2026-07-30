@@ -14,15 +14,32 @@ class AuditLog(Base):
         Index("idx_audit_action", "action"),
         Index("idx_audit_action_occurred", "action", "occurred_at_utc"),
         Index("idx_audit_resource", "resource_type", "resource_id"),
+        Index("idx_audit_actor_department_action", "actor_department_id", "action"),
+        Index("idx_audit_report_company_action", "report_company_id", "action"),
+        Index("idx_audit_report_owner_action", "report_owner_user_id", "action"),
+        Index("uq_audit_event_key", "event_key", unique=True),
         {"schema": SCHEMA},
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     actor_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     actor_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 분석 시점의 현재 조직으로 과거가 재귀속되지 않도록 이벤트 당시 값을 보존한다.
+    actor_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor_emp_no_snapshot: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    actor_department_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    actor_department_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     resource_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 클라이언트 조회 세션 UUID 등 멱등 이벤트 키. NULL은 기존 일반 감사 이벤트다.
+    event_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 레포트 이름·소속·작성자도 이벤트 당시 스냅샷으로 보존한다.
+    report_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    report_company_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    report_company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    report_owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    report_owner_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     result: Mapped[str] = mapped_column(String(16), nullable=False)
     occurred_at_utc: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

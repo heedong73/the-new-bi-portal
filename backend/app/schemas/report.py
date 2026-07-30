@@ -2,8 +2,27 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+
+class ReportViewSessionCreate(BaseModel):
+    """Power BI 첫 렌더 완료 시 생성하는 멱등 조회 세션."""
+    session_id: UUID
+
+
+class ReportViewSessionResponse(BaseModel):
+    """조회 세션 감사 로그 식별자와 신규 생성 여부."""
+    view_log_id: int
+    created: bool
+
+
+class ReportViewDurationUpdate(BaseModel):
+    """조회 세션의 누적 가시 체류 시간(절대값, 초)."""
+    audit_log_id: int = Field(gt=0)
+    duration_seconds: int = Field(ge=0, le=86_400)
+
 
 class ReportUpdate(BaseModel):
     """레포트 메타데이터 수정 요청 (부분)."""

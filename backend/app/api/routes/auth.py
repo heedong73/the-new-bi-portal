@@ -17,7 +17,7 @@ from app.schemas.auth import LoginRequest, LocalLoginRequest, LoginResponse, Use
 from app.services.auth import (
     hr_authenticator, local_admin, local_user_auth, session_service, user_mapper,
 )
-from app.services.audit_service import append_audit
+from app.services.audit_service import append_audit, build_audit_snapshot
 from sqlalchemy import select
 from app.models.auth import Department, LocalAdmin, Role, User, UserRole
 
@@ -111,9 +111,13 @@ async def _issue_user_session(
             "last_login_at": previous_login_at.isoformat() if previous_login_at else None,
         },
     )
-    await append_audit(db, action=AuditAction.LOGIN, result="success",
-                       actor_user_id=user.id, actor_label=user.external_id,
-                       meta={"emp_no": user.external_id, "auth": auth_source})
+    snapshot = await build_audit_snapshot(db, actor_user_id=user.id)
+    await append_audit(
+        db, action=AuditAction.LOGIN, result="success",
+        actor_user_id=user.id, actor_label=user.external_id,
+        meta={"emp_no": user.external_id, "auth": auth_source},
+        **snapshot,
+    )
     await db.commit()
 
     _set_session_cookie(response, session_id)

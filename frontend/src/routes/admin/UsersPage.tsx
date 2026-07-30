@@ -13,6 +13,7 @@ import { getDefaultExpandedOrgIds, prioritizePrimaryCompany } from './orgTreeDef
 
 const ROLE_LEVELS = [
   { code: 'General_User', label: '일반 사용자' },
+  { code: 'Executive_Stats_Reader', label: '담당임원 (통계 열람)' },
   { code: 'System_Operator', label: '시스템 운영자' },
 ]
 
@@ -415,7 +416,7 @@ function MemberRow({ m, groups, roleValue, roleDirty, onAddGroup, onRemoveGroup,
           disabled={busy}
           aria-label={`${m.emp_no} 역할`}
           onChange={(e) => onSetRole(e.target.value)}
-          className={`w-32 rounded border px-2 py-1 text-xs disabled:opacity-50 ${
+          className={`w-44 rounded border px-2 py-1 text-xs disabled:opacity-50 ${
             roleDirty ? 'border-amber-400 bg-amber-50' : 'border-slate-300'}`}
         >
           {ROLE_LEVELS.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}

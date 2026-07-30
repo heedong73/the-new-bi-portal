@@ -31,10 +31,11 @@ from app.schemas.report import (
     FavoriteFolderMoveRequest, FavoriteFolderNameRequest,
     FavoriteFolderReorderRequest, FavoriteFolderResponse,
     ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse, DefaultViewUpdate,
-    ReportCatalogResponse,
+    ReportCatalogResponse, ReportViewDurationUpdate, ReportViewSessionCreate,
+    ReportViewSessionResponse,
 )
 from app.services.powerbi.client import ReportPageDTO
-from app.services.audit_service import append_audit
+from app.services.audit_service import append_audit, build_audit_snapshot
 from app.services import permission_service, report_discovery_service
 from app.services.refresh_query import get_schedule_info
 
@@ -52,6 +53,44 @@ def _creator_label(op: dict) -> str | None:
     if name and emp:
         return f"{name}({emp})"
     return name or emp
+
+
+def _audit_actor_user_id(current: dict) -> int | None:
+    """로컬 관리자는 users와 PK 공간이 다르므로 감사 actor FK처럼 취급하지 않는다."""
+    return None if current.get("is_local_admin") else current.get("user_id")
+
+
+async def _append_report_audit(
+    db: SessionDep,
+    *,
+    action: str,
+    result: str,
+    current: dict,
+    report: Report,
+    event_key: str | None = None,
+    duration_seconds: int | None = None,
+    meta: dict | None = None,
+) -> int:
+    """레포트 이벤트를 사용자·조직·레포트 스냅샷과 함께 기록한다."""
+    actor_user_id = _audit_actor_user_id(current)
+    snapshot = await build_audit_snapshot(
+        db,
+        actor_user_id=actor_user_id,
+        report=report,
+    )
+    return await append_audit(
+        db,
+        action=action,
+        result=result,
+        actor_user_id=actor_user_id,
+        actor_label=current.get("emp_no"),
+        resource_type="report",
+        resource_id=str(report.id),
+        event_key=event_key,
+        duration_seconds=duration_seconds,
+        meta=meta,
+        **snapshot,
+    )
 
 
 def _to_response(
@@ -509,15 +548,15 @@ async def remove_favorite(report_id: int, db: SessionDep, current=Depends(get_cu
     await db.commit()
 
 
-@router.post("/{report_id}/view", status_code=204)
-async def record_report_view(
+async def _record_report_view_session(
     report_id: int,
+    session_id: uuid.UUID,
     db: SessionDep,
-    current=Depends(get_current_user),
-):
-    """실제 레포트 화면 진입을 최근 조회와 일별 인기 집계에 반영한다."""
-    existing_report_id = await db.scalar(select(Report.id).where(Report.id == report_id))
-    if existing_report_id is None:
+    current: dict,
+) -> tuple[int, bool]:
+    """조회 세션 원장과 최근 조회/일별 집계를 한 트랜잭션으로 멱등 반영한다."""
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
         raise NotFoundError("레포트를 찾을 수 없습니다.")
 
     allowed = await permission_service.has_permission(
@@ -529,34 +568,97 @@ async def record_report_view(
     )
     if not allowed:
         raise PermissionDeniedError()
-    if current.get("is_local_admin"):
-        return
 
-    activity_insert = pg_insert(UserReportActivity).values(
-        user_id=current["user_id"],
-        report_id=report_id,
-        first_viewed_at=func.now(),
-        last_viewed_at=func.now(),
-        view_count=1,
-    )
-    await db.execute(activity_insert.on_conflict_do_update(
-        index_elements=["user_id", "report_id"],
-        set_={
-            "last_viewed_at": func.now(),
-            "view_count": UserReportActivity.view_count + 1,
-        },
-    ))
+    event_key = f"report-view:{session_id}"
+    actor_user_id = _audit_actor_user_id(current)
 
-    daily_insert = pg_insert(ReportViewDailyStat).values(
-        report_id=report_id,
-        viewed_date=func.current_date(),
-        view_count=1,
+    def _belongs_to_current(log: AuditLog) -> bool:
+        if log.action != AuditAction.REPORT_VIEW or log.resource_id != str(report_id):
+            return False
+        if current.get("is_local_admin"):
+            return log.actor_user_id is None and log.actor_label == current.get("emp_no")
+        return log.actor_user_id == actor_user_id
+
+    existing = await db.scalar(select(AuditLog).where(AuditLog.event_key == event_key))
+    if existing is not None:
+        if not _belongs_to_current(existing):
+            raise ConflictError("이미 다른 조회에 사용된 세션 식별자입니다.")
+        return existing.id, False
+
+    try:
+        audit_log_id = await _append_report_audit(
+            db,
+            action=AuditAction.REPORT_VIEW,
+            result="success",
+            current=current,
+            report=report,
+            event_key=event_key,
+            duration_seconds=0,
+            meta={"session_id": str(session_id)},
+        )
+
+        # 로컬 관리자는 users FK 대상이 아니므로 사용자별 최근 조회 테이블에서는 제외한다.
+        if actor_user_id is not None:
+            activity_insert = pg_insert(UserReportActivity).values(
+                user_id=actor_user_id,
+                report_id=report_id,
+                first_viewed_at=func.now(),
+                last_viewed_at=func.now(),
+                view_count=1,
+            )
+            await db.execute(activity_insert.on_conflict_do_update(
+                index_elements=["user_id", "report_id"],
+                set_={
+                    "last_viewed_at": func.now(),
+                    "view_count": UserReportActivity.view_count + 1,
+                },
+            ))
+
+        daily_insert = pg_insert(ReportViewDailyStat).values(
+            report_id=report_id,
+            viewed_date=func.current_date(),
+            view_count=1,
+        )
+        await db.execute(daily_insert.on_conflict_do_update(
+            index_elements=["report_id", "viewed_date"],
+            set_={"view_count": ReportViewDailyStat.view_count + 1},
+        ))
+        await db.commit()
+        return audit_log_id, True
+    except IntegrityError:
+        # 같은 client UUID가 동시에 재시도된 경우 unique(event_key)가 승자를 정한다.
+        await db.rollback()
+        existing = await db.scalar(select(AuditLog).where(AuditLog.event_key == event_key))
+        if existing is not None and _belongs_to_current(existing):
+            return existing.id, False
+        raise ConflictError("이미 다른 조회에 사용된 세션 식별자입니다.")
+
+
+@router.post(
+    "/{report_id}/view-session",
+    response_model=ReportViewSessionResponse,
+)
+async def create_report_view_session(
+    report_id: int,
+    body: ReportViewSessionCreate,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """Power BI 첫 rendered 이벤트를 실제 조회 세션으로 멱등 기록한다."""
+    view_log_id, created = await _record_report_view_session(
+        report_id, body.session_id, db, current,
     )
-    await db.execute(daily_insert.on_conflict_do_update(
-        index_elements=["report_id", "viewed_date"],
-        set_={"view_count": ReportViewDailyStat.view_count + 1},
-    ))
-    await db.commit()
+    return ReportViewSessionResponse(view_log_id=view_log_id, created=created)
+
+
+@router.post("/{report_id}/view", status_code=204)
+async def record_report_view(
+    report_id: int,
+    db: SessionDep,
+    current=Depends(get_current_user),
+):
+    """구버전 클라이언트 호환용 조회 기록. 신규 클라이언트는 view-session을 사용한다."""
+    await _record_report_view_session(report_id, uuid.uuid4(), db, current)
 
 
 @router.get("/all", response_model=list[ReportResponse])
@@ -591,8 +693,10 @@ async def import_pbix(
         file_path=path, workspace_id=ws,
         report_name=report_name, folder_id=folder_id,
         description=description, author_label=author_label,
-        created_by_user_id=op.get("user_id"),
+        created_by_user_id=(None if op.get("is_local_admin") else op.get("user_id")),
         created_by_label=_creator_label(op),
+        requested_by_user_id=(None if op.get("is_local_admin") else op.get("user_id")),
+        requested_by_label=op.get("emp_no"),
     )
     return {"task_id": task.id, "status": "enqueued", "report_name": report_name}
 
@@ -644,10 +748,10 @@ async def update_report(report_id: int, body: ReportUpdate, db: SessionDep, op=D
     if body.sort_order is not None:
         report.sort_order = body.sort_order
     await db.flush()
-    await append_audit(db, action=AuditAction.REPORT_UPDATE, result="success",
-                       actor_user_id=op["user_id"], actor_label=op["emp_no"],
-                       resource_type="report", resource_id=str(report_id),
-                       meta={"report_id": report_id})
+    await _append_report_audit(
+        db, action=AuditAction.REPORT_UPDATE, result="success", current=op,
+        report=report, meta={"report_id": report_id},
+    )
     await db.commit()
     # onupdate(func.now()) 컬럼(updated_at)은 커밋 후 만료되므로, async 세션에서
     # _to_response가 동기 lazy-load(→ MissingGreenlet 500)를 하지 않도록 명시적으로 재로딩한다.
@@ -663,10 +767,11 @@ async def change_visibility(report_id: int, body: VisibilityUpdate, db: SessionD
         report.published_at = func.now()
     report.is_published = body.is_published
     await db.flush()
-    await append_audit(db, action=AuditAction.REPORT_VISIBILITY_CHANGE, result="success",
-                       actor_user_id=op["user_id"], actor_label=op["emp_no"],
-                       resource_type="report", resource_id=str(report_id),
-                       meta={"report_id": report_id, "after": "public" if body.is_published else "private"})
+    await _append_report_audit(
+        db, action=AuditAction.REPORT_VISIBILITY_CHANGE, result="success", current=op,
+        report=report,
+        meta={"report_id": report_id, "after": "public" if body.is_published else "private"},
+    )
     await db.commit()
     # onupdate(func.now()) 컬럼(updated_at)은 커밋 후 만료되므로, async 세션에서
     # _to_response가 동기 lazy-load(→ MissingGreenlet 500)를 하지 않도록 명시적으로 재로딩한다.
@@ -680,10 +785,10 @@ async def move_folder(report_id: int, body: FolderMoveRequest, db: SessionDep, o
         raise NotFoundError("레포트를 찾을 수 없습니다.")
     report.folder_id = body.folder_id
     await db.flush()
-    await append_audit(db, action=AuditAction.REPORT_UPDATE, result="success",
-                       actor_user_id=op["user_id"], actor_label=op["emp_no"],
-                       resource_type="report", resource_id=str(report_id),
-                       meta={"report_id": report_id, "folder_id": body.folder_id})
+    await _append_report_audit(
+        db, action=AuditAction.REPORT_UPDATE, result="success", current=op,
+        report=report, meta={"report_id": report_id, "folder_id": body.folder_id},
+    )
     await db.commit()
     # onupdate(func.now()) 컬럼(updated_at)은 커밋 후 만료되므로, async 세션에서
     # _to_response가 동기 lazy-load(→ MissingGreenlet 500)를 하지 않도록 명시적으로 재로딩한다.
@@ -715,6 +820,9 @@ async def upload_pbix(
     # 확장자 검증
     if not file.filename or not file.filename.lower().endswith(".pbix"):
         raise BIPValidationError("PBIX 파일(.pbix)만 업로드할 수 있습니다.")
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise NotFoundError("레포트를 찾을 수 없습니다.")
 
     # 크기 검증하며 임시 저장
     fd, tmp_path = tempfile.mkstemp(suffix=".pbix")
@@ -734,11 +842,14 @@ async def upload_pbix(
     task = pbix_import.delay(
         file_path=tmp_path, workspace_id=workspace_id,
         report_name=file.filename, folder_id=folder_id,
+        requested_by_user_id=(None if op.get("is_local_admin") else op.get("user_id")),
+        requested_by_label=op.get("emp_no"),
     )
-    await append_audit(db, action=AuditAction.REPORT_CREATE, result="success",
-                       actor_user_id=op["user_id"], actor_label=op["emp_no"],
-                       resource_type="report", resource_id=str(report_id),
-                       meta={"target": "pbix_upload", "workspace_id": workspace_id})
+    await _append_report_audit(
+        db, action=AuditAction.REPORT_UPDATE, result="accepted", current=op,
+        report=report,
+        meta={"target": "pbix_upload", "workspace_id": workspace_id},
+    )
     await db.commit()
     return {"importId": task.id, "status": "enqueued"}
 
@@ -776,9 +887,10 @@ async def get_embed(
         db, current["user_id"], report_id, PermissionAction.VIEW, roles=current.get("roles")
     )
     if not allowed:
-        await append_audit(db, action=AuditAction.PERMISSION_DENIED, result="failure",
-                           actor_user_id=current["user_id"], actor_label=current["emp_no"],
-                           resource_type="report", resource_id=str(report_id))
+        await _append_report_audit(
+            db, action=AuditAction.PERMISSION_DENIED, result="failure", current=current,
+            report=report,
+        )
         await db.commit()
         raise PermissionDeniedError()
 
@@ -786,48 +898,51 @@ async def get_embed(
         token_service, report.workspace_id, report.report_id, report.dataset_id
     )
 
-    audit_log_id = await append_audit(
-        db, action=AuditAction.REPORT_VIEW, result="success",
-        actor_user_id=current["user_id"], actor_label=current["emp_no"],
-        resource_type="report", resource_id=str(report_id),
-    )
-    await db.commit()
-
+    # Embed Token 발급은 실제 화면 렌더를 보장하지 않는다. 조회 원장은 프런트의 첫
+    # Power BI `rendered` 이벤트가 view-session을 호출할 때만 생성한다.
     return {
         "reportId": info.report_id,
         "embedUrl": info.embed_url,
         "embedToken": info.embed_token,
         "expiry": info.expiry,
         "defaultViewState": report.default_view_state,
-        # 프런트가 탭 이탈/전환 시 이 조회 세션의 체류 시간을 갱신할 때 사용.
-        "viewLogId": audit_log_id,
     }
 
 @router.post("/{report_id}/view-duration", status_code=204)
 async def report_view_duration(
     report_id: int,
-    body: dict,
+    body: ReportViewDurationUpdate,
     db: SessionDep,
     current=Depends(get_current_user),
 ):
-    """조회 세션(embed 발급 시 남긴 report_view 로그)의 체류 시간을 갱신한다.
+    """조회 세션의 누적 가시 체류시간을 단조 증가 방식으로 갱신한다.
 
-    프런트가 탭 이탈/전환(visibilitychange, pagehide) 시점에 `navigator.sendBeacon`
-    또는 fetch로 호출한다. 새 로그를 만들지 않고 embed 발급 시점 로그의
-    duration_seconds만 갱신한다(근사치 — 브라우저 강제 종료/네트워크 단절 시 마지막
-    값이 못 반영될 수 있음). 본인이 남긴 로그만 갱신 가능(actor_user_id 일치 검증).
+    클라이언트는 구간 delta가 아니라 세션 시작 이후 누적 절대값을 보낸다. 요청 순서가
+    뒤바뀌거나 재시도되어도 DB의 기존 값과 받은 값 중 큰 값을 유지해 중복/역전으로
+    체류시간이 줄어들지 않는다.
     """
-    audit_log_id = body.get("audit_log_id")
-    duration_seconds = body.get("duration_seconds")
-    if not isinstance(audit_log_id, int) or not isinstance(duration_seconds, (int, float)):
-        raise ValidationError("audit_log_id/duration_seconds가 필요합니다.")
+    conditions = [
+        AuditLog.id == body.audit_log_id,
+        AuditLog.action == AuditAction.REPORT_VIEW,
+        AuditLog.resource_type == "report",
+        AuditLog.resource_id == str(report_id),
+    ]
+    if current.get("is_local_admin"):
+        conditions.extend([
+            AuditLog.actor_user_id.is_(None),
+            AuditLog.actor_label == current.get("emp_no"),
+        ])
+    else:
+        conditions.append(AuditLog.actor_user_id == current["user_id"])
 
-    log = await db.scalar(select(AuditLog).where(AuditLog.id == audit_log_id))
-    if log is None or log.actor_user_id != current["user_id"] or log.resource_id != str(report_id):
-        # 존재하지 않거나 본인 로그가 아니면 조용히 무시(악의적 위조 방지, 굳이 오류 노출 불필요)
-        return
-    # 음수/비정상적으로 큰 값(예: 하루 이상 방치) 방어. 하루=86400초.
-    log.duration_seconds = max(0, min(int(duration_seconds), 86400))
+    await db.execute(
+        update(AuditLog)
+        .where(*conditions)
+        .values(duration_seconds=func.greatest(
+            func.coalesce(AuditLog.duration_seconds, 0),
+            body.duration_seconds,
+        ))
+    )
     await db.commit()
 
 
@@ -892,10 +1007,9 @@ async def start_export(
         db, current["user_id"], report_id, required_action, roles=current.get("roles")
     )
     if not allowed:
-        await append_audit(
-            db, action=AuditAction.PERMISSION_DENIED, result="failure",
-            actor_user_id=current["user_id"], actor_label=current["emp_no"],
-            resource_type="report", resource_id=str(report_id),
+        await _append_report_audit(
+            db, action=AuditAction.PERMISSION_DENIED, result="failure", current=current,
+            report=report,
         )
         await db.commit()
         raise PermissionDeniedError()
@@ -920,10 +1034,9 @@ async def start_export(
     db.add(job)
     await db.flush()
 
-    await append_audit(
-        db, action=AuditAction.EXPORT_RUN, result="success",
-        actor_user_id=current["user_id"], actor_label=current["emp_no"],
-        resource_type="report", resource_id=str(report_id),
+    await _append_report_audit(
+        db, action=AuditAction.EXPORT_RUN, result="success", current=current,
+        report=report,
         meta={
             "export_format": export_format,
             "export_job_id": job.id,
@@ -968,11 +1081,13 @@ async def replace_pbix(
         file_path=path, workspace_id=report.workspace_id,
         report_name=report.report_name or report.display_name,
         folder_id=report.folder_id, name_conflict="CreateOrOverwrite",
+        requested_by_user_id=(None if current.get("is_local_admin") else current.get("user_id")),
+        requested_by_label=current.get("emp_no"),
     )
-    await append_audit(db, action=AuditAction.REPORT_UPDATE, result="success",
-                       actor_user_id=current["user_id"], actor_label=current["emp_no"],
-                       resource_type="report", resource_id=str(report_id),
-                       meta={"target": "replace_pbix", "report_id": report_id})
+    await _append_report_audit(
+        db, action=AuditAction.REPORT_UPDATE, result="accepted", current=current,
+        report=report, meta={"target": "replace_pbix", "report_id": report_id},
+    )
     await db.commit()
     return {"task_id": task.id, "status": "enqueued", "report_id": report_id}
 
@@ -995,10 +1110,10 @@ async def save_default_view(
         raise NotFoundError("레포트를 찾을 수 없습니다.")
     report.default_view_state = body.state or None
     await db.flush()
-    await append_audit(db, action=AuditAction.REPORT_UPDATE, result="success",
-                       actor_user_id=current["user_id"], actor_label=current["emp_no"],
-                       resource_type="report", resource_id=str(report_id),
-                       meta={"target": "default_view", "cleared": not body.state})
+    await _append_report_audit(
+        db, action=AuditAction.REPORT_UPDATE, result="success", current=current,
+        report=report, meta={"target": "default_view", "cleared": not body.state},
+    )
     await db.commit()
 
 
@@ -1019,11 +1134,12 @@ async def delete_report(report_id: int, db: SessionDep, op=Depends(_require_oper
     if sched_count and sched_count > 0:
         raise ConflictError("이 레포트를 사용하는 메일 스케줄이 있어 삭제할 수 없습니다. 먼저 메일 스케줄을 삭제하세요.")
 
+    # 삭제 전 스냅샷을 남겨 카탈로그에서 사라진 뒤에도 lifecycle 통계에 보존한다.
+    await _append_report_audit(
+        db, action=AuditAction.REPORT_DELETE, result="success", current=op,
+        report=report, meta={"report_id": report_id},
+    )
     await db.delete(report)
-    await append_audit(db, action=AuditAction.REPORT_DELETE, result="success",
-                       actor_user_id=op["user_id"], actor_label=op["emp_no"],
-                       resource_type="report", resource_id=str(report_id),
-                       meta={"report_id": report_id})
     await db.commit()
 
 

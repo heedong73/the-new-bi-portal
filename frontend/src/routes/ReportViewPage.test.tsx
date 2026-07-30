@@ -10,13 +10,21 @@ import { useTaskStore } from '@/stores/useTaskStore'
 import type { EmbedInfo, RefreshStatus, ReportSummary } from '@/types/report'
 
 vi.mock('@/api/portalApi', () => ({
-  reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn(), liveRefreshStatus: vi.fn(), replacePbix: vi.fn(), favorites: vi.fn(), listFavoriteFolders: vi.fn(), createFavoriteFolder: vi.fn(), moveFavoriteToFolder: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn(), recordView: vi.fn() },
+  reportsApi: { list: vi.fn(), embed: vi.fn(), refreshStatus: vi.fn(), liveRefreshStatus: vi.fn(), replacePbix: vi.fn(), favorites: vi.fn(), listFavoriteFolders: vi.fn(), createFavoriteFolder: vi.fn(), moveFavoriteToFolder: vi.fn(), addFavorite: vi.fn(), removeFavorite: vi.fn(), createViewSession: vi.fn(), reportViewDuration: vi.fn() },
   datasetsApi: { triggerRefresh: vi.fn(), cancelRefresh: vi.fn() },
 }))
 
-// powerbi-client-react 는 jsdom 에서 실제 임베드가 불가하므로 더미로 대체
+// powerbi-client-react 는 jsdom 에서 실제 임베드가 불가하므로 rendered를 클릭으로 발생시킨다.
 vi.mock('powerbi-client-react', () => ({
-  PowerBIEmbed: () => <div data-testid="pbi-embed" />,
+  PowerBIEmbed: ({ eventHandlers }: { eventHandlers?: Map<string, () => void> }) => (
+    <button
+      type="button"
+      data-testid="pbi-embed"
+      onClick={() => eventHandlers?.get('rendered')?.()}
+    >
+      Power BI
+    </button>
+  ),
 }))
 vi.mock('powerbi-client', () => ({
   models: {
@@ -55,7 +63,10 @@ describe('ReportViewPage', () => {
     useTaskStore.setState({ tasks: [] })
     vi.mocked(reportsApi.list).mockResolvedValue([REPORT])
     vi.mocked(reportsApi.embed).mockResolvedValue(EMBED)
-    vi.mocked(reportsApi.recordView).mockResolvedValue(undefined as never)
+    vi.mocked(reportsApi.createViewSession).mockResolvedValue({
+      view_log_id: 123, created: true,
+    })
+    vi.mocked(reportsApi.reportViewDuration).mockResolvedValue(undefined as never)
     vi.mocked(reportsApi.refreshStatus).mockResolvedValue(STATUS)
     vi.mocked(reportsApi.liveRefreshStatus).mockResolvedValue({
       has_history: true, status: 'Completed', in_progress: false,
@@ -67,12 +78,17 @@ describe('ReportViewPage', () => {
     })
   })
 
-  it('레포트 임베드와 제목, 새로고침 상태를 렌더링한다', async () => {
+  it('실제 rendered 이후 조회 세션과 제목, 새로고침 상태를 기록한다', async () => {
     renderAt()
     expect(await screen.findByText('월간 매출')).toBeInTheDocument()
-    expect(await screen.findByTestId('pbi-embed')).toBeInTheDocument()
+    const embed = await screen.findByTestId('pbi-embed')
     expect(await screen.findByText('성공')).toBeInTheDocument()
-    await waitFor(() => expect(reportsApi.recordView).toHaveBeenCalledWith(10))
+    expect(reportsApi.createViewSession).not.toHaveBeenCalled()
+
+    fireEvent.click(embed)
+    await waitFor(() => expect(reportsApi.createViewSession).toHaveBeenCalledWith(
+      10, expect.stringMatching(/^[0-9a-f-]{36}$/),
+    ))
   })
 
   it('새로고침 버튼 클릭 시 dataset_id로 트리거한다', async () => {
@@ -118,6 +134,6 @@ describe('ReportViewPage', () => {
     )
     renderAt()
     expect(await screen.findByText('이 레포트를 볼 권한이 없습니다.')).toBeInTheDocument()
-    expect(reportsApi.recordView).not.toHaveBeenCalled()
+    expect(reportsApi.createViewSession).not.toHaveBeenCalled()
   })
 })

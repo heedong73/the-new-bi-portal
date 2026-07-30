@@ -7,7 +7,7 @@
  *   레포트의 dataset_id 는 목록(VIEW 필터)에서 조회.
  * 요구사항: R9, R10, R13
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { models, type Report } from 'powerbi-client'
@@ -73,13 +73,48 @@ function fmtDate(iso?: string | null): string | undefined {
     : d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+function createViewSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // 구형 브라우저/테스트 환경 fallback. 형식은 UUID v4를 유지해 백엔드 검증을 통과한다.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16)
+    return (char === 'x' ? value : (value & 0x3) | 0x8).toString(16)
+  })
+}
+
 export default function ReportViewPage() {
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const params = useParams<{ reportId: string }>()
   const reportDbId = Number(params.reportId)
+  return <ReportViewPageContent key={params.reportId ?? ''} reportDbId={reportDbId} />
+}
+
+function ReportViewPageContent({ reportDbId }: { reportDbId: number }) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const validId = Number.isFinite(reportDbId) && reportDbId > 0
-  const recordedReportIdRef = useRef<number | null>(null)
+  const [viewSessionId] = useState(createViewSessionId)
+  const activeViewSessionIdRef = useRef<string | null>(viewSessionId)
+  const requestedViewSessionRef = useRef<string | null>(null)
+
+  useEffect(() => () => {
+    activeViewSessionIdRef.current = null
+  }, [])
+  const [viewSessionState, setViewSessionState] = useState<{
+    sessionId: string
+    viewLogId: number
+  } | null>(null)
+  const viewLogId = viewSessionState?.sessionId === viewSessionId
+    ? viewSessionState.viewLogId
+    : null
+  const [renderedState, setRenderedState] = useState<{
+    sessionId: string
+    renderedAt: number
+  } | null>(null)
+  const renderedAt = renderedState?.sessionId === viewSessionId
+    ? renderedState.renderedAt
+    : null
 
   // 목록에서 해당 레포트 메타(dataset_id, 표시명) 조회 (캐시 재사용)
   const listQuery = useQuery({
@@ -99,18 +134,43 @@ export default function ReportViewPage() {
     staleTime: 5 * 60_000,
   })
 
-  // 토큰 발급까지 성공한 진입만 최근 조회/인기 집계에 반영한다.
-  useEffect(() => {
-    if (!validId || !embedQuery.isSuccess || recordedReportIdRef.current === reportDbId) return
-    recordedReportIdRef.current = reportDbId
-    reportsApi.recordView(reportDbId)
-      .then(() => {
-        queryClient.invalidateQueries({ queryKey: ['report-recent'] })
-        queryClient.invalidateQueries({ queryKey: ['report-favorites'] })
-        queryClient.invalidateQueries({ queryKey: ['report-catalog'] })
-      })
-      .catch(() => { /* 탐색 이력은 best-effort */ })
-  }, [embedQuery.isSuccess, queryClient, reportDbId, validId])
+  // Embed Token 발급이 아니라 Power BI의 실제 rendered 이벤트를 조회 시작점으로 삼는다.
+  // 동일 UUID 재호출은 백엔드에서도 멱등 처리하므로 이벤트 중복/네트워크 재시도에 안전하다.
+  const handleRendered = useCallback(() => {
+    setRenderedState((current) => (
+      current?.sessionId === viewSessionId
+        ? current
+        : { sessionId: viewSessionId, renderedAt: Date.now() }
+    ))
+    if (!validId || requestedViewSessionRef.current === viewSessionId) return
+    requestedViewSessionRef.current = viewSessionId
+
+    const createSession = (attempt: number) => {
+      reportsApi.createViewSession(reportDbId, viewSessionId)
+        .then((session) => {
+          if (
+            activeViewSessionIdRef.current !== viewSessionId
+            || requestedViewSessionRef.current !== viewSessionId
+          ) return
+          setViewSessionState({ sessionId: viewSessionId, viewLogId: session.view_log_id })
+          queryClient.invalidateQueries({ queryKey: ['report-recent'] })
+          queryClient.invalidateQueries({ queryKey: ['report-favorites'] })
+          queryClient.invalidateQueries({ queryKey: ['report-catalog'] })
+        })
+        .catch(() => {
+          if (
+            activeViewSessionIdRef.current !== viewSessionId
+            || requestedViewSessionRef.current !== viewSessionId
+          ) return
+          if (attempt < 2) {
+            window.setTimeout(() => createSession(attempt + 1), (attempt + 1) * 1000)
+          } else {
+            requestedViewSessionRef.current = null
+          }
+        })
+    }
+    createSession(0)
+  }, [queryClient, reportDbId, validId, viewSessionId])
 
   const statusQuery = useQuery({
     queryKey: ['live-refresh', reportDbId],
@@ -120,34 +180,36 @@ export default function ReportViewPage() {
     staleTime: 5_000,
   })
 
-  // 조회 체류 시간(근사치) 추적: embed 발급 시 받은 viewLogId를 기준으로, 이 화면을
-  // "보고 있던" 시간을 누적해 탭 전환/이탈 시점에 서버로 갱신 전송한다.
-  // - visibilitychange(탭 숨김): 지금까지 누적분 전송, 다시 보이면 기준 시각 재설정
-  // - pagehide(새로고침/닫기/뒤로가기 등 페이지 이탈): 최종 전송
-  // - 언마운트(다른 레포트로 라우트 이동): 최종 전송
-  // fetch(keepalive: true)로 보내 페이지가 언로드돼도 요청이 유지되게 한다.
-  const viewLogId = embedQuery.data?.viewLogId ?? null
+  // 조회 체류 시간(근사치): 실제 rendered 후 받은 viewLogId 기준으로 "보이는 시간"만
+  // 누적한다. 매 전송은 구간 delta가 아니라 세션 누적 절대값이며 서버가 max로 병합한다.
   useEffect(() => {
     if (viewLogId == null) return
     const logId = viewLogId
     let visibleSinceMs: number | null = document.visibilityState === 'visible' ? Date.now() : null
     let accumulatedSec = 0
+    let acknowledgedSec = 0
 
-    function flush(finalCall: boolean) {
+    function flush(stopTracking: boolean) {
       if (visibleSinceMs != null) {
         accumulatedSec += (Date.now() - visibleSinceMs) / 1000
-        visibleSinceMs = finalCall ? null : Date.now()
       }
-      if (accumulatedSec < 1) return
-      const toSend = accumulatedSec
-      accumulatedSec = 0
-      reportsApi.reportViewDuration(reportDbId, logId, toSend).catch(() => { /* best-effort */ })
+      visibleSinceMs = !stopTracking && document.visibilityState === 'visible'
+        ? Date.now()
+        : null
+
+      const absoluteSec = Math.min(86_400, Math.floor(accumulatedSec))
+      if (absoluteSec < 1 || absoluteSec <= acknowledgedSec) return
+      reportsApi.reportViewDuration(reportDbId, logId, absoluteSec)
+        .then(() => {
+          acknowledgedSec = Math.max(acknowledgedSec, absoluteSec)
+        })
+        .catch(() => { /* 다음 체크포인트/정리 시 동일 절대값으로 안전하게 재시도 */ })
     }
 
     function onVisibilityChange() {
       if (document.visibilityState === 'hidden') {
-        flush(false)
-      } else {
+        flush(true)
+      } else if (visibleSinceMs == null) {
         visibleSinceMs = Date.now()
       }
     }
@@ -155,12 +217,15 @@ export default function ReportViewPage() {
       flush(true)
     }
 
+    // 장시간 열린 탭도 마지막 이탈 이벤트에만 의존하지 않도록 주기적으로 체크포인트한다.
+    const checkpoint = window.setInterval(() => flush(false), 30_000)
     document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('pagehide', onPageHide)
     return () => {
+      window.clearInterval(checkpoint)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('pagehide', onPageHide)
-      flush(true) // 다른 레포트로 이동 등 컴포넌트 언마운트 시에도 최종 전송
+      flush(true)
     }
   }, [reportDbId, viewLogId])
 
@@ -168,8 +233,7 @@ export default function ReportViewPage() {
   const [refreshFailed, setRefreshFailed] = useState<string | null>(null)
   // 데이터 반영 안내: 사용자가 이미 반영/닫은 end_time (재노출 방지)
   const [appliedEndTime, setAppliedEndTime] = useState<string | null>(null)
-  // 임베드가 렌더된 시각(ms). 이 시점 이후 완료된 새로고침만 "새 데이터"로 간주.
-  const [renderedAt, setRenderedAt] = useState<number | null>(null)
+  // renderedAt은 실제 Power BI rendered 이벤트에서 설정한다.
   const prevInProgress = useRef(false)
   useEffect(() => {
     const ip = !!statusQuery.data?.in_progress
@@ -231,7 +295,6 @@ export default function ReportViewPage() {
 
   function handleReport(r: Report | null) {
     reportRef.current = r
-    if (r) setRenderedAt((current) => current ?? Date.now())
     if (!r) return
     // 기본 보기를 '페이지 맞춤'으로 확실히 적용 (초기 embedConfig만으론 미적용되는 경우 대비)
     const applyFit = () => {
@@ -653,7 +716,7 @@ export default function ReportViewPage() {
                 aria-haspopup="dialog"
                 aria-expanded={schedOpen}
                 title="예약 새로고침 상세 보기"
-                className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-0.5 text-[12.5px] leading-[18px] text-slate-600 transition hover:bg-slate-50"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-0.5 text-[14.5px] leading-[20px] text-slate-600 transition hover:bg-slate-50"
               >
                 <Clock className="h-3 w-3 text-slate-400" />
                 갱신 예정: {fmtLocal(live.schedule.next_scheduled_local)}
@@ -667,7 +730,7 @@ export default function ReportViewPage() {
                     className="fixed inset-0 z-10 cursor-default"
                     onClick={() => setSchedOpen(false)}
                   />
-                  <div role="dialog" aria-label="예약 새로고침" className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white p-2 text-[12.5px] leading-[18px] shadow-lg">
+                  <div role="dialog" aria-label="예약 새로고침" className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white p-2 text-[14.5px] leading-[20px] shadow-lg">
                     <p className="mb-1 font-semibold text-slate-700">예약 새로고침</p>
                     <p className="text-slate-500">
                       요일: <span className="text-slate-700">{live.schedule.days.map(weekdayKo).join(', ') || '-'}</span>
@@ -690,7 +753,7 @@ export default function ReportViewPage() {
               value={activePageName}
               onChange={(e) => selectPage(e.target.value)}
               aria-label="페이지 선택"
-              className="max-w-[11rem] rounded-md border border-slate-300 px-2 py-0.5 text-[12.5px] font-medium leading-[18px] text-slate-700 transition hover:bg-slate-50"
+              className="max-w-[11rem] rounded-md border border-slate-300 px-2 py-0.5 text-[14.5px] font-medium leading-[20px] text-slate-700 transition hover:bg-slate-50"
             >
               {pages.map((p) => (
                 <option key={p.name} value={p.name}>{p.displayName}</option>
@@ -705,7 +768,7 @@ export default function ReportViewPage() {
               onClick={() => setViewMenuOpen((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={viewMenuOpen}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-0.5 text-[12.5px] font-medium leading-[18px] text-slate-700 transition hover:bg-slate-50"
+              className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-0.5 text-[14.5px] font-medium leading-[20px] text-slate-700 transition hover:bg-slate-50"
             >
               <Monitor className="h-3 w-3" />
               보기 옵션
@@ -722,26 +785,26 @@ export default function ReportViewPage() {
                 />
                 <div role="menu" className="absolute right-0 z-20 mt-1 w-[12.5rem] overflow-hidden rounded-lg border border-slate-200 bg-white py-0.5 shadow-lg">
                   <button type="button" role="menuitem" onClick={applyFullscreen}
-                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">
                     <Maximize2 className="h-3 w-3 text-slate-500" /> 전체 화면
                   </button>
                   <button type="button" role="menuitem" onClick={() => applyDisplayOption(models.DisplayOption.FitToPage)}
-                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">
                     <Monitor className="h-3 w-3 text-slate-500" /> 페이지 맞춤
                   </button>
                   <button type="button" role="menuitem" onClick={() => applyDisplayOption(models.DisplayOption.ActualSize)}
-                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">
+                    className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">
                     <ScanLine className="h-3 w-3 text-slate-500" /> 실제 크기
                   </button>
                   {report?.can_manage_default_view && (
                     <>
                       <div className="my-0.5 border-t border-slate-100" />
                       <button type="button" role="menuitem" onClick={saveCurrentAsDefault} disabled={defaultViewMutation.isPending}
-                        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                         <Save className="h-3 w-3 text-slate-500" /> 현재 뷰를 기본값으로 저장
                       </button>
                       <button type="button" role="menuitem" onClick={clearDefaultView} disabled={defaultViewMutation.isPending}
-                        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+                        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-500 hover:bg-slate-50 disabled:opacity-50">
                         <RotateCcw className="h-3 w-3 text-slate-400" /> 기본 뷰 초기화
                       </button>
                     </>
@@ -760,7 +823,7 @@ export default function ReportViewPage() {
                 aria-haspopup="menu"
                 aria-expanded={downloadMenuOpen}
                 disabled={exportMutation.isPending}
-                className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-0.5 text-[12.5px] font-medium leading-[18px] text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-0.5 text-[14.5px] font-medium leading-[20px] text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
               >
                 <Download className="h-3 w-3" />
                 다운로드
@@ -782,22 +845,22 @@ export default function ReportViewPage() {
                           현재 페이지{activePageDisplayName ? ` · ${activePageDisplayName}` : ''}
                         </p>
                         <button type="button" role="menuitem" onClick={() => requestCurrentPageExport('PNG')}
-                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">이미지 (PNG)</button>
+                          className="flex w-full items-center px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">이미지 (PNG)</button>
                         <button type="button" role="menuitem" onClick={() => requestCurrentPageExport('PPTX')}
-                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
+                          className="flex w-full items-center px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
                         <button type="button" role="menuitem" onClick={() => requestCurrentPageExport('PDF')}
-                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PDF</button>
+                          className="flex w-full items-center px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">PDF</button>
                         <div className="my-0.5 border-t border-slate-100" />
                         <div className="flex items-center justify-between gap-2 px-2 py-0.5">
                           <p className="text-[10.5px] font-medium text-slate-400">전체 페이지</p>
                           <p className="whitespace-nowrap text-[10.5px] text-slate-400">페이지 수에 따라 시간이 걸립니다</p>
                         </div>
                         <button type="button" role="menuitem" onClick={() => requestAllPagesExport('PNG')}
-                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">이미지 (PNG · ZIP)</button>
+                          className="flex w-full items-center px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">이미지 (PNG · ZIP)</button>
                         <button type="button" role="menuitem" onClick={() => requestAllPagesExport('PPTX')}
-                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
+                          className="flex w-full items-center px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">PowerPoint (PPTX)</button>
                         <button type="button" role="menuitem" onClick={() => requestAllPagesExport('PDF')}
-                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">PDF</button>
+                          className="flex w-full items-center px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">PDF</button>
                       </>
                     )}
                     {report?.can_download_pbix && (
@@ -805,7 +868,7 @@ export default function ReportViewPage() {
                         {report?.can_download && <div className="my-0.5 border-t border-slate-100" />}
                         <p className="px-2 py-0.5 text-[10.5px] font-medium text-slate-400">원본 파일</p>
                         <button type="button" role="menuitem" onClick={requestPbixExport}
-                          className="flex w-full items-center px-2 py-1 text-left text-[12.5px] leading-[18px] text-slate-700 hover:bg-slate-50">Power BI 원본 (.pbix)</button>
+                          className="flex w-full items-center px-2 py-1 text-left text-[14.5px] leading-[20px] text-slate-700 hover:bg-slate-50">Power BI 원본 (.pbix)</button>
                       </>
                     )}
                   </div>
@@ -818,7 +881,7 @@ export default function ReportViewPage() {
             <button
               type="button"
               onClick={() => { setReplaceFile(null); replaceMutation.reset(); setReplaceOpen(true) }}
-              className="inline-flex items-center gap-1 rounded-md border border-blue-600 px-2 py-0.5 text-[12.5px] font-medium leading-[18px] text-blue-600 transition hover:bg-blue-50"
+              className="inline-flex items-center gap-1 rounded-md border border-blue-600 px-2 py-0.5 text-[14.5px] font-medium leading-[20px] text-blue-600 transition hover:bg-blue-50"
             >
               <Upload className="h-3 w-3" />
               레포트 업데이트(교체)
@@ -939,7 +1002,11 @@ export default function ReportViewPage() {
           </div>
         ) : embedQuery.data ? (
           <div className="relative h-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <PowerBIEmbed embed={embedQuery.data} onReport={handleReport} />
+            <PowerBIEmbed
+              embed={embedQuery.data}
+              onReport={handleReport}
+              onRendered={handleRendered}
+            />
           </div>
         ) : null}
       </main>

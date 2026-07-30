@@ -2,7 +2,7 @@
 import apiClient, { API_BASE_URL } from '@/api/client'
 import type {
   EmbedInfo, ExportFormat, ExportStatusResponse, FavoriteFolder, FolderTreeNode, RefreshStatus,
-  ReportCatalogParams, ReportCatalogResponse, ReportSummary,
+  ReportCatalogParams, ReportCatalogResponse, ReportSummary, ReportViewSessionResponse,
 } from '@/types/report'
 
 export const foldersApi = {
@@ -144,11 +144,14 @@ export const reportsApi = {
       },
     ),
 
-  /** POST /api/reports/{id}/view — 최근 조회와 인기 집계에 화면 진입을 기록. */
-  recordView: (reportDbId: number) =>
-    apiClient.post<void>(`/api/reports/${reportDbId}/view`),
+  /** 첫 Power BI rendered 이벤트를 멱등 조회 세션으로 기록. */
+  createViewSession: (reportDbId: number, sessionId: string) =>
+    apiClient.post<ReportViewSessionResponse>(
+      `/api/reports/${reportDbId}/view-session`,
+      { session_id: sessionId },
+    ),
 
-  /** POST /api/reports/{id}/view-duration — 조회 세션 체류 시간 갱신(근사치).
+  /** 누적 가시 체류 시간 절대값을 전송한다. 서버는 기존 값과 max로 병합한다.
    * 탭 이탈/전환 시점에 keepalive fetch로 호출한다(페이지가 언로드되어도 요청 유지).
    */
   reportViewDuration: (reportDbId: number, viewLogId: number, durationSeconds: number) =>

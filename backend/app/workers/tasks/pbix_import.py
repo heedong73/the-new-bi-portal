@@ -17,9 +17,11 @@ import redis.asyncio as aioredis
 from sqlalchemy import select, func
 
 from app.core.config import settings
+from app.core.constants import AuditAction, PermissionAction, SubjectType
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
 from app.models.report import Report, Workspace, ReportPermission
+from app.services.audit_service import append_audit, build_audit_snapshot
 from app.services.powerbi.token_service import MockTokenService, TokenService
 from app.workers.async_runner import run_async
 from app.workers.celery_app import celery_app
@@ -34,7 +36,9 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
                          description: str | None = None,
                          author_label: str | None = None,
                          created_by_user_id: int | None = None,
-                         created_by_label: str | None = None) -> dict[str, Any]:
+                         created_by_label: str | None = None,
+                         requested_by_user_id: int | None = None,
+                         requested_by_label: str | None = None) -> dict[str, Any]:
     """workspace upsert + report 신규/갱신 (nameConflict=CreateOrOverwrite 의미)."""
     async with AsyncSessionLocal() as db:
         ws = await db.scalar(select(Workspace).where(Workspace.workspace_id == workspace_id))
@@ -58,12 +62,6 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
             db.add(report)
             await db.flush()
             created = True
-            # 작성자에게 통계 조회 권한(VIEW_STATS) 자동 부여 (관리자가 이후 회수/수정 가능)
-            if created_by_user_id:
-                db.add(ReportPermission(
-                    report_id=report.id, subject_type="user",
-                    subject_id=created_by_user_id, permission="VIEW_STATS",
-                ))
         else:
             report.dataset_id = dataset_id
             report.report_name = report_name
@@ -74,7 +72,44 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
             if author_label is not None:
                 report.author_label = author_label
             created = False
+
+        # 작성자 통계 권한은 신규/재시도 모두 멱등 보장한다.
+        if created_by_user_id is not None:
+            permission = await db.scalar(select(ReportPermission).where(
+                ReportPermission.report_id == report.id,
+                ReportPermission.subject_type == SubjectType.USER.value,
+                ReportPermission.subject_id == created_by_user_id,
+                ReportPermission.permission == PermissionAction.VIEW_STATS.value,
+            ))
+            if permission is None:
+                db.add(ReportPermission(
+                    report_id=report.id,
+                    subject_type=SubjectType.USER.value,
+                    subject_id=created_by_user_id,
+                    permission=PermissionAction.VIEW_STATS.value,
+                ))
+
         await db.flush()
+        actor_user_id = requested_by_user_id
+        snapshot = await build_audit_snapshot(
+            db, actor_user_id=actor_user_id, report=report,
+        )
+        await append_audit(
+            db,
+            action=AuditAction.REPORT_CREATE if created else AuditAction.REPORT_UPDATE,
+            result="success",
+            actor_user_id=actor_user_id,
+            actor_label=requested_by_label or created_by_label,
+            resource_type="report",
+            resource_id=str(report.id),
+            event_key=f"report-create:{report.id}" if created else None,
+            meta={
+                "report_id": report.id,
+                "workspace_id": workspace_id,
+                "target": "pbix_import",
+            },
+            **snapshot,
+        )
         await db.commit()
         return {"report_pk": report.id, "created": created}
 
@@ -163,6 +198,8 @@ def pbix_import(
     author_label: str | None = None,
     created_by_user_id: int | None = None,
     created_by_label: str | None = None,
+    requested_by_user_id: int | None = None,
+    requested_by_label: str | None = None,
 ) -> dict[str, Any]:
     """PBIX import 작업 진입점 (Celery sync task). 업로드→게시→카탈로그 반영."""
     display_name = report_name or "uploaded-report"
@@ -192,6 +229,8 @@ def pbix_import(
         author_label=author_label,
         created_by_user_id=created_by_user_id,
         created_by_label=created_by_label,
+        requested_by_user_id=requested_by_user_id,
+        requested_by_label=requested_by_label,
     ))
 
     return {

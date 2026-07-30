@@ -19,7 +19,7 @@ from app.core.deps import RedisDep, SessionDep, require_menu
 from app.core.errors import PermissionDeniedError
 from app.models.report import Report
 from app.services import stats_service, permission_service
-from app.services.audit_service import append_audit
+from app.services.audit_service import append_audit, build_audit_snapshot
 from app.services.cache import cache_get_json, cache_set_json
 
 router = APIRouter(tags=["stats"])
@@ -29,47 +29,76 @@ def _is_operator(current: dict) -> bool:
     return RoleCode.SYSTEM_OPERATOR.value in current.get("roles", []) or bool(current.get("is_local_admin"))
 
 
+def _has_global_stats_scope(current: dict) -> bool:
+    """관리 기능 없이 전체 통계만 읽는 담당임원도 전역 통계 스코프로 인정한다."""
+    return _is_operator(current) or (
+        RoleCode.EXECUTIVE_STATS_READER.value in current.get("roles", [])
+    )
+
+
 def _cache_key(prefix: str, from_dt: datetime | None, to_dt: datetime | None, scope: str = "all") -> str:
     return f"bip:cache:stats:{prefix}:{scope}:{from_dt or '-'}:{to_dt or '-'}"
 
 
 async def _stats_report_ids(db, current: dict) -> set[int] | None:
-    """통계 열람 가능 레포트 id 집합. 운영자는 전체(None), 그 외는 VIEW_STATS 부여분."""
-    if _is_operator(current):
+    """전역 열람자는 전체(None), 작성자는 소유분과 VIEW_STATS 부여분의 합집합."""
+    if _has_global_stats_scope(current):
         return None
-    return await permission_service.accessible_report_ids(
-        db, current["user_id"], PermissionAction.VIEW_STATS
+    permitted = await permission_service.accessible_report_ids(
+        db, current["user_id"], PermissionAction.VIEW_STATS, roles=current.get("roles")
     )
+    owned = {
+        report_id for (report_id,) in (await db.execute(
+            select(Report.id).where(Report.created_by_user_id == current["user_id"])
+        )).all()
+    }
+    return permitted | owned
 
 
 async def _resolve_scope(
     db, current: dict, report_id: int | None = None, company_id: int | None = None,
 ) -> tuple[set[int] | None, str]:
-    """요청 스코프 계산.
+    """현재 카탈로그 레포트 범위와 역할별 캐시 키를 계산한다.
 
-    - report_id + company_id 동시 지정(운영자 전용): 그 레포트가 실제로 그 계열사
-      소속인지 검증 후 한정. 소속이 아니면 빈 집합(결과 없음)을 반환한다 — 서로
-      다른 계열사 레포트를 고른 상태로 남는 UI 불일치를 데이터 단에서도 막는다.
-    - report_id만 지정: 그 레포트로 한정(운영자 아니면 VIEW_STATS 보유 검증).
-    - company_id만 지정(운영자 전용): 그 계열사(최상위 폴더) 하위 레포트로 한정.
-    - 미지정: 운영자=전체(None), 그 외=VIEW_STATS 부여분 전체.
+    회사 단독 필터의 이벤트 집계는 별도로 report_company_id 스냅샷을 사용하되,
+    현재 레포트 수·미사용 목록 등 카탈로그 지표에는 여기서 구한 ID 집합을 쓴다.
     """
-    allowed = await _stats_report_ids(db, current)  # None=all(operator)
+    if _is_operator(current):
+        cache_role = "operator"
+    elif RoleCode.EXECUTIVE_STATS_READER.value in current.get("roles", []):
+        cache_role = "executive"
+    else:
+        cache_role = f"author{current['user_id']}"
+
+    def _key(scope: str) -> str:
+        return f"{scope}:{cache_role}"
+
+    allowed = await _stats_report_ids(db, current)  # None=all(global reader)
+    if company_id is not None and report_id is None and allowed is not None:
+        raise PermissionDeniedError("계열사 통계 필터는 전역 통계 열람자만 사용할 수 있습니다.")
     if report_id is not None:
         if allowed is not None and report_id not in allowed:
             raise PermissionDeniedError("해당 레포트의 통계를 조회할 권한이 없습니다.")
         if company_id is not None and allowed is None:
             company_ids = await stats_service.company_report_ids(db, company_id)
             if report_id not in company_ids:
-                return set(), f"r{report_id}c{company_id}"
-            return {report_id}, f"r{report_id}c{company_id}"
-        return {report_id}, f"r{report_id}"
+                return set(), _key(f"r{report_id}c{company_id}")
+            return {report_id}, _key(f"r{report_id}c{company_id}")
+        return {report_id}, _key(f"r{report_id}")
     if company_id is not None and allowed is None:
         ids = await stats_service.company_report_ids(db, company_id)
-        return ids, f"c{company_id}"
+        return ids, _key(f"c{company_id}")
     if allowed is None:
-        return None, "all"
-    return allowed, f"u{current['user_id']}"
+        return None, _key("all")
+    return allowed, _key(f"u{current['user_id']}")
+
+
+def _event_company_scope(
+    report_id: int | None,
+    company_id: int | None,
+) -> int | None:
+    """회사 단독 필터만 이벤트 기록 시점의 회사 스냅샷으로 집계한다."""
+    return company_id if report_id is None else None
 
 
 @router.get("/api/stats/reports")
@@ -79,9 +108,9 @@ async def stats_reports(
     db: SessionDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """통계를 볼 수 있는 레포트 목록(드롭다운용). 운영자=전체, 그 외=VIEW_STATS 부여분.
+    """통계를 볼 수 있는 레포트 목록. 전역 열람자=전체, 그 외=소유·VIEW_STATS 범위.
 
-    company_id 지정(운영자 전용) 시 그 계열사 소속 레포트만 반환 — 계열사 선택에
+    company_id 지정(전역 열람자 전용) 시 그 계열사 소속 레포트만 반환 — 계열사 선택에
     맞춰 레포트 드롭다운도 좁혀 서로 다른 계열사를 고른 채 남는 UI 불일치를 막는다.
     """
     allowed = await _stats_report_ids(db, current)
@@ -118,20 +147,36 @@ async def stats_overview(
     """
     scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
     key = _cache_key("overview", from_, to, scope_key)
+    audit_report = (
+        await db.scalar(select(Report).where(Report.id == report_id))
+        if report_id is not None else None
+    )
+    actor_user_id = None if current.get("is_local_admin") else current.get("user_id")
+    snapshot = await build_audit_snapshot(
+        db, actor_user_id=actor_user_id, report=audit_report,
+    )
     await append_audit(
         db,
         action=AuditAction.STATS_VIEW,
         result="success",
-        actor_user_id=current["user_id"],
+        actor_user_id=actor_user_id,
         actor_label=current.get("emp_no"),
         resource_type="report" if report_id is not None else "company" if company_id is not None else None,
         resource_id=str(report_id) if report_id is not None else (str(company_id) if company_id is not None else None),
+        **snapshot,
     )
     await db.commit()
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
-    data = await stats_service.get_overview(db, from_, to, scope)
+    data = await stats_service.get_overview(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+        include_system_activity=_is_operator(current),
+    )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
 
@@ -153,7 +198,14 @@ async def stats_usage(
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
-    data = await stats_service.get_usage(db, from_, to, scope)
+    data = await stats_service.get_usage(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+        include_system_activity=_is_operator(current),
+    )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
 
@@ -173,7 +225,11 @@ async def stats_highlights(
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
-    data = await stats_service.get_highlights(db, scope)
+    data = await stats_service.get_highlights(
+        db,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+    )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
 
@@ -184,8 +240,8 @@ async def stats_companies(
     db: SessionDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """계열사(최상위 폴더) 목록 — 필터 드롭다운용. 계열사 필터는 운영자 전용."""
-    if not _is_operator(current):
+    """계열사(최상위 폴더) 목록 — 전역 통계 열람자 필터 드롭다운용."""
+    if not _has_global_stats_scope(current):
         return []
     return await stats_service.list_companies(db)
 
@@ -210,7 +266,15 @@ async def stats_trends(
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
-    data = await stats_service.get_trends(db, from_, to, granularity, scope)
+    data = await stats_service.get_trends(
+        db,
+        from_,
+        to,
+        granularity,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+        include_system_activity=_is_operator(current),
+    )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
 
@@ -232,7 +296,13 @@ async def stats_report_detail(
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
-    data = await stats_service.get_report_detail(db, from_, to, scope)
+    data = await stats_service.get_report_detail(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+    )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
 
@@ -243,21 +313,34 @@ async def stats_hourly(
     to: datetime | None = Query(default=None),
     report_id: int | None = Query(default=None),
     company_id: int | None = Query(default=None, alias="company"),
-    department: str | None = Query(default=None),
+    department_id: int | None = Query(default=None),
+    unassigned_department: bool = Query(default=False),
     user_id: int | None = Query(default=None),
     *,
     db: SessionDep,
     redis: RedisDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """시간대별(0~23시 KST) 조회 수·사용자 수. 부서/사용자 선택 시 그 범위로 드릴다운."""
+    """시간대별(0~23시 KST) 조회 수·사용자 수. 부서/사용자 선택 시 그 범위로 드릴다운.
+
+    부서 드릴다운은 표시 이름이 아닌 부서 ID로 필터링한다(코드→한글명으로 바뀐
+    부서도 같은 범위로 묶기 위함). 부서 미지정 사용자는 unassigned_department로 선택한다.
+    """
     scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
-    key = _cache_key(f"hourly:{department or '-'}:{user_id or '-'}", from_, to, scope_key)
+    department_key = "none" if unassigned_department else (department_id or "-")
+    key = _cache_key(f"hourly:{department_key}:{user_id or '-'}", from_, to, scope_key)
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
     data = await stats_service.get_hourly(
-        db, from_, to, scope, department=department, user_id=user_id,
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+        department_id=department_id,
+        unassigned_department=unassigned_department,
+        user_id=user_id,
     )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
@@ -279,7 +362,13 @@ async def stats_raw_events(
     캐시 적중률보다 중요하고, 캐시 크기가 응답에 비해 부담될 수 있어 생략).
     """
     scope, _ = await _resolve_scope(db, current, report_id, company_id)
-    return await stats_service.get_raw_view_events(db, from_, to, scope)
+    return await stats_service.get_raw_view_events(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+    )
 
 
 @router.get("/api/stats/report-detail-users")
@@ -299,6 +388,183 @@ async def stats_report_detail_users(
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
-    data = await stats_service.get_report_detail_users(db, from_, to, scope)
+    data = await stats_service.get_report_detail_users(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+    )
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+# ── 역할별 활동 분석(P1) / 참여도 인사이트(P2) ─────────────────────────────
+@router.get("/api/stats/capabilities")
+async def stats_capabilities(
+    current: dict = Depends(require_menu("stats")),
+):
+    """프런트 정보구조 분기를 위한 현재 사용자의 통계 범위/역할 capability."""
+    is_operator = _is_operator(current)
+    is_executive = RoleCode.EXECUTIVE_STATS_READER.value in current.get("roles", [])
+    return {
+        "scope": "global" if _has_global_stats_scope(current) else "author",
+        "is_operator": is_operator,
+        "is_executive": is_executive,
+        "can_view_global_activity": is_operator or is_executive,
+        "can_view_system_operations": is_operator,
+        "can_export_raw_events": True,
+    }
+
+
+@router.get("/api/stats/teams")
+async def stats_teams(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """팀별 조회·다운로드·로그인·유효 참여 현황."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key("teams", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_team_activity(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+        include_system_activity=_is_operator(current),
+    )
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+@router.get("/api/stats/users")
+async def stats_users(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    limit: int = Query(default=500, ge=1, le=2000),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """사용자별 조회·다운로드·로그인·체류 현황."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key(f"users:{limit}", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_user_activity(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+        include_system_activity=_is_operator(current),
+        limit=limit,
+    )
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+@router.get("/api/stats/report-performance")
+async def stats_report_performance(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """레포트별 조회·다운로드·도달·재방문·체류·직전기간 비교."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key("report-performance", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_report_performance(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+    )
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+@router.get("/api/stats/lifecycle")
+async def stats_lifecycle(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """감사 원장 기준 레포트 생성·수정·삭제 요약과 최근 이벤트."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key(f"lifecycle:{limit}", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    owner_user_id = (
+        current["user_id"]
+        if not _has_global_stats_scope(current) and report_id is None and company_id is None
+        else None
+    )
+    data = await stats_service.get_lifecycle_activity(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+        owner_user_id=owner_user_id,
+        limit=limit,
+    )
+    await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
+    return data
+
+
+@router.get("/api/stats/insights")
+async def stats_insights(
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    report_id: int | None = Query(default=None),
+    company_id: int | None = Query(default=None, alias="company"),
+    *,
+    db: SessionDep,
+    redis: RedisDep,
+    current: dict = Depends(require_menu("stats")),
+):
+    """도달률·재방문·유효 체류·동일기간 비교·미사용/급감 인사이트."""
+    scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
+    key = _cache_key("insights", from_, to, scope_key)
+    cached = await cache_get_json(redis, key)
+    if cached is not None:
+        return cached
+    data = await stats_service.get_adoption_insights(
+        db,
+        from_,
+        to,
+        scope,
+        company_id=_event_company_scope(report_id, company_id),
+        include_system_activity=_is_operator(current),
+    )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data
