@@ -150,8 +150,8 @@ export default function LocalUsersPanel() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div>
-          <h3 className="text-sm font-bold text-slate-800">로컬 사용자 계정</h3>
-          <p className="mt-1 text-xs text-slate-500">
+          <h3 className="text-base font-bold text-slate-800">로컬 사용자 계정</h3>
+          <p className="mt-1 text-sm text-slate-500">
             그룹웨어(인사) 정보 없이 관리자가 직접 만드는 계정입니다. 테스트나 외부 인력 로그인용으로 활용하세요.
             부서는 지정되지 않고, 이후 그룹·레포트 권한은 권한 관리 화면에서 개별 부여합니다.
           </p>
