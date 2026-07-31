@@ -2,15 +2,17 @@
 
 화면 표기는 "서비스 센터", 내부 엔드포인트/모델은 requests 유지.
 
-POST   /api/requests                       — 요청 생성 (인증된 모든 사용자)
+POST   /api/requests                       — 요청 생성 (인증된 모든 사용자, 이전 요청 참고 선택)
 GET    /api/requests                       — 목록 (일반=본인만, System_Operator=전체)
 GET    /api/requests/{id}                  — 단건 (소유자 또는 System_Operator)
 PATCH  /api/requests/{id}                  — 상태/우선순위/응답/반려 (System_Operator)
-POST   /api/requests/{id}/attachments      — 첨부 업로드 (소유자 또는 운영자)
+POST   /api/requests/{id}/attachments      — 첨부 업로드 (소유자 또는 운영자, 완료 요청은 불가)
 GET    /api/requests/{id}/attachments      — 첨부 목록
 GET    /api/request-attachments/{id}       — 첨부 다운로드(권한 검증 스트리밍)
-DELETE /api/request-attachments/{id}       — 첨부 삭제 (소유자 또는 운영자)
-POST   /api/requests/{id}/comments         — 댓글 작성 (소유자 또는 운영자)
+DELETE /api/request-attachments/{id}       — 첨부 삭제 (소유자 또는 운영자, 완료 요청은 불가)
+POST   /api/requests/{id}/comments         — 댓글 작성 (소유자 또는 운영자, 완료 요청은 불가)
+
+완료(done) 요청은 쓰기 경로만 409로 막고, 조회·다운로드는 계속 허용한다.
 """
 from __future__ import annotations
 
@@ -23,10 +25,10 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.constants import AuditAction, RoleCode
+from app.core.constants import AuditAction, RequestStatus, RoleCode
 from app.core.timezone import to_local
 from app.core.deps import SessionDep, get_current_user, require_role
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.models.auth import User, Department
 from app.models.log import (
     Request as RequestModel,
@@ -38,6 +40,7 @@ from app.schemas.request_center import (
     AttachmentResponse,
     CommentCreate,
     CommentResponse,
+    RelatedRequestSummary,
     RequestCreate,
     RequestResponse,
     RequestUpdate,
@@ -152,6 +155,28 @@ def _comment_to_response(c: RequestComment) -> CommentResponse:
     )
 
 
+def _related_to_summary(row: RequestModel) -> RelatedRequestSummary:
+    return RelatedRequestSummary(
+        id=row.id,
+        title=row.title,
+        status=row.status,
+        created_at=to_local(row.created_at),
+    )
+
+
+async def _related_map(
+    db: SessionDep, rows: list[RequestModel]
+) -> dict[int, RequestModel]:
+    """참조된 이전 요청을 한 번에 조회한다(id → 요청). 목록의 N+1 방지."""
+    ids = {r.related_request_id for r in rows if r.related_request_id is not None}
+    if not ids:
+        return {}
+    found = (
+        await db.execute(select(RequestModel).where(RequestModel.id.in_(ids)))
+    ).scalars().all()
+    return {r.id: r for r in found}
+
+
 def _status_history_to_response(h: RequestStatusHistory) -> StatusHistoryResponse:
     return StatusHistoryResponse(
         id=h.id,
@@ -171,6 +196,7 @@ def _to_response(
     attachments: list[RequestAttachment] | None = None,
     comments: list[RequestComment] | None = None,
     status_history: list[RequestStatusHistory] | None = None,
+    related: RequestModel | None = None,
 ) -> RequestResponse:
     return RequestResponse(
         id=row.id,
@@ -184,6 +210,8 @@ def _to_response(
         operator_response=row.operator_response,
         reject_reason=row.reject_reason,
         expected_completion_date=row.expected_completion_date,
+        related_request_id=row.related_request_id,
+        related_request=_related_to_summary(related) if related is not None else None,
         created_at=to_local(row.created_at),
         updated_at=to_local(row.updated_at),
         attachments=[_attachment_to_response(a) for a in (attachments or [])],
@@ -202,8 +230,10 @@ async def _build_single(db: SessionDep, row: RequestModel, name: str | None, dep
             .order_by(RequestStatusHistory.id)
         )
     ).scalars().all()
+    related = (await _related_map(db, [row])).get(row.related_request_id)
     return _to_response(
-        row, name, department, attach.get(row.id, []), comments.get(row.id, []), history
+        row, name, department, attach.get(row.id, []), comments.get(row.id, []), history,
+        related=related,
     )
 
 
@@ -220,6 +250,32 @@ def _ensure_can_access(current: dict, row: RequestModel) -> None:
         raise NotFoundError("요청을 찾을 수 없습니다.")
 
 
+async def _resolve_related_request(
+    db: SessionDep, current: dict, related_id: int | None
+) -> RequestModel | None:
+    """참고할 이전 요청을 검증한다 — 본인 요청(운영자는 전체)만 지정할 수 있다.
+
+    클라이언트가 보낸 id를 그대로 신뢰하면 타인 요청의 제목이 노출되므로 단건
+    조회와 동일한 규칙을 적용한다. 부재·무권한 모두 404(존재 비노출).
+    """
+    if related_id is None:
+        return None
+    related = await _get_request_or_404(db, related_id)
+    _ensure_can_access(current, related)
+    return related
+
+
+def _ensure_request_open(row: RequestModel, *, action: str) -> None:
+    """완료된 요청은 내용 추가·변경을 막는다 — 요청자·운영자 모두 동일하다.
+
+    기존 대화와 첨부는 계속 조회·다운로드할 수 있고, 차단 대상은 쓰기 경로
+    (댓글 작성, 첨부 업로드/삭제)뿐이다. 추가 논의가 필요하면 운영자가 상태를
+    접수 등으로 되돌린 뒤 이어서 진행한다(반려는 후속 문의가 필요하므로 제외).
+    """
+    if row.status == RequestStatus.DONE:
+        raise ConflictError(f"완료된 요청에는 {action}할 수 없습니다.")
+
+
 # ---------------------------------------------------------------------------
 # POST /api/requests — 생성
 # ---------------------------------------------------------------------------
@@ -232,13 +288,19 @@ async def create_request(
     db: SessionDep,
     current: dict = Depends(get_current_user),
 ):
-    """요청 생성. requester_id는 세션 사용자로 강제(클라이언트 입력 무시)."""
+    """요청 생성. requester_id는 세션 사용자로 강제(클라이언트 입력 무시).
+
+    related_request_id를 보내면 참고할 이전 요청으로 연결한다(조회 권한 검증).
+    """
+    related = await _resolve_related_request(db, current, body.related_request_id)
+
     row = RequestModel(
         requester_id=current["user_id"],
         request_type=body.request_type,
         title=body.title,
         body=body.body,
         status="pending",
+        related_request_id=related.id if related is not None else None,
     )
     db.add(row)
     await db.flush()
@@ -259,7 +321,11 @@ async def create_request(
         actor_user_id=current["user_id"],
         resource_type="request",
         resource_id=str(row.id),
-        meta={"request_id": row.id, "request_type": row.request_type},
+        meta={
+            "request_id": row.id,
+            "request_type": row.request_type,
+            "related_request_id": row.related_request_id,
+        },
     )
 
     await db.commit()
@@ -275,7 +341,7 @@ async def create_request(
         )
         background.add_task(request_notify.send_notification, subject, [admin_email], html_body)
 
-    return _to_response(row, current.get("name"), None, [], [])
+    return _to_response(row, current.get("name"), None, [], [], related=related)
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +378,13 @@ async def list_requests(
     info = await _user_info_map(db, {r.requester_id for r in rows})
     attach = await _attachments_map(db, ids)
     comments = await _comments_map(db, ids)
+    related = await _related_map(db, list(rows))
     return [
-        _to_response(r, *(info.get(r.requester_id, (None, None))), attach.get(r.id, []), comments.get(r.id, []))
+        _to_response(
+            r, *(info.get(r.requester_id, (None, None))),
+            attach.get(r.id, []), comments.get(r.id, []),
+            related=related.get(r.related_request_id),
+        )
         for r in rows
     ]
 
@@ -437,9 +508,13 @@ async def add_comment(
     db: SessionDep,
     current: dict = Depends(get_current_user),
 ):
-    """요청에 댓글 작성. 소유자 또는 운영자만. 상대방에게 알림 메일."""
+    """요청에 댓글 작성. 소유자 또는 운영자만. 상대방에게 알림 메일.
+
+    완료(done) 상태 요청은 대화가 종료되어 409를 반환한다.
+    """
     row = await _get_request_or_404(db, request_id)
     _ensure_can_access(current, row)
+    _ensure_request_open(row, action="댓글을 작성")
 
     is_op = _is_operator(current)
     comment = RequestComment(
@@ -501,9 +576,11 @@ async def upload_attachment(
     """요청에 파일 첨부(에러 캡처/문서 등). 소유자 또는 운영자만.
 
     파일 본체는 StorageService에 저장하고 DB에는 상대 경로/메타만 보관한다.
+    완료(done) 상태 요청은 409를 반환한다.
     """
     row = await _get_request_or_404(db, request_id)
     _ensure_can_access(current, row)
+    _ensure_request_open(row, action="파일을 첨부")
 
     if not file.filename:
         raise ValidationError("파일 이름이 없습니다.")
@@ -607,7 +684,10 @@ async def delete_attachment(
     db: SessionDep,
     current: dict = Depends(get_current_user),
 ):
-    """첨부 삭제. 소유자 또는 운영자만. 저장소 파일도 삭제."""
+    """첨부 삭제. 소유자 또는 운영자만. 저장소 파일도 삭제.
+
+    완료(done) 상태 요청의 첨부는 기록 보존을 위해 삭제할 수 없다(409).
+    """
     attachment = await db.scalar(
         select(RequestAttachment).where(RequestAttachment.id == attachment_id)
     )
@@ -616,6 +696,7 @@ async def delete_attachment(
 
     parent = await _get_request_or_404(db, attachment.request_id)
     _ensure_can_access(current, parent)
+    _ensure_request_open(parent, action="첨부를 삭제")
 
     storage = get_storage_service()
     storage.delete(attachment.storage_path)

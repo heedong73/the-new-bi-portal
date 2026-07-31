@@ -3,6 +3,9 @@
  * 내가 보낸 메시지는 우측(파란 말풍선), 상대방 메시지는 좌측(회색 말풍선)으로 분리한다.
  * "나" 판정은 현재 로그인 사용자 id와 작성자 id 비교(뷰어 기준 상대 정렬).
  * 작성 성공 시 onAdded로 상위에 알려 목록을 갱신한다.
+ *
+ * readOnly(완료된 요청)면 입력창을 숨기고 종료 안내만 보여준다. 지난 대화는
+ * 그대로 조회할 수 있다. 서버도 완료 요청의 댓글 작성을 409로 거부한다.
  */
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
@@ -22,10 +25,12 @@ export default function RequestComments({
   requestId,
   comments,
   onAdded,
+  readOnly = false,
 }: {
   requestId: number
   comments: RequestComment[]
   onAdded: () => void
+  readOnly?: boolean
 }) {
   const [text, setText] = useState('')
   const myId = useAuthStore((s) => s.user?.id)
@@ -72,36 +77,44 @@ export default function RequestComments({
         </ul>
       )}
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (canSend) addMutation.mutate()
-        }}
-        className="mt-3 flex items-end gap-2"
-      >
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={2}
-          maxLength={10000}
-          placeholder="메시지를 입력하세요"
-          aria-label="댓글 입력"
-          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
-        <button
-          type="submit"
-          disabled={!canSend}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-        >
-          <Send className="h-4 w-4" /> 등록
-        </button>
-      </form>
-      {addMutation.isError && (
-        <p role="alert" className="mt-1 text-xs text-red-600">
-          댓글 등록 실패:{' '}
-          {(addMutation.error as { errorDescription?: string })?.errorDescription ??
-            '잠시 후 다시 시도해 주세요.'}
+      {readOnly ? (
+        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+          완료된 요청이라 대화가 종료되었습니다. 추가 문의는 새 요청으로 등록해 주세요.
         </p>
+      ) : (
+        <>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (canSend) addMutation.mutate()
+            }}
+            className="mt-3 flex items-end gap-2"
+          >
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={2}
+              maxLength={10000}
+              placeholder="메시지를 입력하세요"
+              aria-label="댓글 입력"
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={!canSend}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              <Send className="h-4 w-4" /> 등록
+            </button>
+          </form>
+          {addMutation.isError && (
+            <p role="alert" className="mt-1 text-xs text-red-600">
+              댓글 등록 실패:{' '}
+              {(addMutation.error as { errorDescription?: string })?.errorDescription ??
+                '잠시 후 다시 시도해 주세요.'}
+            </p>
+          )}
+        </>
       )}
     </div>
   )

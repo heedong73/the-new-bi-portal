@@ -54,6 +54,7 @@ class Request(Base):
     __table_args__ = (
         Index("idx_requests_requester", "requester_id"),
         Index("idx_requests_status", "status"),
+        Index("idx_requests_related", "related_request_id"),
         {"schema": SCHEMA},
     )
 
@@ -67,6 +68,13 @@ class Request(Base):
     operator_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     expected_completion_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # 후속 문의가 참고하는 이전 요청(선택). 완료 요청은 대화가 닫히므로, 새 요청에서
+    # 과거 맥락을 가리키는 용도로만 쓴다. 참조 대상이 삭제되면 NULL로 남긴다.
+    related_request_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey(f"{SCHEMA}.requests.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), nullable=False

@@ -1,7 +1,11 @@
 /** 서비스 요청 상세 모달 (사용자·관리자 공용).
  *
- * 좌: 제목/상태/내용 + 첨부 + 대화(댓글). 우: 메타(상태/구분/요청자/부서/생성일/완료예정)
- * + 관리자 처리(운영자 전용: 상태 변경 접수·반려·완료 / 완료예정일 설정). (R17)
+ * 좌: 제목/상태/참고한 이전 요청/내용 + 첨부 + 대화(댓글). 우: 메타(상태/구분/요청자/
+ * 부서/생성일/완료예정) + 관리자 처리(운영자 전용: 상태 변경 접수·반려·완료 /
+ * 완료예정일 설정). (R17)
+ *
+ * 완료(done) 요청은 대화가 닫히므로 입력창을 숨긴다. 후속 문의는 새 요청에서
+ * 이 요청을 참고로 지정하는 흐름을 쓴다.
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -42,10 +46,13 @@ export default function RequestDetailModal({
   requestId,
   isOperator,
   onClose,
+  onOpenRelated,
 }: {
   requestId: number
   isOperator: boolean
   onClose: () => void
+  /** 참고한 이전 요청으로 이동(미지정 시 링크 없이 제목만 표시). */
+  onOpenRelated?: (relatedRequestId: number) => void
 }) {
   const queryClient = useQueryClient()
   const detailQuery = useQuery({
@@ -103,6 +110,32 @@ export default function RequestDetailModal({
                 {r.requester_name ?? `#${r.requester_id}`} · {fmtDateTime(r.created_at)}
               </div>
 
+              {r.related_request && (
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                  <span className="font-medium text-slate-500">참고한 이전 요청</span>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${REQUEST_STATUS_CLS[r.related_request.status]}`}>
+                      {REQUEST_STATUS_LABEL[r.related_request.status]}
+                    </span>
+                    {onOpenRelated ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenRelated(r.related_request!.id)}
+                        className="truncate font-medium text-blue-600 hover:underline"
+                        title={r.related_request.title}
+                      >
+                        {r.related_request.title}
+                      </button>
+                    ) : (
+                      <span className="truncate text-slate-700" title={r.related_request.title}>
+                        {r.related_request.title}
+                      </span>
+                    )}
+                    <span className="shrink-0 text-slate-400">{fmtDate(r.related_request.created_at)}</span>
+                  </div>
+                </div>
+              )}
+
               {r.body && (
                 <p className="mt-3 whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
                   {r.body}
@@ -139,7 +172,12 @@ export default function RequestDetailModal({
 
               <div className="mt-4">
                 <div className="mb-1 text-sm font-bold text-slate-700">💬 대화</div>
-                <RequestComments requestId={requestId} comments={r.comments} onAdded={invalidate} />
+                <RequestComments
+                  requestId={requestId}
+                  comments={r.comments}
+                  onAdded={invalidate}
+                  readOnly={r.status === 'done'}
+                />
               </div>
             </div>
 

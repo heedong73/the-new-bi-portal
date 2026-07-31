@@ -14,11 +14,16 @@ RequestStatusStr = Literal["pending", "received", "rejected", "done"]
 
 
 class RequestCreate(BaseModel):
-    """요청 생성 (인증된 모든 사용자). 대상 화면은 별도 필드 없이 내용(사유)에 기술."""
+    """요청 생성 (인증된 모든 사용자). 대상 화면은 별도 필드 없이 내용(사유)에 기술.
+
+    related_request_id는 후속 문의가 참고하는 이전 요청(선택). 서버가 조회 권한을
+    검증하므로 본인 요청(운영자는 전체)만 지정할 수 있다.
+    """
 
     request_type: RequestTypeStr
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=5000)
+    related_request_id: int | None = None
 
 
 class RequestUpdate(BaseModel):
@@ -50,6 +55,15 @@ class AttachmentResponse(BaseModel):
     mime_type: str | None = None
     file_size: int | None = None
     is_image: bool = False
+    created_at: datetime
+
+
+class RelatedRequestSummary(BaseModel):
+    """참고한 이전 요청 요약. 본문/첨부 없이 식별용 최소 정보만 노출한다."""
+
+    id: int
+    title: str
+    status: str
     created_at: datetime
 
 
@@ -97,6 +111,8 @@ class RequestResponse(BaseModel):
     operator_response: str | None = None
     reject_reason: str | None = None
     expected_completion_date: date | None = None
+    related_request_id: int | None = None
+    related_request: RelatedRequestSummary | None = None
     created_at: datetime
     updated_at: datetime
     attachments: list[AttachmentResponse] = []

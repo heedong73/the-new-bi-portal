@@ -44,6 +44,10 @@ function extOf(name: string): string {
   const i = name.lastIndexOf('.')
   return i >= 0 ? name.slice(i + 1).toLowerCase() : ''
 }
+function fmtDate(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' })
+}
 function relTime(iso: string): string {
   const d = new Date(iso).getTime()
   if (Number.isNaN(d)) return iso
@@ -214,7 +218,12 @@ export default function ServiceCenterPage() {
         />
       )}
       {detailId !== null && (
-        <RequestDetailModal requestId={detailId} isOperator={isOperator} onClose={() => setDetailId(null)} />
+        <RequestDetailModal
+          requestId={detailId}
+          isOperator={isOperator}
+          onClose={() => setDetailId(null)}
+          onOpenRelated={(id) => setDetailId(id)}
+        />
       )}
     </div>
   )
@@ -230,10 +239,25 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
   const [body, setBody] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [fileError, setFileError] = useState<string | null>(null)
+  const [relatedId, setRelatedId] = useState<number | ''>('')
+
+  // 참고용 후보는 "내가 올린 과거 요청"만. 운영자 목록은 전체를 반환하므로 걸러낸다.
+  const myId = useAuthStore((s) => s.user?.id)
+  const myPastQuery = useQuery({
+    queryKey: ['requests', 'reference-candidates'],
+    queryFn: ({ signal }) => requestsApi.list({}, signal),
+    staleTime: 30_000,
+  })
+  const myPastRequests = (myPastQuery.data ?? []).filter((r) => r.requester_id === myId)
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const created = await requestsApi.create({ request_type: type as RequestType, title: title.trim(), body: body.trim() })
+      const created = await requestsApi.create({
+        request_type: type as RequestType,
+        title: title.trim(),
+        body: body.trim(),
+        related_request_id: relatedId === '' ? null : relatedId,
+      })
       for (const f of files) await requestsApi.uploadAttachment(created.id, f)
       return created
     },
@@ -296,6 +320,29 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
               </p>
             )}
           </label>
+
+          {/* 이전 요청 참고(선택) — 완료된 요청의 후속 문의에서 맥락을 잇는 용도 */}
+          {myPastRequests.length > 0 && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">이전 요청 참고</span>
+              <select
+                value={relatedId === '' ? '' : String(relatedId)}
+                onChange={(e) => setRelatedId(e.target.value === '' ? '' : Number(e.target.value))}
+                aria-label="참고할 이전 요청"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">선택 안 함</option>
+                {myPastRequests.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    [{REQUEST_STATUS_LABEL[r.status]}] {r.title} ({fmtDate(r.created_at)})
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-400">
+                이어지는 문의라면 이전 요청을 지정해 주세요. 운영자가 지난 내용을 함께 확인합니다.
+              </p>
+            </label>
+          )}
 
           {/* 첨부 */}
           <div>

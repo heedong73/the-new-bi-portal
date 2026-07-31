@@ -37,6 +37,14 @@ export interface StatusHistoryEntry {
   created_at: string
 }
 
+/** 참고한 이전 요청 요약 (본문/첨부 없이 식별용 최소 정보). */
+export interface RelatedRequestSummary {
+  id: number
+  title: string
+  status: RequestStatus
+  created_at: string
+}
+
 /** 요청 단건 (RequestResponse). */
 export interface ServiceRequest {
   id: number
@@ -50,6 +58,8 @@ export interface ServiceRequest {
   operator_response: string | null
   reject_reason: string | null
   expected_completion_date: string | null
+  related_request_id: number | null
+  related_request: RelatedRequestSummary | null
   created_at: string
   updated_at: string
   attachments: RequestAttachment[]
@@ -57,11 +67,12 @@ export interface ServiceRequest {
   status_history: StatusHistoryEntry[]
 }
 
-/** 생성 요청 (RequestCreate). */
+/** 생성 요청 (RequestCreate). related_request_id는 참고할 이전 요청(선택). */
 export interface ServiceRequestCreate {
   request_type: RequestType
   title: string
   body: string
+  related_request_id?: number | null
 }
 
 /** 상태 변경/응답/반려/완료예정일 (RequestUpdate, 운영자). */
