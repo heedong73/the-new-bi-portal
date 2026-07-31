@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.core.constants import AuditAction, PermissionAction, SubjectType
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
+from app.models.auth import User
 from app.models.report import Report, Workspace, ReportPermission
 from app.services.audit_service import append_audit, build_audit_snapshot
 from app.services.powerbi.token_service import MockTokenService, TokenService
@@ -75,19 +76,24 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
 
         # 작성자 통계 권한은 신규/재시도 모두 멱등 보장한다.
         if created_by_user_id is not None:
-            permission = await db.scalar(select(ReportPermission).where(
-                ReportPermission.report_id == report.id,
-                ReportPermission.subject_type == SubjectType.USER.value,
-                ReportPermission.subject_id == created_by_user_id,
-                ReportPermission.permission == PermissionAction.VIEW_STATS.value,
-            ))
-            if permission is None:
-                db.add(ReportPermission(
-                    report_id=report.id,
-                    subject_type=SubjectType.USER.value,
-                    subject_id=created_by_user_id,
-                    permission=PermissionAction.VIEW_STATS.value,
+            # 직접 사용자 권한 교체와 같은 사용자 행을 잠가 자동 부여를 직렬화한다.
+            creator_exists = await db.scalar(
+                select(User.id).where(User.id == created_by_user_id).with_for_update()
+            )
+            if creator_exists is not None:
+                permission = await db.scalar(select(ReportPermission).where(
+                    ReportPermission.report_id == report.id,
+                    ReportPermission.subject_type == SubjectType.USER.value,
+                    ReportPermission.subject_id == created_by_user_id,
+                    ReportPermission.permission == PermissionAction.VIEW_STATS.value,
                 ))
+                if permission is None:
+                    db.add(ReportPermission(
+                        report_id=report.id,
+                        subject_type=SubjectType.USER.value,
+                        subject_id=created_by_user_id,
+                        permission=PermissionAction.VIEW_STATS.value,
+                    ))
 
         await db.flush()
         actor_user_id = requested_by_user_id

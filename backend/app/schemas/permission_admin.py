@@ -1,4 +1,4 @@
-"""권한 관리 개편 I/O 스키마 — 그룹/사용자 메뉴 권한, 그룹 허용 계열사 스코프."""
+"""권한 관리 I/O 스키마 — 그룹/사용자 메뉴 권한과 명시적 레포트 권한."""
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -35,23 +35,49 @@ class MenuSubjectItem(BaseModel):
     source_group_id: int | None = None
 
 
-class GroupCompanyScopeSetRequest(BaseModel):
-    """그룹의 허용 계열사(최상위 폴더) 스코프를 전체 교체(멱등)."""
-    root_folder_ids: list[int] = Field(default_factory=list)
-
-
-class GroupCompanyScopeItem(BaseModel):
-    """그룹 허용 계열사 응답 항목."""
-    root_folder_id: int
-    root_folder_name: str
-
-
 class GroupReportBulkGrantRequest(BaseModel):
     """그룹(또는 사용자)에게 여러 레포트에 대해 동일 권한 세트를 한 번에 부여(멱등)."""
     subject_type: str = "group"  # user | group
     subject_id: int
     report_ids: list[int] = Field(default_factory=list, min_length=1)
     permissions: list[PermissionAction] = Field(default_factory=list, min_length=1)
+
+
+class GroupReportPermissionLookupRequest(BaseModel):
+    """선택한 레포트들의 그룹 직접 권한을 한 번에 조회하는 요청."""
+    report_ids: list[int] = Field(default_factory=list, min_length=1)
+
+
+class GroupReportPermissionItem(BaseModel):
+    """한 레포트에 직접 부여된 그룹 권한 항목."""
+    report_id: int
+    permission: PermissionAction
+
+
+class GroupReportPermissionSetRequest(BaseModel):
+    """선택한 레포트들의 직접 그룹 권한을 정확히 설정하는 요청."""
+    report_ids: list[int] = Field(default_factory=list, min_length=1)
+    permissions: list[PermissionAction] = Field(default_factory=list, min_length=1)
+
+
+class GroupReportPermissionSetResult(BaseModel):
+    """직접 그룹 권한 설정 결과."""
+    added: int
+    removed: int
+    permissions: list[PermissionAction]
+
+
+class UserReportPermissionSetRequest(BaseModel):
+    """선택한 레포트들의 직접 사용자 권한을 정확히 설정하는 요청."""
+    report_ids: list[int] = Field(default_factory=list, min_length=1)
+    permissions: list[PermissionAction] = Field(default_factory=list, min_length=1)
+
+
+class UserReportPermissionSetResult(BaseModel):
+    """직접 사용자 권한 설정 결과."""
+    added: int
+    removed: int
+    permissions: list[PermissionAction]
 
 
 # ===== 개인별(사용자) 유효 권한 조회 =====
@@ -80,13 +106,13 @@ class DirectReportPermission(BaseModel):
 
 
 class InheritedReportPermission(BaseModel):
-    """그룹/역할/부서/계열사 스코프로 상속된 레포트 권한(읽기 전용, 출처 표시)."""
+    """그룹/역할/부서에서 상속된 레포트 권한(읽기 전용, 출처 표시)."""
     report_id: int
     report_name: str
     folder_name: str | None = None
     permission: str
-    source_type: str  # group | role | dept | scope
-    source_label: str  # 그룹명 / 역할 코드 / 부서명 / 계열사명
+    source_type: str  # group | role | dept
+    source_label: str  # 그룹명 / 역할 코드 / 부서명
 
 
 class UserEffectivePermissions(BaseModel):

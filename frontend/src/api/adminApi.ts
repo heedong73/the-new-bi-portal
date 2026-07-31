@@ -1,7 +1,6 @@
 /** 관리자 API 래퍼 — users / groups / roles (System_Operator 전용). */
 import apiClient, { request } from '@/api/client'
 import type {
-  GroupCompanyScopeItem,
   GroupMemberItem,
   GroupResponse,
   GroupTreeResponse,
@@ -10,6 +9,8 @@ import type {
   LocalUserCreatePayload,
   LocalUserUpdatePayload,
   MenuSubjectItem,
+  GroupReportPermissionItem,
+  GroupReportPermissionSetResult,
   OrgCompany,
   OrgMember,
   OrgNode,
@@ -109,7 +110,7 @@ export const rolesApi = {
   list: (signal?: AbortSignal) => apiClient.get<RoleResponse[]>('/api/roles', { signal }),
 }
 
-/** 권한 관리(개편) API — 그룹/사용자 메뉴 권한, 그룹 허용 계열사, 주체 우선 레포트 다중 부여. */
+/** 권한 관리 API — 그룹/사용자 메뉴 권한과 주체 우선 레포트 다중 부여. */
 export const permissionAdminApi = {
   /** GET /api/permission-admin/menu-permissions/{subject_type}/{subject_id} — 부여된 메뉴 키 목록. */
   getMenuPermissions: (subjectType: 'user' | 'group', subjectId: number, signal?: AbortSignal) =>
@@ -120,14 +121,25 @@ export const permissionAdminApi = {
   /** GET /api/permission-admin/menu-permissions/by-menu/{menu_key} — 메뉴별 접근 주체. */
   subjectsForMenu: (menuKey: string, signal?: AbortSignal) =>
     apiClient.get<MenuSubjectItem[]>(`/api/permission-admin/menu-permissions/by-menu/${menuKey}`, { signal }),
-  /** GET /api/permission-admin/groups/{group_id}/company-scopes — 그룹 허용 계열사 목록. */
-  getCompanyScopes: (groupId: number, signal?: AbortSignal) =>
-    apiClient.get<GroupCompanyScopeItem[]>(`/api/permission-admin/groups/${groupId}/company-scopes`, { signal }),
-  /** PUT /api/permission-admin/groups/{group_id}/company-scopes — 전체 교체(멱등). */
-  setCompanyScopes: (groupId: number, rootFolderIds: number[]) =>
-    apiClient.put<GroupCompanyScopeItem[]>(`/api/permission-admin/groups/${groupId}/company-scopes`, {
-      root_folder_ids: rootFolderIds,
-    }),
+  /** POST /api/permission-admin/report-permissions/groups/{group_id}/lookup — 선택 레포트의 그룹 직접 권한. */
+  getGroupReportPermissions: (groupId: number, reportIds: number[], signal?: AbortSignal) =>
+    apiClient.post<GroupReportPermissionItem[]>(
+      `/api/permission-admin/report-permissions/groups/${groupId}/lookup`,
+      { report_ids: reportIds },
+      { signal },
+    ),
+  /** PUT /api/permission-admin/report-permissions/groups/{group_id} — 선택 레포트의 그룹 직접 권한을 교체. */
+  setGroupReportPermissions: (groupId: number, body: { report_ids: number[]; permissions: string[] }) =>
+    apiClient.put<GroupReportPermissionSetResult>(
+      `/api/permission-admin/report-permissions/groups/${groupId}`,
+      body,
+    ),
+  /** PUT /api/permission-admin/report-permissions/users/{user_id} — 선택 레포트의 사용자 직접 권한을 교체. */
+  setUserReportPermissions: (userId: number, body: { report_ids: number[]; permissions: string[] }) =>
+    apiClient.put<GroupReportPermissionSetResult>(
+      `/api/permission-admin/report-permissions/users/${userId}`,
+      body,
+    ),
   /** POST /api/permission-admin/report-permissions/bulk-grant — 주체 우선 레포트 다중 권한 부여(멱등). */
   bulkGrantReportPermissions: (body: {
     subject_type: 'user' | 'group'

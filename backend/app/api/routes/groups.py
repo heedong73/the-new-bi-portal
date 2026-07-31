@@ -7,8 +7,9 @@ from sqlalchemy import select, delete, func, text
 from app.core.constants import AuditAction, RoleCode
 from app.core.deps import SessionDep, require_menu
 from app.core.errors import NotFoundError, ConflictError
-from app.models.portal import UserGroup, UserGroupMember
+from app.models.portal import UserGroup, UserGroupMember, MenuPermission
 from app.models.auth import User
+from app.models.report import ReportPermission
 from app.schemas.group import (
     GroupCreate, GroupUpdate, GroupResponse, MemberRequest, GroupMemberItem,
     GroupTreeNode, GroupTreeResponse,
@@ -154,10 +155,21 @@ async def update_group(group_id: int, body: GroupUpdate, db: SessionDep, op=Depe
 
 @router.delete("/{group_id}", status_code=204)
 async def delete_group(group_id: int, db: SessionDep, op=Depends(_require_operator)):
-    """그룹 삭제. 멤버/그룹권한은 DB CASCADE로 함께 제거."""
-    group = await db.scalar(select(UserGroup).where(UserGroup.id == group_id))
+    """그룹 삭제. 구성원과 직접 그룹 메뉴·레포트 권한을 함께 정리한다."""
+    # 그룹 권한 교체와 같은 행을 잠가 삭제·권한 변경을 직렬화한다.
+    group = await db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if group is None:
         raise NotFoundError("그룹을 찾을 수 없습니다.")
+
+    # 다형 권한 테이블은 user_groups를 참조하는 FK가 없으므로 직접 정리한다.
+    await db.execute(delete(MenuPermission).where(
+        MenuPermission.subject_type == "group",
+        MenuPermission.subject_id == group_id,
+    ))
+    await db.execute(delete(ReportPermission).where(
+        ReportPermission.subject_type == "group",
+        ReportPermission.subject_id == group_id,
+    ))
     await db.delete(group)
     await append_audit(db, action=AuditAction.GROUP_CHANGE, result="success",
                        actor_user_id=op["user_id"], actor_label=op["emp_no"],

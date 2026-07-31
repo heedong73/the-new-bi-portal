@@ -162,10 +162,17 @@ export interface MenuSubjectItem {
   source_group_id: number | null
 }
 
-/** 그룹의 허용 계열사(최상위 폴더) 스코프 항목. */
-export interface GroupCompanyScopeItem {
-  root_folder_id: number
-  root_folder_name: string
+/** 선택한 레포트에 그룹으로 직접 부여된 권한 항목. */
+export interface GroupReportPermissionItem {
+  report_id: number
+  permission: string
+}
+
+/** 그룹 직접 레포트 권한을 선택 목록으로 교체한 결과. */
+export interface GroupReportPermissionSetResult {
+  added: number
+  removed: number
+  permissions: string[]
 }
 
 /** 그룹/역할에서 상속된 메뉴 접근(읽기 전용). */
@@ -185,13 +192,13 @@ export interface DirectReportPermission {
   permission: string
 }
 
-/** 그룹/역할/부서/계열사 스코프로 상속된 레포트 권한(읽기 전용). */
+/** 그룹/역할/부서에서 상속된 레포트 권한(읽기 전용). */
 export interface InheritedReportPermission {
   report_id: number
   report_name: string
   folder_name?: string | null
   permission: string
-  source_type: 'group' | 'role' | 'dept' | 'scope'
+  source_type: 'group' | 'role' | 'dept'
   source_label: string
 }
 

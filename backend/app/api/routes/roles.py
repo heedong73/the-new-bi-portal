@@ -12,6 +12,7 @@ from app.core.constants import AuditAction, RoleCode
 from app.core.deps import SessionDep, require_role, require_menu
 from app.core.errors import NotFoundError, ConflictError
 from app.models.auth import User, Role, UserRole
+from app.models.portal import UserGroup
 from app.models.report import Report, ReportPermission
 from app.schemas.permission import (
     RoleResponse, RoleAssignRequest, PermissionGrantRequest, PermissionBulkGrantRequest,
@@ -24,6 +25,26 @@ router = APIRouter(tags=["roles-permissions"])
 
 _require_users_menu = require_menu("admin_users")
 _require_reports_menu = require_menu("admin_reports")
+
+
+async def _lock_direct_report_permission_subject(
+    db: SessionDep, subject_type: object, subject_id: int,
+) -> None:
+    """직접 user/group 레포트 권한 변경을 주체 행 잠금으로 직렬화한다."""
+    subject_kind = getattr(subject_type, "value", subject_type)
+    if subject_kind == "user":
+        user_exists = await db.scalar(
+            select(User.id).where(User.id == subject_id).with_for_update()
+        )
+        if user_exists is None:
+            raise NotFoundError("사용자를 찾을 수 없습니다.")
+    elif subject_kind == "group":
+        group_exists = await db.scalar(
+            select(UserGroup.id).where(UserGroup.id == subject_id).with_for_update()
+        )
+        if group_exists is None:
+            raise NotFoundError("그룹을 찾을 수 없습니다.")
+
 
 # ===== 역할 =====
 @router.get("/api/roles", response_model=list[RoleResponse])
@@ -92,6 +113,8 @@ async def grant_permission(report_id: int, body: PermissionGrantRequest, db: Ses
     if report is None:
         raise NotFoundError("레포트를 찾을 수 없습니다.")
 
+    await _lock_direct_report_permission_subject(db, body.subject_type, body.subject_id)
+
     existing = await db.scalar(
         select(ReportPermission).where(
             ReportPermission.report_id == report_id,
@@ -148,6 +171,8 @@ async def grant_permissions_bulk(report_id: int, body: PermissionBulkGrantReques
     if report is None:
         raise NotFoundError("레포트를 찾을 수 없습니다.")
 
+    await _lock_direct_report_permission_subject(db, body.subject_type, body.subject_id)
+
     existing = {
         p.permission for p in (await db.execute(
             select(ReportPermission).where(
@@ -189,6 +214,15 @@ async def grant_permissions_bulk(report_id: int, body: PermissionBulkGrantReques
 @router.delete("/api/reports/{report_id}/permissions/{permission_id}", status_code=204)
 async def revoke_permission(report_id: int, permission_id: int, db: SessionDep, op=Depends(_require_reports_menu)):
     """레포트 권한 회수."""
+    permission_subject = (await db.execute(
+        select(ReportPermission.subject_type, ReportPermission.subject_id).where(
+            ReportPermission.id == permission_id,
+            ReportPermission.report_id == report_id,
+        )
+    )).one_or_none()
+    if permission_subject is not None:
+        await _lock_direct_report_permission_subject(db, *permission_subject)
+
     await db.execute(
         delete(ReportPermission).where(
             ReportPermission.id == permission_id,

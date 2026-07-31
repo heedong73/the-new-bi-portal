@@ -23,6 +23,7 @@ from app.models.report import (
     FavoriteFolder, Report, Workspace, ReportFavorite, ReportPermission,
     UserReportActivity, ReportViewDailyStat,
 )
+from app.models.auth import User
 from app.models.mail import MailSchedule
 from app.models.log import AuditLog
 from app.workers.celery_app import celery_app
@@ -715,6 +716,12 @@ async def import_status(task_id: str, _op=Depends(_require_operator)):
 async def _grant_creator_view_stats(db: SessionDep, report_id: int, creator_user_id: int | None) -> None:
     """레포트 작성자에게 통계 조회 권한(VIEW_STATS)을 부여(멱등). 관리자가 이후 회수/수정 가능."""
     if not creator_user_id:
+        return
+    # 직접 사용자 권한 교체와 같은 사용자 행을 잠가 자동 부여를 직렬화한다.
+    creator_exists = await db.scalar(
+        select(User.id).where(User.id == creator_user_id).with_for_update()
+    )
+    if creator_exists is None:
         return
     exists = await db.scalar(
         select(ReportPermission).where(

@@ -17,7 +17,11 @@ interface Props {
 
 export default function ReportMultiPicker({ folders, reports, value, onChange }: Props) {
   const [q, setQ] = useState('')
-  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
+  // 최상위 폴더만 처음에 펼쳐 하위 폴더 구조만 보여 준다. 레포트는
+  // 사용자가 해당 하위 폴더를 펼쳤을 때 표시되어 긴 목록을 피한다.
+  const [collapsed, setCollapsed] = useState<Set<number>>(
+    () => new Set(folders.filter((folder) => folder.parent_id !== null).map((folder) => folder.id)),
+  )
 
   const term = q.trim().toLowerCase()
   const matches = (r: ReportAdmin) =>

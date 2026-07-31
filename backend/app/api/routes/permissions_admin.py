@@ -1,7 +1,7 @@
-"""권한 관리(개편) 라우트 — /api/permission-admin (System_Operator 전용).
+"""권한 관리 라우트 — /api/permission-admin (System_Operator 전용).
 
 관리자 콘솔의 "권한 관리" 섹션이 사용한다.
-- 그룹 관리: 그룹별 메뉴 접근 권한 + 허용 계열사(최상위 폴더) 스코프 + 레포트 다중 권한 부여.
+- 그룹 관리: 그룹별 메뉴 접근 권한과 명시적 레포트 다중 권한 부여.
 - 메뉴 관리: 메뉴별로 접근 가능한 주체(그룹/개별 사용자) 조회.
 
 기존 레포트 관리 화면의 레포트별 권한 패널(roles.py의 bulk 엔드포인트)은
@@ -19,13 +19,15 @@ from app.core.constants import (
 from app.core.deps import SessionDep, require_menu
 from app.core.errors import NotFoundError, ValidationError
 from app.models.auth import Department, Role, User, UserRole
-from app.models.portal import UserGroup, UserGroupMember, MenuPermission, GroupCompanyScope
+from app.models.portal import UserGroup, UserGroupMember, MenuPermission
 from app.models.report import Report, ReportFolder, ReportPermission
 from app.services import permission_service
 from app.schemas.permission_admin import (
     MenuPermissionSetRequest, MenuPermissionItem, MenuSubjectItem,
-    GroupCompanyScopeSetRequest, GroupCompanyScopeItem, GroupReportBulkGrantRequest,
-    MENU_SUBJECT_TYPES,
+    GroupReportBulkGrantRequest, GroupReportPermissionLookupRequest,
+    GroupReportPermissionItem, GroupReportPermissionSetRequest,
+    GroupReportPermissionSetResult, UserReportPermissionSetRequest,
+    UserReportPermissionSetResult, MENU_SUBJECT_TYPES,
     UserGroupBrief, InheritedMenuItem, DirectReportPermission,
     InheritedReportPermission, UserEffectivePermissions,
 )
@@ -131,6 +133,19 @@ async def set_menu_permissions(
 ):
     """주체(사용자/그룹)의 메뉴 접근 권한을 전체 교체(멱등). 알 수 없는 메뉴 키는 거부."""
     _validate_subject_type(subject_type)
+    if subject_type == "user":
+        user_exists = await db.scalar(
+            select(User.id).where(User.id == subject_id).with_for_update()
+        )
+        if user_exists is None:
+            raise NotFoundError("사용자를 찾을 수 없습니다.")
+    else:
+        group_exists = await db.scalar(
+            select(UserGroup.id).where(UserGroup.id == subject_id).with_for_update()
+        )
+        if group_exists is None:
+            raise NotFoundError("그룹을 찾을 수 없습니다.")
+
     unknown = [k for k in body.menu_keys if k not in _VALID_MENU_KEYS]
     if unknown:
         raise ValidationError(f"알 수 없는 메뉴 키입니다: {', '.join(unknown)}")
@@ -151,64 +166,171 @@ async def set_menu_permissions(
     return body.menu_keys
 
 
-# ===== 그룹 허용 계열사(최상위 폴더) 스코프 =====
+# ===== 주체 우선 레포트 다중 권한 부여 =====
 
-@router.get("/groups/{group_id}/company-scopes", response_model=list[GroupCompanyScopeItem])
-async def get_group_company_scopes(group_id: int, db: SessionDep, _op=Depends(_require_operator)):
-    """그룹의 허용 계열사(최상위 폴더) 목록."""
-    rows = (await db.execute(
-        select(GroupCompanyScope.root_folder_id, ReportFolder.name)
-        .join(ReportFolder, ReportFolder.id == GroupCompanyScope.root_folder_id)
-        .where(GroupCompanyScope.group_id == group_id)
-        .order_by(ReportFolder.sort_order, ReportFolder.id)
-    )).all()
-    return [GroupCompanyScopeItem(root_folder_id=fid, root_folder_name=name) for fid, name in rows]
-
-
-@router.put("/groups/{group_id}/company-scopes", response_model=list[GroupCompanyScopeItem])
-async def set_group_company_scopes(
-    group_id: int, body: GroupCompanyScopeSetRequest, db: SessionDep, op=Depends(_require_operator),
+@router.post(
+    "/report-permissions/groups/{group_id}/lookup",
+    response_model=list[GroupReportPermissionItem],
+)
+async def list_group_report_permissions(
+    group_id: int, body: GroupReportPermissionLookupRequest,
+    db: SessionDep, _op=Depends(_require_operator),
 ):
-    """그룹의 허용 계열사(최상위 폴더) 스코프를 전체 교체(멱등).
+    """선택한 레포트에 그룹으로 직접 부여된 권한을 한 번에 조회한다."""
+    rows = (await db.execute(
+        select(ReportPermission.report_id, ReportPermission.permission)
+        .where(
+            ReportPermission.report_id.in_(body.report_ids),
+            ReportPermission.subject_type == "group",
+            ReportPermission.subject_id == group_id,
+        )
+        .order_by(ReportPermission.report_id, ReportPermission.permission)
+    )).all()
+    return [
+        GroupReportPermissionItem(report_id=report_id, permission=permission)
+        for report_id, permission in rows
+    ]
 
-    지정한 폴더가 실제로 최상위(parent_id IS NULL)인지 검증한다 — 계열사만 스코프
-    대상이며, 하위 개별 폴더는 기존 레포트별 권한으로 세밀하게 관리한다.
-    """
-    group = await db.scalar(select(UserGroup).where(UserGroup.id == group_id))
-    if group is None:
+
+@router.put(
+    "/report-permissions/groups/{group_id}",
+    response_model=GroupReportPermissionSetResult,
+)
+async def set_group_report_permissions(
+    group_id: int, body: GroupReportPermissionSetRequest,
+    db: SessionDep, op=Depends(_require_operator),
+):
+    """선택한 레포트의 직접 그룹 권한을 요청한 권한 세트로 교체한다."""
+    # 같은 그룹에 대한 동시 설정 요청은 그룹 행 잠금으로 직렬화한다.
+    group_exists = await db.scalar(
+        select(UserGroup.id).where(UserGroup.id == group_id).with_for_update()
+    )
+    if group_exists is None:
         raise NotFoundError("그룹을 찾을 수 없습니다.")
 
-    if body.root_folder_ids:
-        roots = (await db.execute(
-            select(ReportFolder.id).where(
-                ReportFolder.id.in_(body.root_folder_ids), ReportFolder.parent_id.is_(None),
-            )
-        )).scalars().all()
-        invalid = set(body.root_folder_ids) - set(roots)
-        if invalid:
-            raise ValidationError(f"최상위 폴더(계열사)가 아니거나 존재하지 않습니다: {sorted(invalid)}")
+    report_ids = list(dict.fromkeys(body.report_ids))
+    existing_report_ids = (await db.execute(
+        select(Report.id).where(Report.id.in_(report_ids))
+    )).scalars().all()
+    missing = set(report_ids) - set(existing_report_ids)
+    if missing:
+        raise NotFoundError(f"존재하지 않는 레포트입니다: {sorted(missing)}")
 
-    await db.execute(delete(GroupCompanyScope).where(GroupCompanyScope.group_id == group_id))
-    for fid in dict.fromkeys(body.root_folder_ids):
-        db.add(GroupCompanyScope(group_id=group_id, root_folder_id=fid))
-    await db.flush()
-    await append_audit(db, action=AuditAction.PERMISSION_CHANGE, result="success",
-                       actor_user_id=op["user_id"], actor_label=op["emp_no"],
-                       resource_type="group_company_scope", resource_id=str(group_id),
-                       meta={"target": "set_company_scopes", "group_id": group_id,
-                             "root_folder_ids": body.root_folder_ids})
+    # VIEW가 필요한 액션은 VIEW를 자동 포함해, 교체 후에도 접근 불가능한
+    # 다운로드/관리 권한만 남는 모순을 방지한다.
+    desired_codes = permission_service.normalize_grant_codes(body.permissions)
+    existing_pairs = set((await db.execute(
+        select(ReportPermission.report_id, ReportPermission.permission).where(
+            ReportPermission.report_id.in_(report_ids),
+            ReportPermission.subject_type == "group",
+            ReportPermission.subject_id == group_id,
+        )
+    )).all())
+
+    removed_result = await db.execute(
+        delete(ReportPermission).where(
+            ReportPermission.report_id.in_(report_ids),
+            ReportPermission.subject_type == "group",
+            ReportPermission.subject_id == group_id,
+            ~ReportPermission.permission.in_(desired_codes),
+        )
+    )
+    removed = removed_result.rowcount or 0
+
+    added = 0
+    for report_id in report_ids:
+        for code in desired_codes:
+            if (report_id, code) in existing_pairs:
+                continue
+            db.add(ReportPermission(
+                report_id=report_id, subject_type="group",
+                subject_id=group_id, permission=code,
+            ))
+            added += 1
+
+    if added or removed:
+        await db.flush()
+        await append_audit(db, action=AuditAction.PERMISSION_CHANGE, result="success",
+                           actor_user_id=op["user_id"], actor_label=op["emp_no"],
+                           resource_type="report_permission_bulk", resource_id=f"group:{group_id}",
+                           meta={"target": "set_group_report_permissions", "group_id": group_id,
+                                 "report_ids": report_ids, "permissions": desired_codes,
+                                 "added": added, "removed": removed})
     await db.commit()
-
-    rows = (await db.execute(
-        select(GroupCompanyScope.root_folder_id, ReportFolder.name)
-        .join(ReportFolder, ReportFolder.id == GroupCompanyScope.root_folder_id)
-        .where(GroupCompanyScope.group_id == group_id)
-        .order_by(ReportFolder.sort_order, ReportFolder.id)
-    )).all()
-    return [GroupCompanyScopeItem(root_folder_id=fid, root_folder_name=name) for fid, name in rows]
+    return GroupReportPermissionSetResult(
+        added=added, removed=removed, permissions=desired_codes,
+    )
 
 
-# ===== 주체 우선 레포트 다중 권한 부여 =====
+@router.put(
+    "/report-permissions/users/{user_id}",
+    response_model=UserReportPermissionSetResult,
+)
+async def set_user_report_permissions(
+    user_id: int, body: UserReportPermissionSetRequest,
+    db: SessionDep, op=Depends(_require_operator),
+):
+    """선택한 레포트의 직접 사용자 권한을 요청한 권한 세트로 교체한다."""
+    # 같은 사용자에 대한 동시 설정 요청은 사용자 행 잠금으로 직렬화한다.
+    user_exists = await db.scalar(
+        select(User.id).where(User.id == user_id).with_for_update()
+    )
+    if user_exists is None:
+        raise NotFoundError("사용자를 찾을 수 없습니다.")
+
+    report_ids = list(dict.fromkeys(body.report_ids))
+    existing_report_ids = (await db.execute(
+        select(Report.id).where(Report.id.in_(report_ids))
+    )).scalars().all()
+    missing = set(report_ids) - set(existing_report_ids)
+    if missing:
+        raise NotFoundError(f"존재하지 않는 레포트입니다: {sorted(missing)}")
+
+    # VIEW가 필요한 액션은 VIEW를 자동 포함해, 교체 후에도 접근 불가능한
+    # 다운로드/관리 권한만 남는 모순을 방지한다.
+    desired_codes = permission_service.normalize_grant_codes(body.permissions)
+    existing_pairs = set((await db.execute(
+        select(ReportPermission.report_id, ReportPermission.permission).where(
+            ReportPermission.report_id.in_(report_ids),
+            ReportPermission.subject_type == "user",
+            ReportPermission.subject_id == user_id,
+        )
+    )).all())
+
+    removed_result = await db.execute(
+        delete(ReportPermission).where(
+            ReportPermission.report_id.in_(report_ids),
+            ReportPermission.subject_type == "user",
+            ReportPermission.subject_id == user_id,
+            ~ReportPermission.permission.in_(desired_codes),
+        )
+    )
+    removed = removed_result.rowcount or 0
+
+    added = 0
+    for report_id in report_ids:
+        for code in desired_codes:
+            if (report_id, code) in existing_pairs:
+                continue
+            db.add(ReportPermission(
+                report_id=report_id, subject_type="user",
+                subject_id=user_id, permission=code,
+            ))
+            added += 1
+
+    if added or removed:
+        await db.flush()
+        await append_audit(db, action=AuditAction.PERMISSION_CHANGE, result="success",
+                           actor_user_id=op["user_id"], actor_label=op["emp_no"],
+                           resource_type="report_permission_bulk", resource_id=f"user:{user_id}",
+                           meta={"target": "set_user_report_permissions", "user_id": user_id,
+                                 "report_ids": report_ids, "permissions": desired_codes,
+                                 "added": added, "removed": removed})
+    await db.commit()
+    return UserReportPermissionSetResult(
+        added=added, removed=removed, permissions=desired_codes,
+    )
+
 
 @router.post("/report-permissions/bulk-grant", response_model=int)
 async def bulk_grant_report_permissions(
@@ -221,6 +343,20 @@ async def bulk_grant_report_permissions(
     권한 행 수(이미 있던 조합은 건너뛴다).
     """
     _validate_subject_type(body.subject_type)
+    if body.subject_type == "group":
+        # 그룹 권한 교체 API와 같은 행을 잠가, 두 그룹 변경 요청이 서로 덮어쓰지 않게 한다.
+        group_exists = await db.scalar(
+            select(UserGroup.id).where(UserGroup.id == body.subject_id).with_for_update()
+        )
+        if group_exists is None:
+            raise NotFoundError("그룹을 찾을 수 없습니다.")
+    else:
+        # 사용자 권한 교체 API와 같은 행을 잠가, 두 사용자 변경 요청이 서로 덮어쓰지 않게 한다.
+        user_exists = await db.scalar(
+            select(User.id).where(User.id == body.subject_id).with_for_update()
+        )
+        if user_exists is None:
+            raise NotFoundError("사용자를 찾을 수 없습니다.")
 
     existing_reports = (await db.execute(
         select(Report.id).where(Report.id.in_(body.report_ids))
@@ -271,10 +407,10 @@ async def bulk_grant_report_permissions(
 async def get_user_effective_permissions(
     user_id: int, db: SessionDep, _op=Depends(_require_operator),
 ):
-    """한 사용자가 실제로 보유한 권한을 직접/상속(그룹·역할·부서·계열사)으로 구분해 총람.
+    """한 사용자가 실제로 보유한 권한을 직접/상속(그룹·역할·부서)으로 구분해 총람.
 
     - 직접 레포트 권한만 회수 가능(permission_id 포함). 상속 권한은 읽기 전용이며
-      출처(그룹/역할/부서/계열사)를 함께 반환한다.
+      출처(그룹/역할/부서)를 함께 반환한다.
     - System_Operator는 전체 접근이므로 is_operator=True만 반환(레포트 나열 생략).
     """
     user = await db.scalar(select(User).where(User.id == user_id))
@@ -358,26 +494,7 @@ async def get_user_effective_permissions(
         ).where(or_(*conds))
     )).all()
 
-    scope_rows = []
-    if group_ids:
-        scope_rows = (await db.execute(text(
-            """
-            WITH RECURSIVE scoped AS (
-                SELECT gcs.group_id, gcs.root_folder_id, gcs.root_folder_id AS folder_id
-                FROM bip.group_company_scopes gcs
-                WHERE gcs.group_id = ANY(:gids)
-                UNION ALL
-                SELECT s.group_id, s.root_folder_id, rf.id
-                FROM bip.report_folders rf
-                JOIN scoped s ON rf.parent_id = s.folder_id
-            )
-            SELECT DISTINCT r.id AS report_id, s.group_id, s.root_folder_id
-            FROM bip.reports r
-            JOIN scoped s ON r.folder_id = s.folder_id
-            """
-        ), {"gids": group_ids})).all()
-
-    report_ids = {row[1] for row in perm_rows} | {row[0] for row in scope_rows}
+    report_ids = {row[1] for row in perm_rows}
     report_meta: dict[int, tuple[str, str | None]] = {}
     if report_ids:
         for rid, rname, dname, fname in (await db.execute(
@@ -386,14 +503,6 @@ async def get_user_effective_permissions(
             .where(Report.id.in_(report_ids))
         )).all():
             report_meta[rid] = (dname or rname or "(이름 없음)", fname)
-
-    root_name_by_id: dict[int, str] = {}
-    root_folder_ids = {row[2] for row in scope_rows}
-    if root_folder_ids:
-        for fid, fname in (await db.execute(
-            select(ReportFolder.id, ReportFolder.name).where(ReportFolder.id.in_(root_folder_ids))
-        )).all():
-            root_name_by_id[fid] = fname
 
     direct_reports: list[DirectReportPermission] = []
     inherited_reports: list[InheritedReportPermission] = []
@@ -415,15 +524,6 @@ async def get_user_effective_permissions(
         inherited_reports.append(InheritedReportPermission(
             report_id=rep_id, report_name=name, folder_name=folder,
             permission=permission, source_type=stype, source_label=label))
-
-    for rep_id, gid, root_fid in scope_rows:
-        name, folder = report_meta.get(rep_id, ("(이름 없음)", None))
-        company = root_name_by_id.get(root_fid, f"folder#{root_fid}")
-        gname = group_name_by_id.get(gid, f"group#{gid}")
-        inherited_reports.append(InheritedReportPermission(
-            report_id=rep_id, report_name=name, folder_name=folder,
-            permission=PermissionAction.VIEW.value, source_type="scope",
-            source_label=f"{company} · {gname}"))
 
     # 레포트명 → 권한 순으로 정렬해 화면에서 읽기 쉽게
     direct_reports.sort(key=lambda x: (x.report_name, x.permission))

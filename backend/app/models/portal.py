@@ -49,26 +49,3 @@ class MenuPermission(Base):
     subject_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     menu_key: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
-
-
-class GroupCompanyScope(Base):
-    """그룹의 "허용 계열사" 스코프 — 최상위 폴더(계열사) 단위 VIEW 자동 부여.
-
-    그룹에 계열사(최상위 ReportFolder)를 지정하면 그 그룹 멤버는 해당 계열사
-    하위 모든 레포트에 VIEW 권한을 자동으로 갖는다. DOWNLOAD/REFRESH/
-    MANAGE_REPORT/VIEW_STATS 등 세부 권한은 여전히 레포트별로 부여한다.
-    """
-    __tablename__ = "group_company_scopes"
-    __table_args__ = (
-        UniqueConstraint("group_id", "root_folder_id"),
-        {"schema": SCHEMA},
-    )
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    group_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey(f"{SCHEMA}.user_groups.id", ondelete="CASCADE"), nullable=False
-    )
-    root_folder_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey(f"{SCHEMA}.report_folders.id", ondelete="CASCADE"), nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

@@ -19,6 +19,7 @@ from app.core.constants import (
 from app.models.auth import User, UserRole, Role
 from app.models.report import Report, ReportPermission
 
+
 def normalize_grant_codes(codes: Iterable[str]) -> list[str]:
     """부여할 권한 코드 목록을 정규화한다(중복 제거 + VIEW 자동 포함).
 
@@ -44,6 +45,7 @@ async def _is_system_operator(db: AsyncSession, user_id: int) -> bool:
     )
     return code is not None
 
+
 async def accessible_report_ids(
     db: AsyncSession, user_id: int, action: str = PermissionAction.VIEW,
     *, roles: list[str] | None = None,
@@ -53,6 +55,10 @@ async def accessible_report_ids(
     System_Operator면 전체 Report id 반환. 세션 roles 힌트에 System_Operator가
     있으면(로컬 관리자 포함) 즉시 운영자로 간주한다 — 로컬 관리자는 user_roles에
     매핑되지 않으므로 DB 조회만으로는 운영자 판별이 불가하기 때문.
+
+    레포트 접근은 명시적으로 저장된 report_permissions만 사용한다. 그룹별
+    계열사 스코프는 마이그레이션에서 개별 그룹 VIEW 권한으로 변환되므로, 이후
+    새 레포트는 별도로 권한을 부여할 때까지 노출되지 않는다.
     """
     is_operator = (roles is not None and RoleCode.SYSTEM_OPERATOR.value in roles) \
         or await _is_system_operator(db, user_id)
@@ -76,32 +82,8 @@ async def accessible_report_ids(
         """
     )
     rows = await db.execute(sql, {"action": action, "user_id": user_id})
-    ids = {r[0] for r in rows.all()}
+    return {r[0] for r in rows.all()}
 
-    # 그룹 "허용 계열사" 스코프 — VIEW만 자동 부여(권한 관리 개편, 확인사항 3).
-    # 계열사(최상위 폴더) 하위 전체 레포트에 대해 소속 그룹 기준으로 합산한다.
-    if action == PermissionAction.VIEW:
-        scope_rows = await db.execute(text(
-            """
-            WITH RECURSIVE scoped_folders AS (
-                SELECT gcs.root_folder_id AS folder_id
-                FROM bip.group_company_scopes gcs
-                WHERE gcs.group_id IN (
-                    SELECT group_id FROM bip.user_group_members WHERE user_id = :user_id
-                )
-                UNION ALL
-                -- 지정된 계열사(최상위 폴더) 하위 모든 폴더까지 재귀적으로 확장
-                SELECT rf.id
-                FROM bip.report_folders rf
-                JOIN scoped_folders sf ON rf.parent_id = sf.folder_id
-            )
-            SELECT DISTINCT r.id
-            FROM bip.reports r
-            JOIN scoped_folders sf ON r.folder_id = sf.folder_id
-            """
-        ), {"user_id": user_id})
-        ids.update(r[0] for r in scope_rows.all())
-    return ids
 
 async def has_permission(
     db: AsyncSession, user_id: int, report_id: int, action: str = PermissionAction.VIEW,

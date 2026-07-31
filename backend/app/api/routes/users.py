@@ -281,7 +281,7 @@ async def delete_local_user(
 
     HR 매핑 사용자는 인사 뷰가 소스라 여기서 삭제할 수 없다(비활성화만 허용).
     """
-    user = await db.scalar(select(User).where(User.id == user_id))
+    user = await db.scalar(select(User).where(User.id == user_id).with_for_update())
     if user is None:
         raise NotFoundError("사용자를 찾을 수 없습니다.")
     if not user.is_local:

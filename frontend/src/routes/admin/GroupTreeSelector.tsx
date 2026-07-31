@@ -260,7 +260,7 @@ export default function GroupTreeSelector({
           </ul>
         )}
       </div>
-      <p className="mt-2 text-xs text-slate-400">
+      <p className="mt-2 text-sm text-slate-400">
         부서 옆 <RefreshCcw className="inline h-3 w-3" /> 로 해당 조직 하위 팀 그룹을 생성·동기화할 수 있습니다.
       </p>
 
