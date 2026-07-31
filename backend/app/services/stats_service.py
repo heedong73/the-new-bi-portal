@@ -149,7 +149,7 @@ async def get_overview(
     company_id: int | None = None,
     include_system_activity: bool = True,
 ) -> dict:
-    """기본 통계. 담당임원/작성자/필터 범위에는 레포트 활동만 노출한다."""
+    """기본 통계. 레포트 범위 사용자와 필터 조회에는 레포트 활동만 노출한다."""
     nf, nt = _as_naive_utc(from_dt), _as_naive_utc(to_dt)
     af, at = _as_aware_utc(from_dt), _as_aware_utc(to_dt)
 
@@ -167,7 +167,7 @@ async def get_overview(
         )
         return _apply_event_report_scope(stmt, report_ids, company_id)
 
-    # 작성자 범위, 회사/레포트 필터, 담당임원 전역은 로그인·운영 작업을 섞지 않는다.
+    # 레포트 범위 사용자와 회사/레포트 필터는 로그인·운영 작업을 섞지 않는다.
     report_metrics_only = (
         report_ids is not None
         or company_id is not None

@@ -162,7 +162,6 @@ export interface MonitoringStatus {
 export interface StatsCapabilities {
   scope: 'global' | 'author'
   is_operator: boolean
-  is_executive: boolean
   can_view_global_activity: boolean
   can_view_system_operations: boolean
   can_export_raw_events: boolean

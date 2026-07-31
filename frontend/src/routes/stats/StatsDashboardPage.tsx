@@ -1,8 +1,8 @@
 /** 통계 대시보드 (P0~P2 고도화).
  *
- * - System_Operator / Executive_Stats_Reader: 전역 요약, 팀·사용자·레포트,
+ * - System_Operator: 전역 요약, 팀·사용자·레포트,
  *   생명주기, 활용 인사이트, 상세 드릴다운, 추이.
- * - 작성자/VIEW_STATS 권한자: 소유 또는 위임받은 레포트 범위의 사용자 현황,
+ * - 통계 메뉴 + VIEW_STATS 권한자: 소유 또는 위임받은 레포트 범위의 사용자 현황,
  *   레포트별 성과, 유효 체류·재방문·기간 비교 인사이트.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -706,7 +706,7 @@ function OverviewKpis({ o, periodActive }: { o: StatsOverview; periodActive: boo
   )
 }
 
-// ── 전역 대시보드 (운영자/담당임원, 역할별 분석 탭) ─────────────────────────
+// ── 전역 대시보드 (시스템 운영자 전용) ─────────────────────────────────────
 type Tab = 'main' | 'teams' | 'users' | 'reports' | 'lifecycle' | 'insights' | 'detail' | 'trends'
 const TABS: { key: Tab; label: string }[] = [
   { key: 'main', label: '요약' },
@@ -1098,7 +1098,7 @@ function AuthorKpis({ o, h }: { o: StatsOverview; h?: StatsHighlights }) {
   )
 }
 
-// ── Super_User 대시보드 (VIEW_STATS 부여 레포트 스코프, 작성자 전체 기본) ─────
+// ── 레포트 범위 통계 대시보드 (VIEW_STATS 부여 레포트 + 작성 레포트) ──────────
 function ScopedUserStats() {
   // null = 전체(작성자 게시 레포트 전체), 값 있으면 그 레포트만(드릴다운)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -1324,8 +1324,6 @@ function ScopedUserStats() {
 
 export default function StatsDashboardPage() {
   const user = useAuthStore((s) => s.user)
-  const roles = user?.roles ?? []
-  const hasGlobalStats = roles.includes('System_Operator')
-    || roles.includes('Executive_Stats_Reader')
+  const hasGlobalStats = user?.roles.includes('System_Operator') ?? false
   return hasGlobalStats ? <OperatorStats /> : <ScopedUserStats />
 }

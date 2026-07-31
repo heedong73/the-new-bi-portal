@@ -13,7 +13,6 @@ import { getDefaultExpandedOrgIds, prioritizePrimaryCompany } from './orgTreeDef
 
 const ROLE_LEVELS = [
   { code: 'General_User', label: '일반 사용자' },
-  { code: 'Executive_Stats_Reader', label: '담당임원 (통계 열람)' },
   { code: 'System_Operator', label: '시스템 운영자' },
 ]
 

@@ -14,7 +14,6 @@ from app.services.auth.hr_authenticator import HRProfile
 
 _ROLE_LEVELS = {
     RoleCode.GENERAL_USER.value,
-    RoleCode.EXECUTIVE_STATS_READER.value,
     RoleCode.SYSTEM_OPERATOR.value,
 }
 
@@ -51,24 +50,19 @@ async def get_or_register(db: AsyncSession, emp_no: str) -> User | None:
 
 
 def role_level_of(codes: set[str]) -> str | None:
-    """역할 코드 집합 → 단일 관리 화면 레벨(최상위)."""
+    """역할 코드 집합 → 관리 화면의 단일 역할 레벨."""
     if RoleCode.SYSTEM_OPERATOR.value in codes:
         return RoleCode.SYSTEM_OPERATOR.value
-    if RoleCode.EXECUTIVE_STATS_READER.value in codes:
-        return RoleCode.EXECUTIVE_STATS_READER.value
     if codes:
         return RoleCode.GENERAL_USER.value
     return None
 
 
 async def set_role_level(db: AsyncSession, user_id: int, role_code: str) -> None:
-    """General_User를 유지하면서 운영자/담당임원 중 선택한 상위 역할만 설정한다."""
+    """General_User를 유지하면서 시스템 운영자 역할만 추가 또는 회수한다."""
     roles = {r.code: r.id for r in (await db.execute(select(Role))).scalars().all()}
     target = {RoleCode.GENERAL_USER.value}
-    if role_code in {
-        RoleCode.SYSTEM_OPERATOR.value,
-        RoleCode.EXECUTIVE_STATS_READER.value,
-    }:
+    if role_code == RoleCode.SYSTEM_OPERATOR.value:
         target.add(role_code)
 
     current = {

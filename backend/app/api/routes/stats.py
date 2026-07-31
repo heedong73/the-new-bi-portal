@@ -30,10 +30,8 @@ def _is_operator(current: dict) -> bool:
 
 
 def _has_global_stats_scope(current: dict) -> bool:
-    """관리 기능 없이 전체 통계만 읽는 담당임원도 전역 통계 스코프로 인정한다."""
-    return _is_operator(current) or (
-        RoleCode.EXECUTIVE_STATS_READER.value in current.get("roles", [])
-    )
+    """시스템 운영자만 전역 통계 스코프를 가진다."""
+    return _is_operator(current)
 
 
 def _cache_key(prefix: str, from_dt: datetime | None, to_dt: datetime | None, scope: str = "all") -> str:
@@ -65,8 +63,6 @@ async def _resolve_scope(
     """
     if _is_operator(current):
         cache_role = "operator"
-    elif RoleCode.EXECUTIVE_STATS_READER.value in current.get("roles", []):
-        cache_role = "executive"
     else:
         cache_role = f"author{current['user_id']}"
 
@@ -406,12 +402,10 @@ async def stats_capabilities(
 ):
     """프런트 정보구조 분기를 위한 현재 사용자의 통계 범위/역할 capability."""
     is_operator = _is_operator(current)
-    is_executive = RoleCode.EXECUTIVE_STATS_READER.value in current.get("roles", [])
     return {
-        "scope": "global" if _has_global_stats_scope(current) else "author",
+        "scope": "global" if is_operator else "author",
         "is_operator": is_operator,
-        "is_executive": is_executive,
-        "can_view_global_activity": is_operator or is_executive,
+        "can_view_global_activity": is_operator,
         "can_view_system_operations": is_operator,
         "can_export_raw_events": True,
     }
