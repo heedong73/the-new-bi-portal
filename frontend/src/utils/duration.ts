@@ -43,3 +43,25 @@ export function formatDuration(totalSeconds: number): string {
 }
 
 export default formatDuration;
+
+/**
+ * 소요 시간(초)을 운영 화면용 한국어 문장으로 변환한다.
+ *
+ * `formatDuration`의 `mm:ss`는 간트/표처럼 폭이 좁고 값이 나란히 놓이는 곳에 맞지만,
+ * 운영 상태·발송 이력처럼 한 건씩 읽는 화면에서는 "42초"가 더 빨리 읽힌다.
+ *
+ * @param seconds 소요 시간(초). null/undefined/비정상 입력은 null 반환.
+ * @returns `42초` · `1분 35초` · `1시간 2분 5초` 또는 null
+ */
+export function formatDurationKo(
+  seconds: number | null | undefined
+): string | null {
+  if (seconds == null || !Number.isFinite(seconds)) return null;
+  const total = Math.max(0, Math.floor(seconds));
+  if (total < 60) return `${total}초`;
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  if (minutes < 60) return `${minutes}분 ${rest}초`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}시간 ${minutes % 60}분 ${rest}초`;
+}

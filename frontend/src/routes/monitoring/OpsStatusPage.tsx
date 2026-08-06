@@ -1,13 +1,17 @@
-/** 운영 상태 — 핵심 의존성, 예약 실행 경로, 최근 작업과 실패 원인을 한 화면에서 확인한다. */
+﻿/** 운영 상태 — 핵심 의존성, 예약 실행 경로, 최근 작업과 실패 원인을 한 화면에서 확인한다. */
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import {
-  Activity, AlertTriangle, CheckCircle2, Clock3, Cloud,
+  Activity, AlertTriangle, CheckCircle2, ChevronRight, Clock3, Cloud,
   Cpu, Database, FileDown, Mail, RefreshCw, Server, XCircle,
   type LucideIcon,
 } from 'lucide-react'
 
 import { monitoringApi } from '@/api/dashboardApi'
 import type { RecentJob } from '@/types/dashboard'
+// 백엔드가 보낸 벽시계 시각을 추가 변환 없이 초까지 표시한다(프로젝트 표기 규약).
+import { formatLocalDateTime } from '@/utils/date'
+import { formatDurationKo } from '@/utils/duration'
 
 const POLL_MS = 15_000
 
@@ -43,28 +47,6 @@ const TONE_STYLE: Record<Tone, {
     badge: 'bg-slate-100 text-slate-600',
     label: '확인 불가',
   },
-}
-
-function pad2(value: number): string {
-  return String(value).padStart(2, '0')
-}
-
-/** 장애 순서 비교가 가능하도록 모든 운영 시각을 로컬 연월일 시:분:초로 표시한다. */
-function fmtDateTimeSeconds(value?: string | null): string {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
-}
-
-function fmtDuration(seconds?: number | null): string | null {
-  if (seconds == null) return null
-  if (seconds < 60) return `${seconds}초`
-  const minutes = Math.floor(seconds / 60)
-  const remains = seconds % 60
-  if (minutes < 60) return `${minutes}분 ${remains}초`
-  const hours = Math.floor(minutes / 60)
-  return `${hours}시간 ${minutes % 60}분 ${remains}초`
 }
 
 function fmtLatency(value?: number | null): string {
@@ -142,18 +124,29 @@ function jobPresentation(status: string): { label: string; tone: Tone } {
   }
 }
 
-function JobList({ title, Icon, jobs, available, unavailableMessage }: {
+function JobList({ title, Icon, jobs, available, unavailableMessage, fullListTo, fullListLabel }: {
   title: string
   Icon: LucideIcon
   jobs: RecentJob[]
   available: boolean
   unavailableMessage?: string | null
+  /** 전체 이력은 전용 화면이 담당한다. 이 화면은 최신 5건까지만 보여준다. */
+  fullListTo: string
+  fullListLabel: string
 }) {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center gap-2">
-        <Icon className="h-4 w-4 text-slate-500" />
+        <Icon className="h-4 w-4 shrink-0 text-slate-500" />
         <h3 className="text-sm font-bold text-slate-700">{title}</h3>
+        <Link
+          to={fullListTo}
+          title={fullListLabel}
+          className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-medium text-blue-700 transition hover:bg-blue-50"
+        >
+          전체 보기
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Link>
       </div>
       {!available ? (
         <div className="rounded-lg bg-red-50 px-3 py-4 text-sm text-red-700">
@@ -169,7 +162,7 @@ function JobList({ title, Icon, jobs, available, unavailableMessage }: {
             const status = jobPresentation(job.status)
             const style = TONE_STYLE[status.tone]
             const time = job.finished_at || job.started_at
-            const duration = fmtDuration(job.duration_seconds)
+            const duration = formatDurationKo(job.duration_seconds)
             return (
               <li key={job.id} className="rounded-lg border border-slate-100 bg-slate-50/60 p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -188,7 +181,7 @@ function JobList({ title, Icon, jobs, available, unavailableMessage }: {
                   </span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400">
-                  <span>{fmtDateTimeSeconds(time)}</span>
+                  <span>{formatLocalDateTime(time)}</span>
                   {duration && <span>· 소요 {duration}</span>}
                   {job.retry_count != null && job.retry_count > 0 && <span>· 재시도 {job.retry_count}회</span>}
                   <span>· 작업 #{job.id}</span>
@@ -293,7 +286,7 @@ export default function OpsStatusPage() {
               종합 상태: {overallTone === 'ok' ? '정상' : overallTone === 'error' ? '장애' : '주의 필요'}
             </p>
             <p className="text-xs text-slate-500">
-              마지막 확인 {fmtDateTimeSeconds(s.checked_at)} · {POLL_MS / 1000}초마다 자동 갱신
+              마지막 확인 {formatLocalDateTime(s.checked_at)} · {POLL_MS / 1000}초마다 자동 갱신
             </p>
           </div>
         </div>
@@ -344,7 +337,7 @@ export default function OpsStatusPage() {
           tone={schedulerTone}
           Icon={Clock3}
           detail={s.scheduler.last_heartbeat
-            ? `최근 heartbeat ${fmtDateTimeSeconds(s.scheduler.last_heartbeat)}`
+            ? `최근 heartbeat ${formatLocalDateTime(s.scheduler.last_heartbeat)}`
             : s.scheduler.message}
           technicalDetail={s.scheduler.age_seconds != null ? `${s.scheduler.age_seconds}초 전 확인` : null}
           impact="자동 수집과 예약 메일의 정시 실행"
@@ -358,7 +351,7 @@ export default function OpsStatusPage() {
           Icon={Cloud}
           detail={s.powerbi.message}
           technicalDetail={[
-            s.powerbi.checked_at ? `확인 ${fmtDateTimeSeconds(s.powerbi.checked_at)}` : null,
+            s.powerbi.checked_at ? `확인 ${formatLocalDateTime(s.powerbi.checked_at)}` : null,
             s.powerbi.latency_ms != null ? fmtLatency(s.powerbi.latency_ms) : null,
           ].filter(Boolean).join(' · ') || null}
           impact="레포트 조회·새로고침·파일 내보내기"
@@ -385,6 +378,8 @@ export default function OpsStatusPage() {
           jobs={s.recent_jobs.refresh}
           available={s.recent_jobs_available}
           unavailableMessage={s.recent_jobs_error}
+          fullListTo="/monitoring/refresh"
+          fullListLabel="Refresh 현황에서 전체 새로고침 이력 보기"
         />
         <JobList
           title="최근 예약 메일 발송"
@@ -392,6 +387,8 @@ export default function OpsStatusPage() {
           jobs={s.recent_jobs.mail}
           available={s.recent_jobs_available}
           unavailableMessage={s.recent_jobs_error}
+          fullListTo="/mail/jobs"
+          fullListLabel="메일 발송 이력에서 전체 이력 보기"
         />
         <JobList
           title="최근 파일 내보내기"
@@ -399,6 +396,9 @@ export default function OpsStatusPage() {
           jobs={s.recent_jobs.export}
           available={s.recent_jobs_available}
           unavailableMessage={s.recent_jobs_error}
+          // 내보내기 전용 목록 화면은 없어 감사 로그의 내보내기 행위로 연결한다.
+          fullListTo="/admin/audit-logs?action=export_run"
+          fullListLabel="감사 로그에서 내보내기 이력 보기"
         />
       </div>
 

@@ -10,6 +10,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { Download, History } from 'lucide-react'
 
 import { auditApi } from '@/api/auditApi'
@@ -108,9 +109,12 @@ function exportCsv(rows: AuditLogItem[]) {
 }
 
 export default function AuditLogsPage() {
+  // 다른 화면에서 특정 행위 이력으로 바로 보낼 수 있게 초기 필터를 URL에서 받는다
+  // (예: 운영 상태의 파일 내보내기 전체 보기 → ?action=export_run).
+  const [searchParams] = useSearchParams()
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
-  const [action, setAction] = useState('')
+  const [action, setAction] = useState(searchParams.get('action') ?? '')
   const [result, setResult] = useState('')
   const [q, setQ] = useState('')
   const [page, setPage] = useState(0)

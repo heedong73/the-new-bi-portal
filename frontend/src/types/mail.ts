@@ -83,6 +83,10 @@ export interface MailScheduleCreate {
 export interface MailJob {
   id: number
   mail_schedule_id: number
+  /** 스케줄 제목. 스케줄이 삭제된 과거 이력은 없을 수 있다. */
+  schedule_title?: string | null
+  /** 발송 대상 레포트명. */
+  report_name?: string | null
   run_key: string
   status: string
   started_at?: string | null

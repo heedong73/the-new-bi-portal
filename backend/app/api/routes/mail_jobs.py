@@ -13,7 +13,8 @@ from app.core.constants import MailJobStatus
 from app.core.deps import SessionDep, require_menu
 from app.core.errors import NotFoundError, ValidationError
 from app.core.logging import get_logger
-from app.models.mail import MailJob
+from app.models.mail import MailJob, MailSchedule
+from app.models.report import Report
 from app.schemas.mail_job import MailJobResponse, MailJobRetryResponse
 from app.workers.celery_app import celery_app
 
@@ -39,9 +40,28 @@ async def list_mail_jobs(
     if status is not None:
         stmt = stmt.where(MailJob.status == status)
     jobs = (await db.execute(stmt)).scalars().all()
+
+    # 스케줄 번호만으로는 어떤 발송인지 알 수 없어 제목과 레포트명을 함께 채운다.
+    schedule_ids = {int(j.mail_schedule_id) for j in jobs}
+    labels: dict[int, tuple[str | None, str | None]] = {}
+    if schedule_ids:
+        rows = (await db.execute(
+            select(MailSchedule, Report)
+            .outerjoin(Report, Report.id == MailSchedule.report_id)
+            .where(MailSchedule.id.in_(schedule_ids))
+        )).all()
+        for schedule, report in rows:
+            report_name = None
+            if report is not None:
+                report_name = report.display_name or report.report_name
+            labels[int(schedule.id)] = (schedule.title, report_name)
+
     return [
         MailJobResponse(
-            id=j.id, mail_schedule_id=j.mail_schedule_id, run_key=j.run_key,
+            id=j.id, mail_schedule_id=j.mail_schedule_id,
+            schedule_title=labels.get(int(j.mail_schedule_id), (None, None))[0],
+            report_name=labels.get(int(j.mail_schedule_id), (None, None))[1],
+            run_key=j.run_key,
             status=j.status, started_at=j.started_at, finished_at=j.finished_at,
             failure_reason=j.failure_reason, retry_count=j.retry_count,
         )

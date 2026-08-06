@@ -11,6 +11,7 @@ from sqlalchemy import text
 from app.core.constants import AuditAction, RoleCode
 from app.core.config import settings
 from app.core.deps import SessionDep, RedisDep, require_menu
+from app.core.timezone import local_isoformat
 from app.schemas.refresh import CollectNowOut, CollectStatusOut
 from app.services import monitoring_service
 from app.services.audit_service import append_audit
@@ -97,7 +98,8 @@ async def health():
 @router.get("/api/monitoring/status")
 async def monitoring_status(db: SessionDep, redis: RedisDep, _op=Depends(_require_operator)):
     """핵심 의존성·예약 경로·Power BI 연결과 최근 작업 상태를 집계한다."""
-    checked_at = datetime.now(timezone.utc).isoformat()
+    # 화면은 백엔드가 보낸 벽시계 시각을 그대로 표시하므로 로컬(APP_TIMEZONE) ISO로 내려준다.
+    checked_at = local_isoformat(datetime.now(timezone.utc))
 
     # 성공 여부뿐 아니라 지연 시간도 남겨 장애 전 느려짐을 확인할 수 있게 한다.
     db_started = time.perf_counter()

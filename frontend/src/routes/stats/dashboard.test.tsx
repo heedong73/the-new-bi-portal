@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router-dom'
 
 import StatsDashboardPage from './StatsDashboardPage'
 import OpsStatusPage from '@/routes/monitoring/OpsStatusPage'
@@ -73,7 +74,12 @@ const STATUS: MonitoringStatus = {
 
 function wrap(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  // 운영 상태의 전체 보기 링크가 라우터 컨텍스트를 요구한다.
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  )
 }
 
 beforeEach(() => {
@@ -115,5 +121,15 @@ describe('OpsStatusPage', () => {
     expect(await screen.findByText(/2026-08-05 08:30:42/)).toBeInTheDocument()
     expect(await screen.findByText(/소요 42초/)).toBeInTheDocument()
     expect(await screen.findByText(/마지막 확인 2026-08-05 17:42:15/)).toBeInTheDocument()
+  })
+
+  it('작업별 전체 이력 화면으로 가는 링크를 제공한다', async () => {
+    wrap(<OpsStatusPage />)
+    const links = await screen.findAllByRole('link', { name: /전체 보기/ })
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      '/monitoring/refresh',
+      '/mail/jobs',
+      '/admin/audit-logs?action=export_run',
+    ])
   })
 })

@@ -1,4 +1,4 @@
-"""운영 상태 모니터링 집계.
+﻿"""운영 상태 모니터링 집계.
 
 애플리케이션 구성요소 상태와 최근 작업을 운영자가 바로 이해할 수 있는 형태로
 정규화한다. 기술 ID는 로그 대조용 보조 정보로 남기고, 화면의 주 식별자는
@@ -144,7 +144,7 @@ async def scheduler_status(redis: Any) -> dict[str, Any]:
     stale = age > SCHEDULER_STALE_SECONDS
     return {
         "status": "unavailable" if stale else "ok",
-        "last_heartbeat": heartbeat.isoformat(),
+        "last_heartbeat": local_isoformat(heartbeat),
         "age_seconds": age,
         "message": "heartbeat가 지연되고 있습니다." if stale else "예약 작업 실행 경로가 정상입니다.",
     }
@@ -164,7 +164,7 @@ async def powerbi_status(redis: Any) -> dict[str, Any]:
     if settings.APP_MODE == "mock":
         return {
             "status": "mock",
-            "checked_at": now.isoformat(),
+            "checked_at": local_isoformat(now),
             "latency_ms": 0,
             "http_status": None,
             "message": "모의 모드로 외부 Power BI를 호출하지 않습니다.",
@@ -207,7 +207,7 @@ async def powerbi_status(redis: Any) -> dict[str, Any]:
             status, message = "error", f"Power BI API 연결 오류(HTTP {code})입니다."
         result = {
             "status": status,
-            "checked_at": now.isoformat(),
+            "checked_at": local_isoformat(now),
             "latency_ms": latency_ms,
             "http_status": code,
             "message": message,
@@ -215,7 +215,7 @@ async def powerbi_status(redis: Any) -> dict[str, Any]:
     except asyncio.TimeoutError:
         result = {
             "status": "error",
-            "checked_at": now.isoformat(),
+            "checked_at": local_isoformat(now),
             "latency_ms": round((time.perf_counter() - started) * 1000, 1),
             "http_status": None,
             "message": "Power BI 연결 확인 시간이 초과됐습니다.",
@@ -224,7 +224,7 @@ async def powerbi_status(redis: Any) -> dict[str, Any]:
         logger.warning("powerbi_health_failed", error_type=type(exc).__name__)
         result = {
             "status": "error",
-            "checked_at": now.isoformat(),
+            "checked_at": local_isoformat(now),
             "latency_ms": round((time.perf_counter() - started) * 1000, 1),
             "http_status": getattr(exc, "azure_status_code", None),
             "message": "Azure 인증 또는 Power BI API에 연결할 수 없습니다.",

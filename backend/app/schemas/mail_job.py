@@ -7,10 +7,16 @@ from pydantic import BaseModel
 
 
 class MailJobResponse(BaseModel):
-    """메일 발송 잡 이력 응답."""
+    """메일 발송 잡 이력 응답.
+
+    schedule_title/report_name은 운영자가 목록에서 대상을 바로 알 수 있도록 제공한다.
+    스케줄이 삭제된 과거 이력은 None이 될 수 있다.
+    """
 
     id: int
     mail_schedule_id: int
+    schedule_title: str | None = None
+    report_name: str | None = None
     run_key: str
     status: str
     started_at: datetime | None = None
