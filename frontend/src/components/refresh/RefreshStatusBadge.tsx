@@ -42,7 +42,7 @@ export default function RefreshStatusBadge({ status, isLoading }: Props) {
         {label}
       </span>
       {status.last_refresh_local && (
-        <span className="text-xs text-slate-500">마지막: {status.last_refresh_local}</span>
+        <span className="text-[13px] text-slate-500">마지막: {status.last_refresh_local}</span>
       )}
       {status.next_scheduled_local && (
         <span className="text-xs text-slate-400">다음 예약: {status.next_scheduled_local}</span>

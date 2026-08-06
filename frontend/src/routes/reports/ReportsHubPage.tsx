@@ -623,7 +623,7 @@ export default function ReportsHubPage() {
       >
         {(mode === 'home' || mode === 'catalog') && (
           <>
-            <div className="report-hub-categories" aria-label="최상위 폴더 선택">
+            <div className="report-hub-categories report-hub-categories--roots" aria-label="최상위 폴더 선택">
               <button
                 type="button"
                 onClick={() => selectRoot(null)}

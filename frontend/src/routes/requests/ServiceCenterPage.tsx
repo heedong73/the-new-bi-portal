@@ -289,7 +289,7 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
 
         <form onSubmit={(e) => { e.preventDefault(); if (canSubmit) createMutation.mutate() }} className="space-y-4">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600"><span className="text-red-500">*</span> 제목</span>
+            <span className="mb-1 block text-sm font-medium text-slate-600"><span className="text-red-500">*</span> 제목</span>
             <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200}
               placeholder="요청 제목을 입력하세요" aria-label="제목"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
@@ -297,7 +297,7 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600"><span className="text-red-500">*</span> 내용</span>
+            <span className="mb-1 block text-sm font-medium text-slate-600"><span className="text-red-500">*</span> 내용</span>
             <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5} maxLength={5000}
               placeholder="요청 내용을 상세히 입력하세요 (대상 화면/레포트도 여기에 적어주세요)" aria-label="내용"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
@@ -305,7 +305,7 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600"><span className="text-red-500">*</span> 구분</span>
+            <span className="mb-1 block text-sm font-medium text-slate-600"><span className="text-red-500">*</span> 구분</span>
             <select value={type} onChange={(e) => setType(e.target.value as RequestType | '')} aria-label="구분"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
               <option value="">구분 선택</option>
@@ -324,7 +324,7 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
           {/* 이전 요청 참고(선택) — 완료된 요청의 후속 문의에서 맥락을 잇는 용도 */}
           {myPastRequests.length > 0 && (
             <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-600">이전 요청 참고</span>
+              <span className="mb-1 block text-sm font-medium text-slate-600">이전 요청 참고</span>
               <select
                 value={relatedId === '' ? '' : String(relatedId)}
                 onChange={(e) => setRelatedId(e.target.value === '' ? '' : Number(e.target.value))}
@@ -338,7 +338,7 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
                   </option>
                 ))}
               </select>
-              <p className="mt-1 text-xs text-slate-400">
+              <p className="mt-1 text-sm text-slate-400">
                 이어지는 문의라면 이전 요청을 지정해 주세요. 운영자가 지난 내용을 함께 확인합니다.
               </p>
             </label>
@@ -346,13 +346,13 @@ function CreateRequestModal({ onClose, onCreated }: { onClose: () => void; onCre
 
           {/* 첨부 */}
           <div>
-            <span className="mb-1 block text-xs font-medium text-slate-600">첨부파일</span>
+            <span className="mb-1 block text-sm font-medium text-slate-600">첨부파일</span>
             <input ref={fileInputRef} id="sr-file" type="file" multiple accept={ACCEPT}
               onChange={(e) => addFiles(e.target.files)} className="hidden" aria-label="첨부파일 선택" />
             <label htmlFor="sr-file"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files) }}
-              className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 px-4 py-6 text-center text-xs text-slate-400 hover:border-blue-300 hover:bg-slate-50">
+              className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-400 hover:border-blue-300 hover:bg-slate-50">
               <Paperclip className="mb-1 h-5 w-5 text-slate-400" />
               파일을 드래그하거나 클릭하여 선택하세요
               <span className="mt-0.5">최대 5개, 10MB 이하 (jpg, png, gif, pdf, xlsx, docx, txt, csv, zip)</span>

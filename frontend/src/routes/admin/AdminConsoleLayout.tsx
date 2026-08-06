@@ -117,11 +117,6 @@ export default function AdminConsoleLayout() {
             </Link>
           </div>
           <div className="flex items-center gap-4">
-            {lastLoginLabel && (
-              <span className="editorial-user__last-login shrink-0 text-xs text-slate-400">
-                마지막 접속 {lastLoginLabel}
-              </span>
-            )}
             <div
               className="editorial-user text-right"
               title={`${user?.name ?? '-'} / ${userRoleLabel(roles)}, ${user?.department_name?.trim() || '팀 미지정'}`}
@@ -130,6 +125,11 @@ export default function AdminConsoleLayout() {
               <div className="editorial-user__meta">
                 {userRoleLabel(roles)}, {user?.department_name?.trim() || '팀 미지정'}
               </div>
+              {lastLoginLabel && (
+                <div className="editorial-user__last-login text-xs text-slate-400">
+                  마지막 접속 {lastLoginLabel}
+                </div>
+              )}
             </div>
             <button
               type="button"

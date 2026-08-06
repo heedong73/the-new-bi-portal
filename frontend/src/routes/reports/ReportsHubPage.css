@@ -418,6 +418,11 @@
   transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
 }
 
+/* 메인/카탈로그의 최상위 폴더(전체 포함)만 즐겨찾기 필터와 분리해 확대한다. */
+.report-hub-categories--roots button {
+  font-size: 14px;
+}
+
 .report-hub-categories button:hover {
   border-color: #d4d6cf;
   background: rgb(255 254 250 / 70%);

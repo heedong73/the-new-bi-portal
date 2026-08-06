@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { Search, X } from 'lucide-react'
 
@@ -37,20 +40,20 @@ const METRIC_HELP = {
   reportViews: '레포트 화면이 실제로 열린 횟수입니다. 같은 사람이 여러 번 열면 각각 셉니다.',
   uniqueViewers: '기간 안에 한 번이라도 조회한 사람 수입니다(같은 사람은 한 번만 셉니다).',
   reportsViewed: '그 사용자가 본 서로 다른 레포트 수입니다.',
-  downloads: '레포트 파일 다운로드 요청 수입니다.',
+  downloads: '레포트 파일 관련 다운로드 요청 수입니다.',
   logins: '포털에 로그인한 횟수입니다. 레포트 조회와 별개로 접속 자체를 셉니다.',
   engagedViews: '30초 이상 화면을 보고 있던 조회입니다.',
   engagedRate: '유효 조회 ÷ 전체 조회입니다. 값이 높으면 레포트를 클릭한 사람이 실제로 내용까지 본 비율이 높다는 뜻입니다.',
   repeatViewers: '기간 안에 같은 레포트를 2회 이상 본 사람 수입니다. 레포트를 계속 이용하는 사람입니다.',
   repeatRate: '재방문자 ÷ 고유 조회자입니다.',
   reachRate: '이 레포트를 조회한 사람 ÷ 전체 활성 사용자입니다. 조직에서 얼마나 널리 퍼졌는지 보는 값입니다.',
-  teamAdoptionRate: '그 팀에서 조회한 사람 ÷ 그 팀 전체 사용자입니다. 왼쪽 활성/대상 칸을 비율로 나타낸 값입니다.',
+  teamAdoptionRate: '그 팀에서 조회한 사람 ÷ 그 팀의 현재 활성 등록 사용자입니다. 왼쪽 활성/대상 칸을 비율로 나타낸 값입니다.',
   duration: '화면에 실제로 체류한 시간의 합계(근사치)입니다.',
   avgDuration: '조회 1건당 평균 체류시간(근사치)입니다.',
   previousPeriod: '선택한 기간 바로 앞의 같은 길이 기간입니다(예 : 최근 7일을 조회 중이라면 그 앞 7일과 비교합니다).',
   declining: '직전기간에 3회 이상 조회됐는데 현재 기간 조회가 그 절반 이하로 떨어진 레포트입니다.',
   userDepartment: '소속 부서입니다. 아래 작은 글씨는 소속 계열사입니다.',
-  activeOfEligible: '기간 내 레포트를 조회한 사람 수 / 그 팀에 등록된 전체 사용자 수입니다.',
+  activeOfEligible: '선택 기간에 레포트를 조회한 사람 수 / 그 팀의 현재 활성 등록 사용자 수입니다. 분모는 기간과 무관한 현재 시점 기준입니다.',
 } as const
 
 // ── 컬럼 정렬 ────────────────────────────────────────────────────────────────
@@ -126,15 +129,23 @@ function SortableTh({ label, sortKey, sort, onSort, help, align = 'right' }: {
 
 const HELP_TIP_WIDTH = 240 // w-60
 
-/** 지표 용어 툴팁 박스. 마우스 호버와 키보드 포커스 모두에서 열린다.
+/** 다크 배경 툴팁. 마우스 호버와 키보드 포커스 모두에서 열린다.
  * 표 컨테이너는 가로 스크롤을 위해 overflow-x-auto를 쓰는데, CSS 스펙상
  * overflow-x를 auto로 주면 overflow-y도 자동으로 클리핑된다. 그래서 결과가
  * 1행이라 표 높이가 낮을 때 절대 위치(absolute)로 띄운 박스는 아래쪽이 잘렸다.
  * 이를 근본적으로 피하기 위해 박스를 document.body에 포털로 렌더링하고
- * position:fixed로 좌표를 계산해 표의 클리핑 영역 자체를 벗어나게 한다. */
-function HelpTip({ label, text }: { label: string; text: string }) {
+ * position:fixed로 좌표를 계산해 표의 클리핑 영역 자체를 벗어나게 한다.
+ *
+ * 시각 툴팁은 보조기기에서 중복 낭독되지 않도록 aria-hidden으로 두고, 같은 문구를
+ * sr-only로 함께 제공한다. 앵커 쪽에서 aria-describedby={descriptionId}로 연결한다. */
+export function HoverTooltip({ text, descriptionId, className, children }: {
+  text: string
+  descriptionId: string
+  className?: string
+  children: ReactNode
+}) {
   const [open, setOpen] = useState(false)
-  const anchorRef = useRef<HTMLButtonElement>(null)
+  const anchorRef = useRef<HTMLSpanElement>(null)
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -177,22 +188,20 @@ function HelpTip({ label, text }: { label: string; text: string }) {
   }
 
   return (
-    <span className="relative inline-flex align-middle">
-      <button
-        ref={anchorRef}
-        type="button"
-        aria-label={`${label} 설명 보기`}
-        onMouseEnter={openNow}
-        onMouseLeave={scheduleClose}
-        onFocus={openNow}
-        onBlur={scheduleClose}
-        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 text-[10px] font-bold leading-none text-slate-400 transition hover:border-blue-400 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-      >
-        ?
-      </button>
+    <span
+      ref={anchorRef}
+      className={`relative inline-flex align-middle ${className ?? ''}`}
+      onMouseEnter={openNow}
+      onMouseLeave={scheduleClose}
+      onFocus={openNow}
+      onBlur={scheduleClose}
+    >
+      {children}
+      <span id={descriptionId} className="sr-only">{text}</span>
       {open && coords && createPortal(
         <span
           role="tooltip"
+          aria-hidden="true"
           onMouseEnter={openNow}
           onMouseLeave={scheduleClose}
           style={{
@@ -209,6 +218,23 @@ function HelpTip({ label, text }: { label: string; text: string }) {
         document.body,
       )}
     </span>
+  )
+}
+
+/** 지표 용어 설명용 물음표 버튼. 다크 툴팁을 공통 컴포넌트로 띄운다. */
+function HelpTip({ label, text }: { label: string; text: string }) {
+  const descriptionId = useId()
+  return (
+    <HoverTooltip text={text} descriptionId={descriptionId}>
+      <button
+        type="button"
+        aria-label={`${label} 설명 보기`}
+        aria-describedby={descriptionId}
+        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 text-[10px] font-bold leading-none text-slate-400 transition hover:border-blue-400 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+      >
+        ?
+      </button>
+    </HoverTooltip>
   )
 }
 

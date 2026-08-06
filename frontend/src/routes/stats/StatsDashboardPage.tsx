@@ -1,14 +1,14 @@
-/** 통계 대시보드 (P0~P2 고도화).
+﻿/** 통계 대시보드 (P0~P2 고도화).
  *
  * - System_Operator: 전역 요약, 팀·사용자·레포트,
  *   생명주기, 활용 인사이트, 상세 드릴다운, 추이.
  * - 통계 메뉴 + VIEW_STATS 권한자: 소유 또는 위임받은 레포트 범위의 사용자 현황,
  *   레포트별 성과, 유효 체류·재방문·기간 비교 인사이트.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { startOfDay, endOfDay, format, subDays } from 'date-fns'
-import { Users, UserCheck, Eye, FileText, FolderOpen, Download, CalendarClock, FileBarChart, Building2, Table2, Search, X } from 'lucide-react'
+import { Users, UserCheck, Eye, FileText, FolderOpen, CalendarClock, FileBarChart, Building2, Table2, Search, X } from 'lucide-react'
 import {
   ResponsiveContainer, ComposedChart, BarChart, Bar, Line, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -18,6 +18,7 @@ import { statsApi } from '@/api/dashboardApi'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { BOM, escapeCsvField } from '@/utils/csv'
 import {
+  HoverTooltip,
   InsightsPanel,
   LifecyclePanel,
   ReportPerformanceTable,
@@ -75,13 +76,19 @@ function KpiCard({ label, value, delta, Icon, tone = 'slate' }: {
   )
 }
 
-function SectionCard({ title, action, children }: {
-  title: string; action?: React.ReactNode; children: React.ReactNode
+function SectionCard({ title, action, largeTitle = false, tightHeader = false, children }: {
+  title: string
+  action?: React.ReactNode
+  /** 상세 드릴다운 카드처럼 제목을 한 단계 크게 보여줄 때 사용. */
+  largeTitle?: boolean
+  /** 제목 바로 아래에 설명 문구가 오는 카드에서 제목-설명 간격을 좁힌다. */
+  tightHeader?: boolean
+  children: React.ReactNode
 }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-bold text-slate-700">{title}</h3>
+      <div className={`flex items-center justify-between ${tightHeader ? 'mb-1.5' : 'mb-3'}`}>
+        <h3 className={`font-bold text-slate-700 ${largeTitle ? 'text-[15px]' : 'text-sm'}`}>{title}</h3>
         {action}
       </div>
       {children}
@@ -133,7 +140,7 @@ function SimplePeriodFilter({ fromDate, toDate, onChange }: {
 /** 기간을 바꾼 직후 모든 증감 지표의 비교 기준을 알 수 있게 필터 바로 아래에 둔다. */
 function PeriodComparisonNote() {
   return (
-    <p className="text-xs text-slate-400">
+    <p className="text-sm text-slate-400">
       <span className="font-medium text-slate-500">증감률 기준:</span>{' '}
       선택 기간 직전의 동일 기간과 비교합니다. 예: 최근 7일 선택 시 그 전 7일과 비교합니다.
     </p>
@@ -459,37 +466,36 @@ function deptFilterQuery(selection: DepartmentSelection | null) {
     : { departmentId: selection.id }
 }
 
-function DetailTable({ rows, onExport, selectedDepartment, onSelectDepartment }: {
+// 표 머리글과 본문의 가로 여백을 같은 값으로 묶어 컬럼 경계가 어긋나 보이지 않게 한다.
+// 첫 컬럼은 셀 대신 안쪽 버튼이 여백을 갖기 때문에 셀 자체에는 가로 여백을 주지 않는다.
+const DETAIL_TH = 'px-2 py-2 font-medium'
+const DETAIL_TD = 'px-2 py-2 align-middle'
+const DETAIL_NUM = 'px-2 py-2 text-right align-middle tabular-nums whitespace-nowrap'
+
+function DetailTable({ rows, selectedDepartment, onSelectDepartment }: {
   rows: ReportDetailRow[]
-  onExport: () => void
   selectedDepartment?: DepartmentSelection | null
   onSelectDepartment?: (department: DepartmentSelection | null) => void
 }) {
   return (
-    <SectionCard
-      title="부서별 조회 상세"
-      action={
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={rows.length === 0}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-        >
-          <Download className="h-3.5 w-3.5" /> CSV
-        </button>
-      }
-    >
+    <SectionCard title="부서별 조회 상세" largeTitle tightHeader>
       {onSelectDepartment && (
-        <p className="mb-2 text-xs text-slate-400">부서를 클릭하면 시간대별 추이가 그 부서로 필터링됩니다.</p>
+        <p className="mb-2 text-[13px] text-slate-400">부서를 클릭하면 시간대별 조회/사용자 수가 그 부서로 필터링됩니다.</p>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col />
+            <col className="w-[4rem]" />
+            <col className="w-[5rem]" />
+            <col className="w-[8rem]" />
+          </colgroup>
           <thead>
-            <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-              <th className="py-2 pr-3 font-medium">부서</th>
-              <th className="py-2 pr-3 text-right font-medium">조회수</th>
-              <th className="py-2 pr-3 text-right font-medium">고유 사용자</th>
-              <th className="py-2 font-medium">최근 접속</th>
+            <tr className="border-b border-slate-200 text-left text-xs text-slate-400">
+              <th className={DETAIL_TH}>부서</th>
+              <th className={`${DETAIL_TH} text-right`}>조회수</th>
+              <th className={`${DETAIL_TH} text-right`}>고유 사용자</th>
+              <th className={DETAIL_TH}>최근 접속</th>
             </tr>
           </thead>
           <tbody>
@@ -508,17 +514,18 @@ function DetailTable({ rows, onExport, selectedDepartment, onSelectDepartment }:
                         onClick={() => onSelectDepartment(
                           active ? null : { id: r.department_id, name: r.department },
                         )}
-                        className={`w-full rounded px-2 py-1 text-left transition hover:bg-blue-100 ${active ? 'font-semibold text-blue-700' : 'text-slate-700'}`}>
-                        {r.department}
-                        {r.company ? <span className="ml-1 text-xs text-slate-400">{r.company}</span> : null}
+                        title={r.company ? `${r.department} · ${r.company}` : r.department}
+                        className={`flex w-full items-baseline gap-1 rounded px-2 py-1 text-left transition hover:bg-blue-100 ${active ? 'font-semibold text-blue-700' : 'text-slate-700'}`}>
+                        <span className="truncate">{r.department}</span>
+                        {r.company ? <span className="shrink-0 text-xs text-slate-400">{r.company}</span> : null}
                       </button>
                     ) : (
-                      <span className="px-2 py-1 text-slate-700">{r.department}</span>
+                      <span className="block truncate px-2 py-1 text-slate-700">{r.department}</span>
                     )}
                   </td>
-                  <td className="py-2 pr-3 text-right font-medium text-slate-600">{r.views.toLocaleString()}</td>
-                  <td className="py-2 pr-3 text-right text-slate-600">{r.unique_users.toLocaleString()}</td>
-                  <td className="py-2 text-slate-500">{fmtDateTime(r.last_access)}</td>
+                  <td className={`${DETAIL_NUM} font-medium text-slate-600`}>{r.views.toLocaleString()}</td>
+                  <td className={`${DETAIL_NUM} text-slate-600`}>{r.unique_users.toLocaleString()}</td>
+                  <td className={`${DETAIL_TD} whitespace-nowrap text-slate-500`}>{fmtDateTime(r.last_access)}</td>
                 </tr>
               )
             })}
@@ -529,37 +536,32 @@ function DetailTable({ rows, onExport, selectedDepartment, onSelectDepartment }:
   )
 }
 
-function UserDetailTable({ rows, onExport, selectedUserId, onSelectUser }: {
+function UserDetailTable({ rows, selectedUserId, onSelectUser }: {
   rows: ReportDetailUserRow[]
-  onExport: () => void
   selectedUserId?: number | null
   onSelectUser?: (user: { id: number; name: string } | null) => void
 }) {
   return (
-    <SectionCard
-      title="사용자별 조회 상세"
-      action={
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={rows.length === 0}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-        >
-          <Download className="h-3.5 w-3.5" /> CSV
-        </button>
-      }
-    >
+    <SectionCard title="사용자별 조회 상세" largeTitle tightHeader>
       {onSelectUser && (
-        <p className="mb-2 text-xs text-slate-400">사용자를 클릭하면 시간대별 추이가 그 사용자로 필터링됩니다.</p>
+        <p className="mb-2 text-[13px] text-slate-400">사용자를 클릭하면 시간대별 조회/사용자 수가 그 사용자로 필터링됩니다.</p>
       )}
       <div className="max-h-96 overflow-y-auto overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          {/* 사용자·조회수·최근 접속은 내용 길이가 일정해 폭을 고정하고, 남는 폭만 부서가 쓴다.
+              부서는 긴 이름이 많아 말줄임 + 호버 전체 표기로 좁은 폭에서도 읽을 수 있게 한다. */}
+          <colgroup>
+            <col className="w-[4.5rem]" />
+            <col />
+            <col className="w-[3.75rem]" />
+            <col className="w-[8rem]" />
+          </colgroup>
           <thead className="sticky top-0 bg-white">
-            <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-              <th className="py-2 pr-3 font-medium">사용자</th>
-              <th className="py-2 pr-3 font-medium">부서</th>
-              <th className="py-2 pr-3 text-right font-medium">조회수</th>
-              <th className="py-2 font-medium">최근 접속</th>
+            <tr className="border-b border-slate-200 text-left text-xs text-slate-400">
+              <th className={DETAIL_TH}>사용자</th>
+              <th className={DETAIL_TH}>부서</th>
+              <th className={`${DETAIL_TH} text-right`}>조회수</th>
+              <th className={DETAIL_TH}>최근 접속</th>
             </tr>
           </thead>
           <tbody>
@@ -574,16 +576,19 @@ function UserDetailTable({ rows, onExport, selectedUserId, onSelectUser }: {
                     {onSelectUser ? (
                       <button type="button"
                         onClick={() => onSelectUser(active ? null : { id: r.user_id, name: r.user_name })}
-                        className={`w-full rounded px-2 py-1 text-left transition hover:bg-blue-100 ${active ? 'font-semibold text-blue-700' : 'text-slate-700'}`}>
+                        title={r.user_name}
+                        className={`block w-full truncate rounded px-2 py-1 text-left transition hover:bg-blue-100 ${active ? 'font-semibold text-blue-700' : 'text-slate-700'}`}>
                         {r.user_name}
                       </button>
                     ) : (
-                      <span className="px-2 py-1 text-slate-700">{r.user_name}</span>
+                      <span className="block truncate px-2 py-1 text-slate-700">{r.user_name}</span>
                     )}
                   </td>
-                  <td className="py-2 pr-3 text-slate-500">{r.department}</td>
-                  <td className="py-2 pr-3 text-right font-medium text-slate-600">{r.views.toLocaleString()}</td>
-                  <td className="py-2 text-slate-500">{fmtDateTime(r.last_access)}</td>
+                  <td className={`${DETAIL_TD} text-slate-500`} title={r.department}>
+                    <span className="block truncate">{r.department}</span>
+                  </td>
+                  <td className={`${DETAIL_NUM} font-medium text-slate-600`}>{r.views.toLocaleString()}</td>
+                  <td className={`${DETAIL_TD} whitespace-nowrap text-slate-500`}>{fmtDateTime(r.last_access)}</td>
                 </tr>
               )
             })}
@@ -594,78 +599,68 @@ function UserDetailTable({ rows, onExport, selectedUserId, onSelectUser }: {
   )
 }
 
-function exportUserDetailCsv(rows: ReportDetailUserRow[], filename: string) {
-  const header = ['사용자', '부서', '조회수', '최근 접속']
-  const lines = [header.map(escapeCsvField).join(',')]
-  for (const r of rows) {
-    lines.push([
-      r.user_name,
-      r.department,
-      r.views,
-      r.last_access ? fmtDateTime(r.last_access) : '',
-    ].map(escapeCsvField).join(','))
-  }
-  const content = BOM + lines.join('\r\n')
-  if (typeof document === 'undefined' || typeof URL === 'undefined') return
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.style.display = 'none'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
+const pad2 = (value: number) => String(value).padStart(2, '0')
 
-function fmtDateOnly(iso: string | null): string {
-  if (!iso) return '-'
+/** 로우 데이터용 (연월일, 시간) 분리. 엑셀이 날짜·시간으로 인식하도록 숫자 서식을 쓴다. */
+function splitLocalDateTime(iso: string | null): [string, string] {
+  if (!iso) return ['', '']
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'medium' })
+  if (Number.isNaN(d.getTime())) return ['', '']
+  return [
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`,
+    `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`,
+  ]
 }
 
-/** 로우 이벤트를 CSV로 내보낸다(일시·사번·계열사·부서·사용자명·레포트명·레포트ID·체류시간).
+/** 내려받은 시점을 파일명에 남겨 여러 번 내보내도 파일이 덮어써지지 않게 한다. */
+function rawDataFileName(now: Date = new Date()): string {
+  const stamp = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}`
+    + `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`
+  return `report-view-raw-data-${stamp}.csv`
+}
+
+const RAW_DATA_TOOLTIP =
+  '연월일·시간·사용자ID·부서명·사용자명·계열사명·레포트명·체류시간 원본 데이터를 CSV로 내보냅니다.'
+
+/** 로우 데이터 다운로드 버튼. 설명은 표 머리글과 같은 다크 툴팁으로 띄운다. */
+function RawDataDownloadButton({ pending, onDownload }: {
+  pending: boolean
+  onDownload: () => void
+}) {
+  const descriptionId = useId()
+  return (
+    <HoverTooltip text={RAW_DATA_TOOLTIP} descriptionId={descriptionId} className="shrink-0">
+      <button
+        type="button"
+        onClick={onDownload}
+        disabled={pending}
+        aria-describedby={descriptionId}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+      >
+        <Table2 className="h-3.5 w-3.5" />
+        {pending ? '내보내는 중…' : '로우 데이터 다운로드(CSV)'}
+      </button>
+    </HoverTooltip>
+  )
+}
+
+/** 로우 이벤트를 CSV로 내보낸다(연월일·시간·사번·부서·사용자명·계열사·레포트명·체류시간).
  * 사전 집계 없이 원본 단위라 엑셀에서 피벗/필터로 자유롭게 재구성할 수 있다. */
 function exportRawEventsCsv(rows: RawViewEvent[], filename: string) {
-  const header = ['일시', '사용자ID', '계열사명', '부서명', '사용자명', '레포트명', '레포트ID', '체류시간(초)']
+  const header = ['연월일', '시간', '사용자ID', '부서명', '사용자명', '계열사명', '레포트명', '체류시간(초)']
   const lines = [header.map(escapeCsvField).join(',')]
   for (const r of rows) {
+    const [date, time] = splitLocalDateTime(r.occurred_at)
     lines.push([
-      fmtDateOnly(r.occurred_at),
+      date,
+      time,
       r.user_emp_no,
-      r.company ?? '',
       r.department,
       r.user_name,
-      r.report_name,
-      r.report_id ?? '',
-      r.duration_seconds ?? '',
-    ].map(escapeCsvField).join(','))
-  }
-  const content = BOM + lines.join('\r\n')
-  if (typeof document === 'undefined' || typeof URL === 'undefined') return
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.style.display = 'none'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
-
-function exportDetailCsv(rows: ReportDetailRow[], filename: string) {
-  const header = ['계열사', '부서', '조회수', '고유 사용자', '최근 접속']
-  const lines = [header.map(escapeCsvField).join(',')]
-  for (const r of rows) {
-    lines.push([
+      // 계열사는 사용자 소속이 아니라 레포트가 속한 최상위 폴더라서 레포트명 앞에 둔다.
       r.company ?? '',
-      r.department,
-      r.views,
-      r.unique_users,
-      r.last_access ? fmtDateTime(r.last_access) : '',
+      r.report_name,
+      r.duration_seconds ?? '',
     ].map(escapeCsvField).join(','))
   }
   const content = BOM + lines.join('\r\n')
@@ -827,7 +822,7 @@ function OperatorStats() {
   // 로우 이벤트 다운로드: 데이터가 클 수 있어 버튼 클릭 시점에만 조회한다.
   const rawEventsMutation = useMutation({
     mutationFn: () => statsApi.rawEvents(base),
-    onSuccess: (rows) => exportRawEventsCsv(rows, 'report-view-raw-events.csv'),
+    onSuccess: (rows) => exportRawEventsCsv(rows, rawDataFileName()),
   })
 
   function selectDept(d: DepartmentSelection | null) {
@@ -927,25 +922,17 @@ function OperatorStats() {
         </div>
       )}
 
+      {/* 지표 기준 안내는 각 표 머리글의 물음표 설명과 상단 '증감률 기준' 문구로 제공한다. */}
       {tab === 'teams' && (
-        <div className="space-y-3">
-          <p className="text-xs text-slate-400">활성/대상과 활용률은 현재 활성 등록 사용자 기준이며, 조회·다운로드·로그인은 선택 기간 기준입니다.</p>
-          <TeamActivityTable rows={teamsQuery.data ?? []} loading={teamsQuery.isLoading} />
-        </div>
+        <TeamActivityTable rows={teamsQuery.data ?? []} loading={teamsQuery.isLoading} />
       )}
 
       {tab === 'users' && (
-        <div className="space-y-3">
-          <p className="text-xs text-slate-400">사용자별 레포트 조회·유효 조회·가시 체류시간·다운로드 요청·로그인 활동입니다.</p>
-          <UserActivityTable rows={usersQuery.data ?? []} loading={usersQuery.isLoading} />
-        </div>
+        <UserActivityTable rows={usersQuery.data ?? []} loading={usersQuery.isLoading} />
       )}
 
       {tab === 'reports' && (
-        <div className="space-y-3">
-          <p className="text-xs text-slate-400">도달률은 현재 활성 등록 사용자, 직전기간 비교는 선택 기간 바로 앞의 동일 길이 기간 기준입니다.</p>
-          <ReportPerformanceTable rows={performanceQuery.data ?? []} loading={performanceQuery.isLoading} />
-        </div>
+        <ReportPerformanceTable rows={performanceQuery.data ?? []} loading={performanceQuery.isLoading} />
       )}
 
       {tab === 'lifecycle' && (
@@ -994,20 +981,12 @@ function OperatorStats() {
       {/* ── 상세 조회 탭 ── */}
       {tab === 'detail' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-slate-400">
-              상단의 레포트/계열사/기간 필터 기준 조회 현황입니다. 아래 부서/사용자를 선택하면 가운데 시간대별 추이가 그 범위로 필터링됩니다.
-            </p>
-            <button
-              type="button"
-              onClick={() => rawEventsMutation.mutate()}
-              disabled={rawEventsMutation.isPending}
-              title="일시·사용자ID·계열사명·부서명·사용자명·레포트명·레포트ID·체류시간 원본 데이터를 CSV로 내보냅니다"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-            >
-              <Table2 className="h-3.5 w-3.5" />
-              {rawEventsMutation.isPending ? '내보내는 중…' : '로우 데이터 다운로드(CSV)'}
-            </button>
+          {/* 표 클릭으로 차트를 필터링한다는 안내는 각 표 상단에서 제공한다. */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <RawDataDownloadButton
+              pending={rawEventsMutation.isPending}
+              onDownload={() => rawEventsMutation.mutate()}
+            />
           </div>
           {rawEventsMutation.isError && (
             <p role="alert" className="text-xs text-red-600">로우 데이터를 불러오지 못했습니다. 다시 시도해 주세요.</p>
@@ -1015,20 +994,26 @@ function OperatorStats() {
           {detailQuery.isLoading || detailUsersQuery.isLoading ? (
             <p className="text-sm text-slate-400">불러오는 중…</p>
           ) : (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)]">
+            // 표 2개는 필요한 폭만 쓰고 남는 폭을 시간대별 차트에 몰아준다.
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,1.35fr)]">
               <DetailTable
                 rows={detailQuery.data ?? []}
-                onExport={() => exportDetailCsv(detailQuery.data ?? [], 'report-detail-by-department.csv')}
                 selectedDepartment={detailDept}
                 onSelectDepartment={selectDept}
               />
+              <UserDetailTable
+                rows={detailUsersQuery.data ?? []}
+                selectedUserId={detailUser?.id ?? null}
+                onSelectUser={selectUser}
+              />
               <SectionCard
+                largeTitle
                 title={
                   detailDept
-                    ? `시간대별 조회 · 사용자 — ${detailDept.name}`
+                    ? `시간대별 조회/사용자 수 — ${detailDept.name}`
                     : detailUser
-                      ? `시간대별 조회 · 사용자 — ${detailUser.name}`
-                      : '시간대별 조회 · 사용자 (전체)'
+                      ? `시간대별 조회/사용자 수 — ${detailUser.name}`
+                      : '시간대별 조회/사용자 수 (전체)'
                 }
                 action={
                   (detailDept || detailUser) && (
@@ -1041,12 +1026,6 @@ function OperatorStats() {
               >
                 <HourlyChart data={detailHourlyQuery.data ?? []} />
               </SectionCard>
-              <UserDetailTable
-                rows={detailUsersQuery.data ?? []}
-                onExport={() => exportUserDetailCsv(detailUsersQuery.data ?? [], 'report-detail-by-user.csv')}
-                selectedUserId={detailUser?.id ?? null}
-                onSelectUser={selectUser}
-              />
             </div>
           )}
         </div>
@@ -1179,7 +1158,7 @@ function ScopedUserStats() {
   // 로우 이벤트 다운로드: 데이터가 클 수 있어 버튼 클릭 시점에만 조회한다.
   const rawEventsMutation = useMutation({
     mutationFn: () => statsApi.rawEvents(base),
-    onSuccess: (rows) => exportRawEventsCsv(rows, 'report-view-raw-events.csv'),
+    onSuccess: (rows) => exportRawEventsCsv(rows, rawDataFileName()),
   })
 
   function selectDept(d: DepartmentSelection | null) {
@@ -1206,10 +1185,10 @@ function ScopedUserStats() {
   const drilldownActive = !!detailDept || !!detailUser
   const centerHourlyData = drilldownActive ? (drilldownHourlyQuery.data ?? []) : (hourlyQuery.data ?? [])
   const centerHourlyTitle = detailDept
-    ? `시간대별 조회 · 사용자 — ${detailDept.name}`
+    ? `시간대별 조회/사용자 수 — ${detailDept.name}`
     : detailUser
-      ? `시간대별 조회 · 사용자 — ${detailUser.name}`
-      : '시간대별 조회 · 사용자 (0~23시)'
+      ? `시간대별 조회/사용자 수 — ${detailUser.name}`
+      : '시간대별 조회/사용자 수 (0~23시)'
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
@@ -1284,20 +1263,12 @@ function ScopedUserStats() {
             </SectionCard>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-slate-400">
-              아래 부서/사용자를 선택하면 위 시간대별 추이가 그 범위로 필터링됩니다.
-            </p>
-            <button
-              type="button"
-              onClick={() => rawEventsMutation.mutate()}
-              disabled={rawEventsMutation.isPending}
-              title="일시·사용자ID·계열사명·부서명·사용자명·레포트명·레포트ID·체류시간 원본 데이터를 CSV로 내보냅니다"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-            >
-              <Table2 className="h-3.5 w-3.5" />
-              {rawEventsMutation.isPending ? '내보내는 중…' : '로우 데이터 다운로드(CSV)'}
-            </button>
+          {/* 표 클릭으로 차트를 필터링한다는 안내는 각 표 상단에서 제공한다. */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <RawDataDownloadButton
+              pending={rawEventsMutation.isPending}
+              onDownload={() => rawEventsMutation.mutate()}
+            />
           </div>
           {rawEventsMutation.isError && (
             <p role="alert" className="text-xs text-red-600">로우 데이터를 불러오지 못했습니다. 다시 시도해 주세요.</p>
@@ -1305,13 +1276,11 @@ function ScopedUserStats() {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <DetailTable
               rows={detailQuery.data ?? []}
-              onExport={() => exportDetailCsv(detailQuery.data ?? [], 'report-detail-by-department.csv')}
               selectedDepartment={detailDept}
               onSelectDepartment={selectDept}
             />
             <UserDetailTable
               rows={detailUsersQuery.data ?? []}
-              onExport={() => exportUserDetailCsv(detailUsersQuery.data ?? [], 'report-detail-by-user.csv')}
               selectedUserId={detailUser?.id ?? null}
               onSelectUser={selectUser}
             />
