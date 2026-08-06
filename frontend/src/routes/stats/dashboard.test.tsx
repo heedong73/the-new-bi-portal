@@ -92,6 +92,7 @@ const STATUS: MonitoringStatus = {
     started_at: '2026-08-05T09:00:00+09:00',
     uptime_seconds: 31_335,
   },
+  alerts: { enabled: true, recipient_count: 1, resend_minutes: 30 },
   recent_jobs_available: true,
   recent_jobs_error: null,
 }
@@ -153,6 +154,7 @@ describe('OpsStatusPage', () => {
     expect(await screen.findByText('파일 저장 공간')).toBeInTheDocument()
     expect(await screen.findByText(/사용률 90% · 남은 10.0GB \/ 100.0GB/)).toBeInTheDocument()
     expect(await screen.findByText(/버전 1.4.0 · 커밋 5a1e8cc/)).toBeInTheDocument()
+    expect(await screen.findByText(/장애 알림: 사용 중 · 수신 1명/)).toBeInTheDocument()
   })
 
   it('작업별 전체 이력 화면으로 가는 링크를 제공한다', async () => {

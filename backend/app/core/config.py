@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     # 저장공간 경고 임계치(%) — 사용률이 이 값을 넘으면 운영 상태에서 주의로 표시한다.
     STORAGE_WARN_PERCENT: int = 85
 
+    # 장애 알림 — 운영 상태가 '장애'인 구성요소를 감지하면 운영자에게 메일로 알린다.
+    OPS_ALERT_ENABLED: bool = True
+    # 수신자(콤마 구분). 비우면 REQUEST_ADMIN_EMAIL을 사용한다.
+    OPS_ALERT_EMAILS: str = ""
+    # 같은 구성요소의 장애를 이 시간 안에는 다시 보내지 않는다(알림 폭주 방지).
+    OPS_ALERT_RESEND_MINUTES: int = 30
+
     # Storage
     STORAGE_ROOT_PATH: str = "/data/reportimage"
     STORAGE_BACKEND: Literal["local", "nas", "s3"] = "local"
@@ -84,6 +91,12 @@ class Settings(BaseSettings):
     CORS_ALLOWED_ORIGINS: str = "http://localhost:80,http://localhost:5173"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @property
+    def ops_alert_recipients(self) -> list[str]:
+        """장애 알림 수신자 목록. 미지정 시 서비스 센터 관리자 주소로 보낸다."""
+        raw = self.OPS_ALERT_EMAILS or self.REQUEST_ADMIN_EMAIL
+        return [e.strip() for e in raw.split(",") if e.strip()]
 
     @property
     def cors_origins(self) -> list[str]:

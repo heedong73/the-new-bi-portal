@@ -22,6 +22,13 @@ beat_schedule = {
         "schedule": 30.0,
         "args": [],
     },
+    # 장애를 화면 없이도 알 수 있게 2분마다 점검한다. 외부 확인은 캐시되므로
+    # 이 주기가 Power BI·SMTP 호출로 그대로 증폭되지 않는다.
+    "ops-alert-check-every-2min": {
+        "task": "bip.ops_alert_check",
+        "schedule": 120.0,
+        "args": [],
+    },
     "retention-cleanup-daily": {
         "task": "bip.retention_cleanup",
         "schedule": 24 * 60 * 60.0,  # 하루 1회

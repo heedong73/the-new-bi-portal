@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.workers.tasks.mail_dispatch",
         "app.workers.tasks.retention",
         "app.workers.tasks.heartbeat",
+        "app.workers.tasks.ops_alert",
     ],
 )
 

@@ -464,6 +464,11 @@ export default function OpsStatusPage() {
         {deploymentLabel} · 기동 {formatLocalDateTime(s.deployment.started_at)}
         {formatDurationKo(s.deployment.uptime_seconds) ? ` · 가동 ${formatDurationKo(s.deployment.uptime_seconds)}` : ''}
       </p>
+      <p className="mt-1 text-xs text-slate-400">
+        장애 알림: {s.alerts.enabled && s.alerts.recipient_count > 0
+          ? `사용 중 · 수신 ${s.alerts.recipient_count}명 · 같은 장애는 ${s.alerts.resend_minutes}분간 재발송 억제`
+          : '사용하지 않음'}
+      </p>
     </div>
   )
 }

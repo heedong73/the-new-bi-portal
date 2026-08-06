@@ -193,6 +193,12 @@ export interface StorageHealth {
   message: string
 }
 
+export interface OpsAlertConfig {
+  enabled: boolean
+  recipient_count: number
+  resend_minutes: number
+}
+
 export interface DeploymentInfo {
   version: string | null
   commit: string | null
@@ -222,6 +228,7 @@ export interface MonitoringStatus {
   smtp: SmtpHealth
   storage: StorageHealth
   deployment: DeploymentInfo
+  alerts: OpsAlertConfig
   recent_jobs_available: boolean
   recent_jobs_error: string | null
 }
