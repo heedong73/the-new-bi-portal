@@ -78,6 +78,18 @@ export interface EmbedInfo {
   defaultViewState?: string | null
 }
 
+/** 성공한 PBIX 교체 1건 (수행자는 이벤트 당시 스냅샷). */
+export interface ReportReplacementEvent {
+  completed_at: string
+  actor_name: string | null
+  actor_emp_no: string | null
+}
+
+/** 레포트 교체 이력 요약. 기록이 없으면 last_success가 null. */
+export interface ReportReplacementSummary {
+  last_success: ReportReplacementEvent | null
+}
+
 /** 첫 Power BI rendered 이벤트로 생성한 멱등 조회 세션. */
 export interface ReportViewSessionResponse {
   view_log_id: number

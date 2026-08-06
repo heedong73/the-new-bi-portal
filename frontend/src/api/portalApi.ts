@@ -2,7 +2,8 @@
 import apiClient, { API_BASE_URL } from '@/api/client'
 import type {
   EmbedInfo, ExportFormat, ExportStatusResponse, FavoriteFolder, FolderTreeNode, RefreshStatus,
-  ReportCatalogParams, ReportCatalogResponse, ReportSummary, ReportViewSessionResponse,
+  ReportCatalogParams, ReportCatalogResponse, ReportReplacementSummary, ReportSummary,
+  ReportViewSessionResponse,
 } from '@/types/report'
 
 export const foldersApi = {
@@ -82,6 +83,12 @@ export const reportsApi = {
       `/api/reports/${reportDbId}/replace-pbix`, fd,
     )
   },
+
+  /** GET /api/reports/{id}/replacement-summary — 직전 성공 교체 1건 (MANAGE_REPORT 권한). */
+  replacementSummary: (reportDbId: number, signal?: AbortSignal) =>
+    apiClient.get<ReportReplacementSummary>(
+      `/api/reports/${reportDbId}/replacement-summary`, { signal },
+    ),
 
   /** GET /api/reports/favorite-folders — 현재 사용자의 개인 즐겨찾기 폴더. */
   listFavoriteFolders: (signal?: AbortSignal) =>

@@ -39,7 +39,8 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
                          created_by_user_id: int | None = None,
                          created_by_label: str | None = None,
                          requested_by_user_id: int | None = None,
-                         requested_by_label: str | None = None) -> dict[str, Any]:
+                         requested_by_label: str | None = None,
+                         replace_report_pk: int | None = None) -> dict[str, Any]:
     """workspace upsert + report 신규/갱신 (nameConflict=CreateOrOverwrite 의미)."""
     async with AsyncSessionLocal() as db:
         ws = await db.scalar(select(Workspace).where(Workspace.workspace_id == workspace_id))
@@ -100,6 +101,9 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
         snapshot = await build_audit_snapshot(
             db, actor_user_id=actor_user_id, report=report,
         )
+        # 교체 작업은 사용자가 누른 원본 레포트의 교체 이력으로 남긴다. 그래야 레포트
+        # 화면에서 "직전 교체"를 그 레포트 기준으로 정확히 조회할 수 있다.
+        is_replace = replace_report_pk is not None
         await append_audit(
             db,
             action=AuditAction.REPORT_CREATE if created else AuditAction.REPORT_UPDATE,
@@ -107,17 +111,68 @@ async def _apply_catalog(workspace_id: str, report_id: str, dataset_id: str | No
             actor_user_id=actor_user_id,
             actor_label=requested_by_label or created_by_label,
             resource_type="report",
-            resource_id=str(report.id),
+            resource_id=str(replace_report_pk if is_replace else report.id),
             event_key=f"report-create:{report.id}" if created else None,
             meta={
                 "report_id": report.id,
                 "workspace_id": workspace_id,
-                "target": "pbix_import",
+                "target": "replace_pbix" if is_replace else "pbix_import",
             },
             **snapshot,
         )
         await db.commit()
         return {"report_pk": report.id, "created": created}
+
+async def _record_replace_failure(
+    report_pk: int,
+    actor_user_id: int | None,
+    actor_label: str | None,
+    reason: str,
+) -> None:
+    """교체 실패를 최종 상태로 기록한다.
+
+    접수(accepted) 이벤트만 남으면 게시가 끝난 것으로 오해할 수 있으므로 실패도
+    같은 target으로 남겨 마지막 성공 이력과 구분한다.
+    """
+    async with AsyncSessionLocal() as db:
+        report = await db.scalar(select(Report).where(Report.id == report_pk))
+        if report is None:
+            return
+        snapshot = await build_audit_snapshot(
+            db, actor_user_id=actor_user_id, report=report,
+        )
+        await append_audit(
+            db,
+            action=AuditAction.REPORT_UPDATE,
+            result="failed",
+            actor_user_id=actor_user_id,
+            actor_label=actor_label,
+            resource_type="report",
+            resource_id=str(report_pk),
+            meta={
+                "report_id": report_pk,
+                "target": "replace_pbix",
+                "reason": reason[:200],
+            },
+            **snapshot,
+        )
+        await db.commit()
+
+
+def _record_replace_failure_if_needed(
+    report_pk: int | None,
+    actor_user_id: int | None,
+    actor_label: str | None,
+    reason: str,
+) -> None:
+    """교체 작업일 때만 실패를 기록한다. 감사 기록 실패가 원래 오류를 가리지 않게 한다."""
+    if report_pk is None:
+        return
+    try:
+        run_async(_record_replace_failure(report_pk, actor_user_id, actor_label, reason))
+    except Exception:  # noqa: BLE001 - 원래 예외를 보존해야 한다
+        logger.warning("replace_failure_audit_failed", report_pk=report_pk)
+
 
 async def _powerbi_import_live(file_path: str, workspace_id: str, dataset_display_name: str,
                                name_conflict: str) -> dict[str, Any]:
@@ -206,14 +261,26 @@ def pbix_import(
     created_by_label: str | None = None,
     requested_by_user_id: int | None = None,
     requested_by_label: str | None = None,
+    replace_report_pk: int | None = None,
 ) -> dict[str, Any]:
-    """PBIX import 작업 진입점 (Celery sync task). 업로드→게시→카탈로그 반영."""
+    """PBIX import 작업 진입점 (Celery sync task). 업로드→게시→카탈로그 반영.
+
+    replace_report_pk가 있으면 기존 레포트 교체 작업으로 보고, 최종 성공/실패를 그
+    레포트의 교체 이력(meta.target=replace_pbix)으로 남긴다.
+    """
     display_name = report_name or "uploaded-report"
     if not display_name.lower().endswith(".pbix"):
         display_name = f"{display_name}.pbix"
 
     try:
         result = _powerbi_import(file_path, workspace_id, display_name, name_conflict)
+    except Exception as exc:
+        # 예외로 끝나도 접수(accepted)만 남으면 교체된 것으로 오해할 수 있다.
+        _record_replace_failure_if_needed(
+            replace_report_pk, requested_by_user_id, requested_by_label,
+            f"{type(exc).__name__}: {exc}",
+        )
+        raise
     finally:
         # 임시 업로드 파일 정리
         try:
@@ -223,21 +290,35 @@ def pbix_import(
             pass
 
     if result.get("status") != "Succeeded":
-        return {"status": "Failed", "reason": result.get("reason") or result.get("status")}
+        reason = result.get("reason") or result.get("status") or "unknown"
+        _record_replace_failure_if_needed(
+            replace_report_pk, requested_by_user_id, requested_by_label, str(reason),
+        )
+        return {"status": "Failed", "reason": reason}
 
-    catalog = run_async(_apply_catalog(
-        workspace_id=workspace_id,
-        report_id=result["report_id"],
-        dataset_id=result.get("dataset_id"),
-        report_name=report_name or result.get("report_name"),
-        folder_id=folder_id,
-        description=description,
-        author_label=author_label,
-        created_by_user_id=created_by_user_id,
-        created_by_label=created_by_label,
-        requested_by_user_id=requested_by_user_id,
-        requested_by_label=requested_by_label,
-    ))
+    try:
+        catalog = run_async(_apply_catalog(
+            workspace_id=workspace_id,
+            report_id=result["report_id"],
+            dataset_id=result.get("dataset_id"),
+            report_name=report_name or result.get("report_name"),
+            folder_id=folder_id,
+            description=description,
+            author_label=author_label,
+            created_by_user_id=created_by_user_id,
+            created_by_label=created_by_label,
+            requested_by_user_id=requested_by_user_id,
+            requested_by_label=requested_by_label,
+            replace_report_pk=replace_report_pk,
+        ))
+    except Exception as exc:
+        # Power BI 게시는 됐지만 카탈로그/감사 반영이 실패한 경우. 성공으로 남기면
+        # 교체 이력이 실제 상태와 어긋나므로 실패로 기록한다.
+        _record_replace_failure_if_needed(
+            replace_report_pk, requested_by_user_id, requested_by_label,
+            f"catalog {type(exc).__name__}: {exc}",
+        )
+        raise
 
     return {
         "status": "Succeeded",

@@ -19,7 +19,12 @@ import {
 
 import { datasetsApi, reportsApi } from '@/api/portalApi'
 import { ApiError } from '@/api/client'
-import { reportDisplayName, type RefreshStatus, type ExportFormat } from '@/types/report'
+import {
+  reportDisplayName,
+  type RefreshStatus,
+  type ExportFormat,
+  type ReportReplacementEvent,
+} from '@/types/report'
 import { useTaskStore } from '@/stores/useTaskStore'
 import { useBeforeUnload } from '@/hooks/useBeforeUnload'
 import PowerBIEmbed from '@/components/embed/PowerBIEmbed'
@@ -63,6 +68,13 @@ function fmtLocal(iso?: string | null): string | undefined {
   if (!iso) return undefined
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? undefined : d.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+/** 교체 수행자 표기. 이름과 사번이 모두 없으면 알 수 없음으로 둔다. */
+function replaceActorLabel(event: ReportReplacementEvent): string {
+  const { actor_name: name, actor_emp_no: empNo } = event
+  if (name && empNo) return `${name}(${empNo})`
+  return name || empNo || '수행자 정보 없음'
 }
 
 function fmtDate(iso?: string | null): string | undefined {
@@ -566,6 +578,13 @@ function ReportViewPageContent({ reportDbId }: { reportDbId: number }) {
   const [replaceOpen, setReplaceOpen] = useState(false)
   const [replaceFile, setReplaceFile] = useState<File | null>(null)
   const replaceInputRef = useRef<HTMLInputElement>(null)
+  // 교체 모달을 열 때만 직전 교체 이력을 조회한다(게시 성공 이력만 반환).
+  const replacementQuery = useQuery({
+    queryKey: ['report-replacement-summary', reportDbId],
+    queryFn: ({ signal }) => reportsApi.replacementSummary(reportDbId, signal),
+    enabled: replaceOpen && Boolean(report?.can_manage),
+    staleTime: 0,
+  })
   const replaceMutation = useMutation({
     mutationFn: (file: File) => reportsApi.replacePbix(reportDbId, file),
     onSuccess: (res) => {
@@ -730,7 +749,7 @@ function ReportViewPageContent({ reportDbId }: { reportDbId: number }) {
                     className="fixed inset-0 z-10 cursor-default"
                     onClick={() => setSchedOpen(false)}
                   />
-                  <div role="dialog" aria-label="예약 새로고침" className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white p-2 text-[14.5px] leading-[20px] shadow-lg">
+                  <div role="dialog" aria-label="예약 새로고침" className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white p-2 text-[13.5px] leading-[19px] shadow-lg">
                     <p className="mb-1 font-semibold text-slate-700">예약 새로고침</p>
                     <p className="text-slate-500">
                       요일: <span className="text-slate-700">{live.schedule.days.map(weekdayKo).join(', ') || '-'}</span>
@@ -1018,6 +1037,27 @@ function ReportViewPageContent({ reportDbId }: { reportDbId: number }) {
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-bold text-slate-800">레포트 업데이트(교체)</h3>
               <button type="button" aria-label="닫기" onClick={() => setReplaceOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+
+            {/* 최근 교체 이력 — 게시까지 성공한 마지막 1건만 표시 */}
+            <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <p className="text-xs font-medium text-slate-500">최근 교체</p>
+              {replacementQuery.isLoading ? (
+                <p className="mt-0.5 text-sm text-slate-400">불러오는 중…</p>
+              ) : replacementQuery.isError ? (
+                <p className="mt-0.5 text-sm text-slate-400">이력을 불러오지 못했습니다.</p>
+              ) : replacementQuery.data?.last_success ? (
+                <>
+                  <p className="mt-0.5 text-sm font-medium text-slate-700">
+                    {fmtLocal(replacementQuery.data.last_success.completed_at)}
+                    {' · '}
+                    {replaceActorLabel(replacementQuery.data.last_success)}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">Power BI 게시 완료</p>
+                </>
+              ) : (
+                <p className="mt-0.5 text-sm text-slate-400">기록된 교체 이력이 없습니다.</p>
+              )}
             </div>
 
             {/* 경고 문구 */}

@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
 from app.core.constants import AuditAction, RoleCode, PermissionAction, SubjectType
+from app.core.timezone import to_local
 from app.core.deps import SessionDep, require_menu, require_report_permission, get_current_user, PowerBIClientDep, RedisDep
 from app.core.errors import NotFoundError, ConflictError, ValidationError, PermissionDeniedError
 from app.models.report import (
@@ -32,7 +33,8 @@ from app.schemas.report import (
     FavoriteFolderMoveRequest, FavoriteFolderNameRequest,
     FavoriteFolderReorderRequest, FavoriteFolderResponse,
     ReportUpdate, VisibilityUpdate, FolderMoveRequest, ReportResponse, DefaultViewUpdate,
-    ReportCatalogResponse, ReportViewDurationUpdate, ReportViewSessionCreate,
+    ReportCatalogResponse, ReportReplacementEvent, ReportReplacementSummary,
+    ReportViewDurationUpdate, ReportViewSessionCreate,
     ReportViewSessionResponse,
 )
 from app.services.powerbi.client import ReportPageDTO
@@ -1090,6 +1092,8 @@ async def replace_pbix(
         folder_id=report.folder_id, name_conflict="CreateOrOverwrite",
         requested_by_user_id=(None if current.get("is_local_admin") else current.get("user_id")),
         requested_by_label=current.get("emp_no"),
+        # 워커가 최종 성공/실패를 이 레포트의 교체 이력으로 남기도록 원본 PK를 넘긴다.
+        replace_report_pk=report_id,
     )
     await _append_report_audit(
         db, action=AuditAction.REPORT_UPDATE, result="accepted", current=current,
@@ -1097,6 +1101,47 @@ async def replace_pbix(
     )
     await db.commit()
     return {"task_id": task.id, "status": "enqueued", "report_id": report_id}
+
+
+@router.get("/{report_id}/replacement-summary", response_model=ReportReplacementSummary)
+async def replacement_summary(
+    report_id: int,
+    *,
+    db: SessionDep,
+    current=Depends(require_report_permission(PermissionAction.MANAGE_REPORT)),
+):
+    """직전에 성공한 PBIX 교체 1건. 교체 버튼과 같은 MANAGE_REPORT 게이트를 쓴다.
+
+    업로드 접수(result=accepted)는 이후 실패할 수 있어 제외하고, Power BI 게시와
+    카탈로그 반영이 끝난 성공 이벤트만 본다. 수행자는 감사 로그의 당시 스냅샷을
+    사용해 이후 이름·사번이 바뀌어도 과거 이력이 달라지지 않는다.
+    """
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise NotFoundError("레포트를 찾을 수 없습니다.")
+
+    row = await db.scalar(
+        select(AuditLog)
+        .where(
+            AuditLog.action == AuditAction.REPORT_UPDATE.value,
+            AuditLog.result == "success",
+            AuditLog.resource_type == "report",
+            AuditLog.resource_id == str(report_id),
+            AuditLog.meta["target"].astext == "replace_pbix",
+        )
+        .order_by(AuditLog.occurred_at_utc.desc())
+        .limit(1)
+    )
+    if row is None:
+        return ReportReplacementSummary()
+    return ReportReplacementSummary(
+        last_success=ReportReplacementEvent(
+            completed_at=to_local(row.occurred_at_utc),
+            actor_name=row.actor_name_snapshot,
+            # 로컬 관리자는 users 스냅샷이 없어 계정 라벨로 대체한다.
+            actor_emp_no=row.actor_emp_no_snapshot or row.actor_label,
+        )
+    )
 
 
 @router.put("/{report_id}/default-view", status_code=204)

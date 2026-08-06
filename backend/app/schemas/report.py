@@ -7,6 +7,20 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
+class ReportReplacementEvent(BaseModel):
+    """성공한 PBIX 교체 1건. 수행자는 이벤트 당시 스냅샷 값이다."""
+
+    completed_at: datetime
+    actor_name: str | None = None
+    actor_emp_no: str | None = None
+
+
+class ReportReplacementSummary(BaseModel):
+    """레포트 교체 이력 요약. 기록이 없으면 last_success가 None이다."""
+
+    last_success: ReportReplacementEvent | None = None
+
+
 class ReportViewSessionCreate(BaseModel):
     """Power BI 첫 렌더 완료 시 생성하는 멱등 조회 세션."""
     session_id: UUID

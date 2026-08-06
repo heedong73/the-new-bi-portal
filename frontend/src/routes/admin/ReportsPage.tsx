@@ -554,7 +554,7 @@ export default function ReportsPage() {
                     {uploadMutation.isPending ? '업로드 중…' : '업로드 게시'}
                   </button>
                 </div>
-                <p className="text-xs text-amber-600">⚠️ 운영 워크스페이스에 실제 레포트가 새로 생성돼요. 게시 시작 후엔 좌측 하단 '진행중'에서 상태를 확인하세요.</p>
+                <p className="text-sm text-amber-600">⚠️ 운영 워크스페이스에 실제 레포트가 새로 생성돼요. 게시 시작 후엔 좌측 하단 '진행중'에서 상태를 확인하세요.</p>
               </form>
           </div>
         </div>
