@@ -613,11 +613,11 @@ export default function ReportsPage() {
               <Trash2 className="h-5 w-5 text-red-600" />
               <h3 className="text-lg font-bold text-slate-800">레포트 삭제</h3>
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="text-md text-slate-600">
               <span className="font-medium text-slate-800">{deleteTarget.display_name || deleteTarget.report_name || deleteTarget.report_id}</span>
               {' '}레포트를 삭제하시겠습니까?
             </p>
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1 text-sm text-slate-400">
               포털 등록과 권한 부여가 함께 삭제됩니다. Power BI 워크스페이스의 실제 레포트는 삭제되지 않습니다.
             </p>
             {deleteReportMutation.isError && (
