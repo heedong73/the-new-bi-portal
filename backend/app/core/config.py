@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     EXPORT_POLL_TIMEOUT_SEC: int = 600
     MAIL_RETRY_MAX: int = 3
 
+    # 배포 식별 정보 — 운영 상태에서 "언제 배포된 버전에서 발생한 문제인지" 판단용.
+    # 이미지 빌드/실행 시 주입하며, 비어 있으면 화면에 "정보 없음"으로 표시한다.
+    APP_VERSION: str = ""
+    GIT_COMMIT: str = ""
+
+    # 저장공간 경고 임계치(%) — 사용률이 이 값을 넘으면 운영 상태에서 주의로 표시한다.
+    STORAGE_WARN_PERCENT: int = 85
+
     # Storage
     STORAGE_ROOT_PATH: str = "/data/reportimage"
     STORAGE_BACKEND: Literal["local", "nas", "s3"] = "local"

@@ -173,6 +173,33 @@ export interface PowerBIHealth {
   message: string
 }
 
+export interface SmtpHealth {
+  status: 'ok' | 'error' | 'unknown' | 'mock'
+  checked_at: string | null
+  host: string
+  port: number
+  latency_ms: number | null
+  message: string
+}
+
+export interface StorageHealth {
+  status: 'ok' | 'degraded' | 'error' | 'unknown'
+  backend: string
+  path: string | null
+  total_bytes: number | null
+  used_bytes: number | null
+  free_bytes: number | null
+  used_percent: number | null
+  message: string
+}
+
+export interface DeploymentInfo {
+  version: string | null
+  commit: string | null
+  started_at: string
+  uptime_seconds: number
+}
+
 export interface MonitoringStatus {
   db: string
   redis: string
@@ -192,6 +219,9 @@ export interface MonitoringStatus {
   queued_tasks: number | null
   scheduler: SchedulerHealth
   powerbi: PowerBIHealth
+  smtp: SmtpHealth
+  storage: StorageHealth
+  deployment: DeploymentInfo
   recent_jobs_available: boolean
   recent_jobs_error: string | null
 }

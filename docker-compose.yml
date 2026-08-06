@@ -27,6 +27,11 @@ services:
       - bip-net
     env_file:
       - .env
+    environment:
+      # 운영 상태 화면의 배포 식별용. 배포 시 주입하지 않으면 "정보 없음"으로 표시된다.
+      # 예: APP_VERSION=1.4.0 GIT_COMMIT=$(git rev-parse HEAD) docker compose up -d
+      APP_VERSION: ${APP_VERSION:-}
+      GIT_COMMIT: ${GIT_COMMIT:-}
     volumes:
       - reportimage_data:/data/reportimage
     depends_on:

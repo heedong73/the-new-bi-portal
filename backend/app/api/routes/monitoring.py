@@ -123,10 +123,11 @@ async def monitoring_status(db: SessionDep, redis: RedisDep, _op=Depends(_requir
 
     if redis_ok:
         # 공용 Redis 클라이언트를 순차로 사용해 커넥션 풀에 여분 연결을 남기지 않는다.
-        # 세 호출 모두 짧고, Power BI 확인은 60초 캐시라 순차 실행이 응답 시간에 불리하지 않다.
+        # 외부 확인(Power BI 60초, SMTP 5분)은 캐시되므로 순차 실행이 응답 시간에 불리하지 않다.
         scheduler = await monitoring_service.scheduler_status(redis)
         queued_tasks = await monitoring_service.queue_depth(redis)
         powerbi = await monitoring_service.powerbi_status(redis)
+        smtp = await monitoring_service.smtp_status(redis)
     else:
         scheduler = {
             "status": "unknown", "last_heartbeat": None, "age_seconds": None,
@@ -138,6 +139,13 @@ async def monitoring_status(db: SessionDep, redis: RedisDep, _op=Depends(_requir
             "http_status": None,
             "message": "Redis 장애 영향으로 Power BI 인증 상태를 확인할 수 없습니다.",
         }
+        smtp = {
+            "status": "unknown", "checked_at": None,
+            "host": settings.SMTP_HOST, "port": settings.SMTP_PORT, "latency_ms": None,
+            "message": "Redis 장애 영향으로 메일 서버 상태를 확인할 수 없습니다.",
+        }
+
+    storage = monitoring_service.storage_status()
 
     # DB 장애와 실제 작업 0건을 혼동하지 않도록 조회 가능 여부를 별도 반환한다.
     jobs: dict = {"refresh": [], "mail": [], "export": []}
@@ -161,11 +169,16 @@ async def monitoring_status(db: SessionDep, redis: RedisDep, _op=Depends(_requir
         or not worker_ok
         or scheduler["status"] == "unavailable"
         or powerbi["status"] == "error"
+        # 메일 서버와 저장공간 장애는 예약 메일·내보내기를 직접 중단시킨다.
+        or smtp["status"] == "error"
+        or storage["status"] == "error"
     )
     component_warning = (
         not jobs_available
         or scheduler["status"] == "unknown"
         or powerbi["status"] in ("degraded", "unknown")
+        or smtp["status"] == "unknown"
+        or storage["status"] in ("degraded", "unknown")
     )
     overall_status = "error" if component_error else "degraded" if component_warning or has_failures else "ok"
 
@@ -190,6 +203,9 @@ async def monitoring_status(db: SessionDep, redis: RedisDep, _op=Depends(_requir
         "queued_tasks": queued_tasks,
         "scheduler": scheduler,
         "powerbi": powerbi,
+        "smtp": smtp,
+        "storage": storage,
+        "deployment": monitoring_service.deployment_info(),
         "recent_jobs_available": jobs_available,
         "recent_jobs_error": jobs_error,
     }

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   Activity, AlertTriangle, CheckCircle2, ChevronRight, Clock3, Cloud,
-  Cpu, Database, FileDown, Mail, RefreshCw, Server, XCircle,
+  Cpu, Database, FileDown, HardDrive, Mail, RefreshCw, Send, Server, XCircle,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -51,6 +51,12 @@ const TONE_STYLE: Record<Tone, {
 
 function fmtLatency(value?: number | null): string {
   return value == null ? '응답시간 확인 불가' : `응답 ${value.toLocaleString()}ms`
+}
+
+/** 저장공간 용량은 GB 단위로만 보여준다. 바이트 단위는 운영 판단에 도움이 안 된다. */
+function fmtGb(bytes?: number | null): string | null {
+  if (bytes == null) return null
+  return `${(bytes / 1024 ** 3).toFixed(1)}GB`
 }
 
 function HealthCard({
@@ -200,6 +206,12 @@ function JobList({ title, Icon, jobs, available, unavailableMessage, fullListTo,
   )
 }
 
+const STORAGE_BACKEND_LABEL: Record<string, string> = {
+  local: '컨테이너 볼륨',
+  nas: 'NAS 마운트',
+  s3: '오브젝트 스토리지',
+}
+
 const APP_MODE_LABEL: Record<string, string> = {
   live: '운영 Power BI 연동',
   mock: '모의 데이터',
@@ -255,6 +267,21 @@ export default function OpsStatusPage() {
     : s.powerbi.status === 'degraded' || s.powerbi.status === 'mock'
       ? 'degraded'
       : s.powerbi.status === 'unknown' ? 'unknown' : 'error'
+  const smtpTone: Tone = s.smtp.status === 'ok'
+    ? 'ok'
+    : s.smtp.status === 'mock' ? 'degraded'
+      : s.smtp.status === 'unknown' ? 'unknown' : 'error'
+  const storageTone: Tone = s.storage.status === 'ok'
+    ? 'ok'
+    : s.storage.status === 'degraded' ? 'degraded'
+      : s.storage.status === 'unknown' ? 'unknown' : 'error'
+  const storageDetail = s.storage.used_percent != null
+    ? `사용률 ${s.storage.used_percent}% · 남은 ${fmtGb(s.storage.free_bytes) ?? '-'} / ${fmtGb(s.storage.total_bytes) ?? '-'}`
+    : s.storage.message
+  const deploymentLabel = [
+    s.deployment.version ? `버전 ${s.deployment.version}` : null,
+    s.deployment.commit ? `커밋 ${s.deployment.commit.slice(0, 7)}` : null,
+  ].filter(Boolean).join(' · ') || '배포 버전 정보 없음'
 
   return (
     <div>
@@ -358,6 +385,34 @@ export default function OpsStatusPage() {
         />
       </div>
 
+      <h2 className="mb-2 text-sm font-bold text-slate-700">발송·저장</h2>
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <HealthCard
+          koreanName="메일 서버 연결"
+          technicalName="SMTP"
+          description="예약 메일과 알림 메일을 실제로 내보내는 경로입니다."
+          tone={smtpTone}
+          statusLabel={s.smtp.status === 'mock' ? '모의 모드' : undefined}
+          Icon={Send}
+          detail={s.smtp.message}
+          technicalDetail={[
+            `${s.smtp.host}:${s.smtp.port}`,
+            s.smtp.checked_at ? `확인 ${formatLocalDateTime(s.smtp.checked_at)}` : null,
+          ].filter(Boolean).join(' · ')}
+          impact="예약 메일 발송과 알림 메일"
+        />
+        <HealthCard
+          koreanName="파일 저장 공간"
+          technicalName={`Storage · ${STORAGE_BACKEND_LABEL[s.storage.backend] ?? s.storage.backend}`}
+          description="레포트 이미지와 내보낸 파일을 보관하는 저장 경로입니다."
+          tone={storageTone}
+          Icon={HardDrive}
+          detail={storageDetail}
+          technicalDetail={s.storage.path}
+          impact="메일 이미지 생성과 파일 내보내기 저장"
+        />
+      </div>
+
       {s.has_recent_failures && (
         <div role="alert" className="mb-6 flex items-start gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -404,6 +459,10 @@ export default function OpsStatusPage() {
 
       <p className="mt-4 text-xs text-slate-400">
         실행 모드: {APP_MODE_LABEL[s.app_mode] ?? s.app_mode} · 인증 방식: {AUTH_MODE_LABEL[s.auth_mode] ?? s.auth_mode}
+      </p>
+      <p className="mt-1 text-xs text-slate-400">
+        {deploymentLabel} · 기동 {formatLocalDateTime(s.deployment.started_at)}
+        {formatDurationKo(s.deployment.uptime_seconds) ? ` · 가동 ${formatDurationKo(s.deployment.uptime_seconds)}` : ''}
       </p>
     </div>
   )

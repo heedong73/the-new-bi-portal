@@ -68,6 +68,30 @@ const STATUS: MonitoringStatus = {
     http_status: null,
     message: '모의 모드로 외부 Power BI를 호출하지 않습니다.',
   },
+  smtp: {
+    status: 'ok',
+    checked_at: '2026-08-05T17:40:00+09:00',
+    host: 'smtp.example.com',
+    port: 587,
+    latency_ms: 42,
+    message: '메일 서버 연결이 정상입니다.',
+  },
+  storage: {
+    status: 'degraded',
+    backend: 'local',
+    path: '/data/reportimage',
+    total_bytes: 1024 ** 3 * 100,
+    used_bytes: 1024 ** 3 * 90,
+    free_bytes: 1024 ** 3 * 10,
+    used_percent: 90,
+    message: '사용률이 임계치(85%)를 넘었습니다.',
+  },
+  deployment: {
+    version: '1.4.0',
+    commit: '5a1e8cc1234567',
+    started_at: '2026-08-05T09:00:00+09:00',
+    uptime_seconds: 31_335,
+  },
   recent_jobs_available: true,
   recent_jobs_error: null,
 }
@@ -121,6 +145,14 @@ describe('OpsStatusPage', () => {
     expect(await screen.findByText(/2026-08-05 08:30:42/)).toBeInTheDocument()
     expect(await screen.findByText(/소요 42초/)).toBeInTheDocument()
     expect(await screen.findByText(/마지막 확인 2026-08-05 17:42:15/)).toBeInTheDocument()
+  })
+
+  it('메일 서버·저장 공간 상태와 배포 정보를 표시한다', async () => {
+    wrap(<OpsStatusPage />)
+    expect(await screen.findByText('메일 서버 연결')).toBeInTheDocument()
+    expect(await screen.findByText('파일 저장 공간')).toBeInTheDocument()
+    expect(await screen.findByText(/사용률 90% · 남은 10.0GB \/ 100.0GB/)).toBeInTheDocument()
+    expect(await screen.findByText(/버전 1.4.0 · 커밋 5a1e8cc/)).toBeInTheDocument()
   })
 
   it('작업별 전체 이력 화면으로 가는 링크를 제공한다', async () => {

@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import aiosmtplib
 import httpx
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +44,14 @@ SCHEDULER_STALE_SECONDS = 90
 _POWERBI_HEALTH_CACHE_KEY = "bip:monitoring:powerbi-health"
 _POWERBI_HEALTH_CACHE_SECONDS = 60
 _POWERBI_HEALTH_TIMEOUT_SECONDS = 8.0
+
+# SMTP는 연결만 확인하되 메일 서버 부하와 접속 로그 증가를 막기 위해 5분 캐시한다.
+_SMTP_HEALTH_CACHE_KEY = "bip:monitoring:smtp-health"
+_SMTP_HEALTH_CACHE_SECONDS = 300
+_SMTP_HEALTH_TIMEOUT_SECONDS = 5.0
+
+# API 프로세스 기동 시각. 배포·재시작 시점을 운영 상태에서 확인한다.
+PROCESS_STARTED_AT = datetime.now(timezone.utc)
 
 
 def _report_label(report: Report | None) -> str | None:
@@ -239,6 +249,142 @@ async def powerbi_status(redis: Any) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     return result
+
+
+def storage_status() -> dict[str, Any]:
+    """레포트 이미지·내보내기 파일 저장 경로의 남은 용량을 확인한다.
+
+    용량이 차면 메일 발송과 파일 내보내기가 저장 단계에서 실패하므로, 실패가 발생한
+    뒤가 아니라 사용률로 미리 판단할 수 있게 한다. S3 백엔드는 디스크 개념이 없어
+    확인 대상이 아니다.
+    """
+    if settings.STORAGE_BACKEND not in ("local", "nas"):
+        return {
+            "status": "unknown",
+            "backend": settings.STORAGE_BACKEND,
+            "path": None,
+            "total_bytes": None,
+            "used_bytes": None,
+            "free_bytes": None,
+            "used_percent": None,
+            "message": "오브젝트 스토리지는 디스크 사용량 확인 대상이 아닙니다.",
+        }
+
+    path = settings.STORAGE_ROOT_PATH
+    try:
+        usage = shutil.disk_usage(path)
+    except OSError:
+        return {
+            "status": "error",
+            "backend": settings.STORAGE_BACKEND,
+            "path": path,
+            "total_bytes": None,
+            "used_bytes": None,
+            "free_bytes": None,
+            "used_percent": None,
+            "message": "저장 경로에 접근할 수 없습니다. 마운트 상태를 확인하세요.",
+        }
+
+    used_percent = round(usage.used / usage.total * 100, 1) if usage.total else None
+    warn = used_percent is not None and used_percent >= settings.STORAGE_WARN_PERCENT
+    return {
+        "status": "degraded" if warn else "ok",
+        "backend": settings.STORAGE_BACKEND,
+        "path": path,
+        "total_bytes": usage.total,
+        "used_bytes": usage.used,
+        "free_bytes": usage.free,
+        "used_percent": used_percent,
+        "message": (
+            f"사용률이 임계치({settings.STORAGE_WARN_PERCENT}%)를 넘었습니다."
+            if warn else "저장 공간이 충분합니다."
+        ),
+    }
+
+
+async def smtp_status(redis: Any) -> dict[str, Any]:
+    """메일 서버 연결만 확인한다. 메일은 보내지 않는다.
+
+    계정 잠금 위험을 피하려고 인증은 시도하지 않고 연결과 인사(EHLO)까지만 확인한다.
+    STARTTLS가 설정된 경우 협상까지 확인해 실제 발송 경로와 조건을 맞춘다.
+    """
+    now = datetime.now(timezone.utc)
+    if settings.APP_MODE == "mock":
+        return {
+            "status": "mock",
+            "checked_at": local_isoformat(now),
+            "host": settings.SMTP_HOST,
+            "port": settings.SMTP_PORT,
+            "latency_ms": 0,
+            "message": "모의 모드로 메일 서버에 연결하지 않습니다.",
+        }
+
+    try:
+        cached = await redis.get(_SMTP_HEALTH_CACHE_KEY)
+        if cached:
+            payload = json.loads(cached)
+            if isinstance(payload, dict):
+                return payload
+    except Exception:  # noqa: BLE001 - 캐시 실패 시 실제 확인을 시도
+        pass
+
+    started = time.perf_counter()
+    client = aiosmtplib.SMTP(
+        hostname=settings.SMTP_HOST,
+        port=settings.SMTP_PORT,
+        start_tls=False,
+        timeout=_SMTP_HEALTH_TIMEOUT_SECONDS,
+    )
+    try:
+        await client.connect()
+        if settings.SMTP_STARTTLS:
+            await client.starttls()
+        await client.ehlo()
+        result = {
+            "status": "ok",
+            "checked_at": local_isoformat(now),
+            "host": settings.SMTP_HOST,
+            "port": settings.SMTP_PORT,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+            "message": "메일 서버 연결이 정상입니다.",
+        }
+    except Exception as exc:  # noqa: BLE001 - 운영 화면에는 안전한 요약만 노출
+        logger.warning("smtp_health_failed", error_type=type(exc).__name__)
+        result = {
+            "status": "error",
+            "checked_at": local_isoformat(now),
+            "host": settings.SMTP_HOST,
+            "port": settings.SMTP_PORT,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+            "message": "메일 서버에 연결할 수 없습니다. 예약 메일 발송이 실패합니다.",
+        }
+    finally:
+        try:
+            await client.quit()
+        except Exception:  # noqa: BLE001 - 연결 실패 시 정리도 실패할 수 있다
+            pass
+
+    try:
+        await redis.set(
+            _SMTP_HEALTH_CACHE_KEY,
+            json.dumps(result, ensure_ascii=False),
+            ex=_SMTP_HEALTH_CACHE_SECONDS,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
+def deployment_info() -> dict[str, Any]:
+    """배포 버전과 기동 시각. "언제부터 문제인가"의 기준점을 제공한다."""
+    started = PROCESS_STARTED_AT
+    uptime = max(0, int((datetime.now(timezone.utc) - started).total_seconds()))
+    return {
+        "version": settings.APP_VERSION or None,
+        "commit": (settings.GIT_COMMIT or None),
+        "started_at": local_isoformat(started),
+        "uptime_seconds": uptime,
+    }
 
 
 async def recent_jobs(db: AsyncSession) -> dict[str, list[dict[str, Any]]]:
