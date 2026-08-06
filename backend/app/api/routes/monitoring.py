@@ -1,6 +1,9 @@
 """모니터링 라우트 — /api/collect-now, /api/health, /api/monitoring/status."""
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
+
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
@@ -93,44 +96,98 @@ async def health():
 
 @router.get("/api/monitoring/status")
 async def monitoring_status(db: SessionDep, redis: RedisDep, _op=Depends(_require_operator)):
-    """DB/Redis/Worker 상태 + 최근 작업 결과 + 최근 실패 (R36.2, R36.3)."""
-    # DB 연결
+    """핵심 의존성·예약 경로·Power BI 연결과 최근 작업 상태를 집계한다."""
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    # 성공 여부뿐 아니라 지연 시간도 남겨 장애 전 느려짐을 확인할 수 있게 한다.
+    db_started = time.perf_counter()
     try:
         await db.execute(text("SELECT 1"))
         db_ok = True
     except Exception:
         db_ok = False
+    db_latency_ms = round((time.perf_counter() - db_started) * 1000, 1)
 
-    # Redis 연결
+    redis_started = time.perf_counter()
     try:
         await redis.ping()
         redis_ok = True
     except Exception:
         redis_ok = False
+    redis_latency_ms = round((time.perf_counter() - redis_started) * 1000, 1)
 
-    # Worker 가용성
-    worker_ok, worker_count = await monitoring_service.ping_workers()
+    worker = await monitoring_service.worker_status()
+    worker_ok = bool(worker["ok"])
 
-    # 최근 작업 + 최근 실패 (DB 가용 시에만 조회)
+    if redis_ok:
+        # 공용 Redis 클라이언트를 순차로 사용해 커넥션 풀에 여분 연결을 남기지 않는다.
+        # 세 호출 모두 짧고, Power BI 확인은 60초 캐시라 순차 실행이 응답 시간에 불리하지 않다.
+        scheduler = await monitoring_service.scheduler_status(redis)
+        queued_tasks = await monitoring_service.queue_depth(redis)
+        powerbi = await monitoring_service.powerbi_status(redis)
+    else:
+        scheduler = {
+            "status": "unknown", "last_heartbeat": None, "age_seconds": None,
+            "message": "Redis 장애 영향으로 스케줄러 상태를 확인할 수 없습니다.",
+        }
+        queued_tasks = None
+        powerbi = {
+            "status": "unknown", "checked_at": None, "latency_ms": None,
+            "http_status": None,
+            "message": "Redis 장애 영향으로 Power BI 인증 상태를 확인할 수 없습니다.",
+        }
+
+    # DB 장애와 실제 작업 0건을 혼동하지 않도록 조회 가능 여부를 별도 반환한다.
     jobs: dict = {"refresh": [], "mail": [], "export": []}
     failures: dict = {"refresh": 0, "mail": 0, "export": 0}
+    jobs_available = False
+    jobs_error: str | None = None
     if db_ok:
         try:
             jobs = await monitoring_service.recent_jobs(db)
             failures = await monitoring_service.recent_failures(db)
+            jobs_available = True
         except Exception:
-            pass
+            jobs_error = "최근 작업 이력을 조회하지 못했습니다."
+    else:
+        jobs_error = "데이터베이스 장애로 최근 작업 이력을 조회할 수 없습니다."
 
     has_failures = any(v > 0 for v in failures.values())
+    component_error = (
+        not db_ok
+        or not redis_ok
+        or not worker_ok
+        or scheduler["status"] == "unavailable"
+        or powerbi["status"] == "error"
+    )
+    component_warning = (
+        not jobs_available
+        or scheduler["status"] == "unknown"
+        or powerbi["status"] in ("degraded", "unknown")
+    )
+    overall_status = "error" if component_error else "degraded" if component_warning or has_failures else "ok"
 
     return {
+        # 기존 필드는 하위호환을 위해 유지한다.
         "db": "ok" if db_ok else "error",
         "redis": "ok" if redis_ok else "error",
         "worker": "ok" if worker_ok else "unavailable",
-        "worker_count": worker_count,
+        "worker_count": worker["count"],
         "app_mode": settings.APP_MODE,
         "auth_mode": settings.AUTH_MODE,
         "recent_jobs": jobs,
         "recent_failures": failures,
         "has_recent_failures": has_failures,
+        # 운영 진단 확장 필드.
+        "overall_status": overall_status,
+        "checked_at": checked_at,
+        "db_latency_ms": db_latency_ms,
+        "redis_latency_ms": redis_latency_ms,
+        "worker_ids": worker["worker_ids"],
+        "active_tasks": worker["active_tasks"],
+        "queued_tasks": queued_tasks,
+        "scheduler": scheduler,
+        "powerbi": powerbi,
+        "recent_jobs_available": jobs_available,
+        "recent_jobs_error": jobs_error,
     }

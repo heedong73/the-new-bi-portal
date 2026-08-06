@@ -6,6 +6,12 @@ from celery.schedules import crontab
 from app.core.config import settings
 
 beat_schedule = {
+    # 운영 상태 페이지가 Beat → broker → Worker 경로의 생존 여부를 판정한다.
+    "scheduler-heartbeat-every-30s": {
+        "task": "bip.scheduler_heartbeat",
+        "schedule": 30.0,
+        "args": [],
+    },
     "collect-workspace-every-interval": {
         "task": "bip.collect_workspace",
         "schedule": settings.COLLECT_INTERVAL_MINUTES * 60,

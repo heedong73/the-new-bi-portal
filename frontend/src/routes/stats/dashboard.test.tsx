@@ -31,9 +31,44 @@ const USAGE: StatsUsage = {
 const STATUS: MonitoringStatus = {
   db: 'ok', redis: 'ok', worker: 'unavailable', worker_count: 0,
   app_mode: 'mock', auth_mode: 'mock',
-  recent_jobs: { refresh: [{ id: 1, status: 'Completed' }], mail: [], export: [] },
+  recent_jobs: {
+    refresh: [{
+      id: 1,
+      status: 'Completed',
+      target_name: '월간 매출 데이터셋',
+      target_detail: '연결 레포트: 월간 매출',
+      started_at: '2026-08-05T08:30:00+09:00',
+      finished_at: '2026-08-05T08:30:42+09:00',
+      duration_seconds: 42,
+      error_message: null,
+    }],
+    mail: [],
+    export: [],
+  },
   recent_failures: { refresh: 0, mail: 1, export: 0 },
   has_recent_failures: true,
+  overall_status: 'error',
+  checked_at: '2026-08-05T17:42:15+09:00',
+  db_latency_ms: 3.5,
+  redis_latency_ms: 1.2,
+  worker_ids: [],
+  active_tasks: null,
+  queued_tasks: 0,
+  scheduler: {
+    status: 'ok',
+    last_heartbeat: '2026-08-05T17:42:00+09:00',
+    age_seconds: 15,
+    message: '예약 작업 실행 경로가 정상입니다.',
+  },
+  powerbi: {
+    status: 'mock',
+    checked_at: '2026-08-05T17:42:15+09:00',
+    latency_ms: 0,
+    http_status: null,
+    message: '모의 모드로 외부 Power BI를 호출하지 않습니다.',
+  },
+  recent_jobs_available: true,
+  recent_jobs_error: null,
 }
 
 function wrap(ui: React.ReactElement) {
@@ -63,11 +98,22 @@ describe('StatsDashboardPage', () => {
 })
 
 describe('OpsStatusPage', () => {
-  it('컴포넌트 상태와 최근 실패 배너를 렌더링한다', async () => {
+  it('구성요소 상태와 최근 실패 배너를 렌더링한다', async () => {
     wrap(<OpsStatusPage />)
-    expect(await screen.findByText('데이터베이스')).toBeInTheDocument()
-    expect(await screen.findByText('Worker')).toBeInTheDocument()
-    expect(await screen.findByText('사용 불가')).toBeInTheDocument()
+    expect(await screen.findByText('데이터 저장소')).toBeInTheDocument()
+    expect(await screen.findByText('백그라운드 작업 처리기')).toBeInTheDocument()
+    expect(await screen.findByText('Celery Worker')).toBeInTheDocument()
+    expect(await screen.findByText('응답 Worker 없음')).toBeInTheDocument()
     expect(await screen.findByText(/최근 24시간 실패/)).toBeInTheDocument()
+  })
+
+  it('최근 작업을 대상 이름·한글 상태·초 단위 시각으로 표시한다', async () => {
+    wrap(<OpsStatusPage />)
+    expect(await screen.findByText('월간 매출 데이터셋')).toBeInTheDocument()
+    expect(await screen.findByText('연결 레포트: 월간 매출')).toBeInTheDocument()
+    expect(await screen.findByText('성공')).toBeInTheDocument()
+    expect(await screen.findByText(/2026-08-05 08:30:42/)).toBeInTheDocument()
+    expect(await screen.findByText(/소요 42초/)).toBeInTheDocument()
+    expect(await screen.findByText(/마지막 확인 2026-08-05 17:42:15/)).toBeInTheDocument()
   })
 })

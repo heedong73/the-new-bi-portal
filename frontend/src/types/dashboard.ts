@@ -142,7 +142,35 @@ export interface StatsUsage {
 export interface RecentJob {
   id: number
   status: string
+  target_name?: string | null
+  target_detail?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  duration_seconds?: number | null
+  error_message?: string | null
+  dataset_id?: string | null
+  mail_schedule_id?: number | null
+  mail_job_id?: number | null
+  report_id?: number | null
+  export_format?: string | null
+  page_name?: string | null
+  retry_count?: number | null
   [key: string]: unknown
+}
+
+export interface SchedulerHealth {
+  status: 'ok' | 'unavailable' | 'unknown'
+  last_heartbeat: string | null
+  age_seconds: number | null
+  message: string
+}
+
+export interface PowerBIHealth {
+  status: 'ok' | 'degraded' | 'error' | 'unknown' | 'mock'
+  checked_at: string | null
+  latency_ms: number | null
+  http_status: number | null
+  message: string
 }
 
 export interface MonitoringStatus {
@@ -155,6 +183,17 @@ export interface MonitoringStatus {
   recent_jobs: { refresh: RecentJob[]; mail: RecentJob[]; export: RecentJob[] }
   recent_failures: { refresh: number; mail: number; export: number }
   has_recent_failures: boolean
+  overall_status: 'ok' | 'degraded' | 'error'
+  checked_at: string
+  db_latency_ms: number
+  redis_latency_ms: number
+  worker_ids: string[]
+  active_tasks: number | null
+  queued_tasks: number | null
+  scheduler: SchedulerHealth
+  powerbi: PowerBIHealth
+  recent_jobs_available: boolean
+  recent_jobs_error: string | null
 }
 
 
