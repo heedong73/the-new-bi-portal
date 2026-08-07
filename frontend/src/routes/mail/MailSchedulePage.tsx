@@ -13,6 +13,7 @@ import { reportAdminApi } from '@/api/reportAdminApi'
 import { usersApi, groupsApi } from '@/api/adminApi'
 import ReportPickerTree from './ReportPickerTree'
 import RichTextEditor from '@/components/RichTextEditor'
+import HintTip from '@/components/HintTip'
 import { UserPicker } from '@/routes/admin/EntityPicker'
 import { useSidebarStore } from '@/stores/useSidebarStore'
 import type {
@@ -56,8 +57,9 @@ function emptyForm(): MailScheduleCreate {
     sender_email: '',
     body_header: '',
     body_footer: '',
-    image_width: '',
-    image_resize_px: null,
+    // 표시 폭(1280) 대비 2배 해상도를 첨부해 모바일 고화면에서도 선명하게 보이도록 한다.
+    image_width: '1280',
+    image_resize_px: 2560,
     export_format: 'PNG',
     enabled: true,
     schedule_freq: 'daily',
@@ -311,8 +313,9 @@ export default function MailSchedulePage() {
         <p className="text-sm text-slate-400">불러오는 중…</p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+          {/* 목록 기본 글자는 14px → 15px. 컬럼명·부가 정보도 각각 1px씩 키운다. */}
+          <table className="w-full text-[15px]">
+            <thead className="bg-slate-50 text-left text-[13px] uppercase text-slate-500">
               <tr>
                 <th className="px-4 py-3">스케줄명</th>
                 <th className="px-4 py-3">레포트</th>
@@ -327,16 +330,16 @@ export default function MailSchedulePage() {
                 <tr key={s.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-800">{s.title}</td>
                   <td className="px-4 py-3 text-slate-600">{reportName(s.report_id)}</td>
-                  <td className="px-4 py-3 text-xs text-slate-500">{freqSummary(s)}</td>
+                  <td className="px-4 py-3 text-[13px] text-slate-500">{freqSummary(s)}</td>
                   <td className="px-4 py-3 text-slate-500">{s.recipients.length} / {s.pages.length}</td>
                   <td className="px-4 py-3">
                     {s.enabled
-                      ? <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">활성</span>
-                      : <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-600">비활성</span>}
+                      ? <span className="rounded-full bg-green-50 px-2 py-0.5 text-[13px] text-green-700">활성</span>
+                      : <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[13px] text-slate-600">비활성</span>}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button type="button" onClick={() => openEdit(s)} className="mr-2 text-xs text-blue-600 hover:underline">수정</button>
-                    <button type="button" onClick={() => { deleteMutation.reset(); setConfirmDelete(s) }} className="text-xs text-red-600 hover:underline">삭제</button>
+                    <button type="button" onClick={() => openEdit(s)} className="mr-2 text-[13px] text-blue-600 hover:underline">수정</button>
+                    <button type="button" onClick={() => { deleteMutation.reset(); setConfirmDelete(s) }} className="text-[13px] text-red-600 hover:underline">삭제</button>
                   </td>
                 </tr>
               ))}
@@ -356,8 +359,10 @@ export default function MailSchedulePage() {
           }`}
         >
           {/* 펼친 관리자 사이드바의 오른쪽 영역에서만 가운데 정렬한다.
-              최대 폭만 88rem에서 92rem으로 조금 늘려 사이드바는 침범하지 않는다. */}
-          <div className="my-8 w-full max-w-[92rem] rounded-2xl bg-white p-6 shadow-2xl">
+              최대 폭은 96rem까지만 늘린다 — 수신자 입력 행(드롭다운 3개 + 추가 버튼)이
+              한 줄에 들어갈 만큼만 넓히고, 배경이 left-64부터 시작하므로 사이드바는
+              침범하지 않는다. 화면이 좁으면 w-full 로 가용 폭만 사용한다. */}
+          <div className="my-4 w-full max-w-[96rem] rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-800">
                 {editingId === 'new' ? '새 메일 스케줄' : '메일 스케줄 수정'}
@@ -455,17 +460,29 @@ export default function MailSchedulePage() {
                 )}
               </Field>
 
-              {/* 4. Export 형식 + 이미지 리사이즈 */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* 4. Export 형식 + 이미지 화질/표시 크기.
+                  설명은 제목 옆 i 툴팁으로만 노출해 폼이 세로로 길어지지 않게 한다. */}
+              <div className="grid grid-cols-3 gap-2">
                 <Field label="Export 형식">
                   <select value={form.export_format} onChange={(e) => setField('export_format', e.target.value)} className={compactInputCls}>
                     <option>PNG</option><option>PDF</option><option>PPTX</option>
                   </select>
                 </Field>
-                <Field label="이미지 리사이즈(px, 선택)">
-                  <input type="number" value={form.image_resize_px ?? ''}
+                <Field
+                  label="첨부 해상도"
+                  hint="첨부 파일의 실제 픽셀 폭이며 화질을 결정합니다. 비우면 원본 그대로. 표시 폭의 2배 이상을 권장합니다(모바일 고해상도 화면 대응). 예: 2560"
+                >
+                  <input type="number" value={form.image_resize_px ?? ''} placeholder="2560"
+                    aria-label="첨부 이미지 해상도(px)"
                     onChange={(e) => setField('image_resize_px', e.target.value ? Number(e.target.value) : null)} className={compactInputCls} />
-                  <p className="mt-1 text-xs text-slate-400">메일 본문 이미지를 이 폭(px)으로 비율 유지하며 축소합니다. 비우면 원본 그대로. 원본보다 큰 값은 확대하지 않습니다.</p>
+                </Field>
+                <Field
+                  label="표시 최대 폭"
+                  hint="메일에서 보이는 크기입니다. 1280 · 1280px · 100% 형식을 쓸 수 있습니다. 비우면 최대 1280px로 표시하며, 모바일에서는 화면 폭에 맞춰 자동 축소됩니다."
+                >
+                  <input value={form.image_width ?? ''} placeholder="1280"
+                    aria-label="본문 표시 최대 폭"
+                    onChange={(e) => setField('image_width', e.target.value)} className={compactInputCls} />
                 </Field>
               </div>
                 </div>
@@ -524,7 +541,9 @@ export default function MailSchedulePage() {
                       ariaLabel="수신자 사용자"
                       placeholder="사용자 검색…"
                       dense
-                      className="w-[13rem] max-w-full shrink-0"
+                      // 고정 폭이면 '추가' 버튼이 다음 줄로 밀리므로, 다른 유형의
+                      // 입력칸과 동일하게 남는 공간을 차지하고 필요하면 줄어들게 한다.
+                      className="min-w-0 flex-1"
                     />
                   ) : newRecipType === 'GROUP' ? (
                     <select value={newRecipId} aria-label="수신자 그룹"
@@ -540,7 +559,7 @@ export default function MailSchedulePage() {
                   )}
                   {/* 입력 컨트롤과 높이를 맞춘 추가 버튼. */}
                   <button type="button" onClick={addRecipientFromInput} disabled={!newRecipValid}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-[0.6rem] py-[0.4rem] text-[11px] font-medium text-white hover:bg-blue-500 disabled:opacity-50">
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-[0.6rem] py-[0.4rem] text-[12px] font-medium text-white hover:bg-blue-500 disabled:opacity-50">
                     <Plus className="h-[0.8rem] w-[0.8rem]" /> 추가
                   </button>
                 </div>
@@ -557,24 +576,31 @@ export default function MailSchedulePage() {
                     const visibleItems = expanded ? items : items.slice(0, RECIPIENT_COLLAPSED_PREVIEW)
                     const hiddenCount = items.length - visibleItems.length
                     return (
-                      <div key={fld} className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5">
-                        <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${RECIPIENT_FIELD_BADGE[fld]}`}>
+                      // 수신자가 늘어 1줄 → 2줄이 될 때 모달 전체가 세로로 늘어나
+                      // 화면이 흔들리는 것을 막는다. 접힌 상태의 최대 줄 수(2줄)만큼
+                      // 공간을 처음부터 확보해 두어 인원 수와 무관하게 높이가 고정된다.
+                      // chip 1줄 24px + gap 4px + 컨테이너 padding/border 14px = 66px.
+                      <div key={fld} className="flex items-start gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 xl:min-h-[4.125rem]">
+                        <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[12px] font-medium ${RECIPIENT_FIELD_BADGE[fld]}`}>
                           {RECIPIENT_FIELD_LABEL[fld]}
                           {items.length > 0 && <span className="ml-1 font-semibold">{items.length}</span>}
                         </span>
                         {items.length === 0 ? (
-                          <span className="mt-1 text-[11px] text-slate-300">없음</span>
+                          <span className="mt-1 text-[12px] text-slate-300">없음</span>
                         ) : (
-                          <div className="flex flex-1 flex-wrap items-center gap-1">
+                          // 자동 줄바꿈(flex-wrap)은 이름 길이에 따라 줄 수가 달라져
+                          // 받는사람만 3줄이 되는 문제가 있다. PC(xl)에서는 2열 그리드로
+                          // 고정해 3명이면 항상 2줄이 되도록 칸마다 통일한다.
+                          <div className="grid flex-1 grid-cols-1 items-center gap-1 xl:grid-cols-2">
                             {visibleItems.map((it, indexInField) => {
                               const label = recipientLabel(it.r)
                               return (
                                 <span key={it.i}
-                                  className={`inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-2 pr-1 text-[11px] ${label ? 'text-slate-700' : 'text-amber-600'}`}>
-                                  <span className="text-[11px] text-slate-400">{RECIPIENT_LABEL[it.r.recipient_type]}</span>
-                                  <span className="max-w-[11rem] truncate">{label ?? '미선택'}</span>
+                                  className={`inline-flex min-w-0 items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-2 pr-1 text-[12px] ${label ? 'text-slate-700' : 'text-amber-600'}`}>
+                                  <span className="shrink-0 text-[12px] text-slate-400">{RECIPIENT_LABEL[it.r.recipient_type]}</span>
+                                  <span className="min-w-0 flex-1 truncate">{label ?? '미선택'}</span>
                                   {items.length > 1 && (
-                                    <span className="inline-flex items-center">
+                                    <span className="inline-flex shrink-0 items-center">
                                       <button type="button" disabled={indexInField === 0}
                                         onClick={() => moveRecipient(fld, indexInField, -1)}
                                         aria-label={`${label ?? '수신자'} 위로 이동`}
@@ -590,7 +616,7 @@ export default function MailSchedulePage() {
                                     </span>
                                   )}
                                   <button type="button" onClick={() => removeRecipient(it.i)} aria-label="수신자 삭제"
-                                    className="rounded-full p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-500">
+                                    className="shrink-0 rounded-full p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-500">
                                     <X className="h-3 w-3" />
                                   </button>
                                 </span>
@@ -599,7 +625,7 @@ export default function MailSchedulePage() {
                             {collapsible && (
                               <button type="button" onClick={() => toggleRecipFieldExpand(fld)}
                                 aria-expanded={expanded}
-                                className="inline-flex items-center rounded-full border border-slate-300 px-2 py-0.5 text-[11px] font-medium text-slate-500 hover:bg-slate-100">
+                                className="inline-flex w-fit items-center justify-self-start rounded-full border border-slate-300 px-2 py-0.5 text-[12px] font-medium text-slate-500 hover:bg-slate-100">
                                 {expanded ? '접기' : `+${hiddenCount}개 더보기`}
                               </button>
                             )}
@@ -757,7 +783,8 @@ const inputCls = 'rounded-lg border border-slate-300 px-3 py-2 text-[13px] outli
 // 수신자 행처럼 flex 안에서 폭을 직접 제어하는 입력용(위 inputCls의 w-full 충돌 방지).
 const rowInputCls = 'mail-recipient-control rounded-lg border border-slate-300 px-[0.6rem] py-[0.4rem] text-[12px] outline-none focus:border-blue-500'
 // 수신 칸/대상 유형 선택은 고정 폭으로 유지한다.
-const rowSelectWidthCls = 'w-[4.8rem]'
+// '받는사람'·'숨은참조'처럼 4글자 항목이 select 화살표 공간까지 고려해도 잘리지 않는 폭.
+const rowSelectWidthCls = 'w-[5.6rem]'
 // 네이티브 select/date/time/number 내부 글자는 브라우저 기본 스타일이 개입할 수 있어
 // mail-compact-control CSS에서도 13px을 !important로 강제한다.
 const compactInputCls = 'mail-compact-control rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-blue-500 w-full'
@@ -776,20 +803,28 @@ function freqSummary(s: MailSchedule): string {
 }
 
 /** 항목 제목. 기본값은 '수신자'·'발송 스케줄' 제목과 동일한 14px이며,
- *  발송 스케줄 패널 안의 하위 항목은 labelSize="xs"로 한 단계 작게 유지한다. */
+ *  발송 스케줄 패널 안의 하위 항목은 labelSize="xs"로 한 단계 작게 유지한다.
+ *  hint 를 주면 제목 옆 i 아이콘의 툴팁으로만 노출해 폼 높이를 늘리지 않는다. */
 function Field({
   label,
   children,
   labelSize = 'sm',
+  hint,
 }: {
   label: string
   children: React.ReactNode
   labelSize?: 'sm' | 'xs'
+  hint?: string
 }) {
   return (
     <label className="block">
-      <span className={`mb-1 block font-medium text-slate-600 ${labelSize === 'sm' ? 'text-sm' : 'text-xs'}`}>{label}</span>
+      <span className={`mb-1 flex items-center gap-1 font-medium text-slate-600 ${labelSize === 'sm' ? 'text-sm' : 'text-xs'}`}>
+        <span className="min-w-0 truncate">{label}</span>
+        {hint && <HintTip text={hint} label={label} />}
+      </span>
       {children}
     </label>
   )
 }
+
+

@@ -9,6 +9,34 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 ScheduleFreqStr = Literal["daily", "weekly", "monthly"]
 
 
+def _check_image_width(v: str | None) -> str | None:
+    """메일 본문 이미지 표시 폭 형식 검증.
+
+    허용: 빈 값(기본값 사용), '1280', '1280px', '100%'.
+    표시 폭은 화면에 보이는 크기만 정하며 첨부 이미지의 실제 해상도
+    (image_resize_px)와는 별개다.
+    """
+    if v is None:
+        return None
+    raw = v.strip()
+    if raw == "":
+        return ""
+
+    w = raw.lower()
+    if w.endswith("%"):
+        num = w[:-1].strip()
+        if num.isdigit() and 0 < int(num) <= 100:
+            return raw
+        raise ValueError("표시 폭 비율은 1~100 사이의 % 값이어야 합니다. 예: 100%")
+
+    if w.endswith("px"):
+        w = w[:-2].strip()
+    if w.isdigit() and int(w) > 0:
+        return raw
+
+    raise ValueError("표시 폭은 '1280', '1280px', '100%' 형식이어야 합니다.")
+
+
 # ---------------------------------------------------------------------------
 # 수신자 (MailRecipient)
 # ---------------------------------------------------------------------------
@@ -68,6 +96,10 @@ class PageCreate(BaseModel):
     image_width_override: str | None = Field(default=None, max_length=32)
     sort_order: int = Field(default=0, ge=0)
 
+    _validate_width_override = field_validator("image_width_override")(
+        _check_image_width
+    )
+
 
 class PageResponse(BaseModel):
     """스케줄 페이지 응답."""
@@ -104,8 +136,12 @@ class MailScheduleCreate(BaseModel):
         return v
 
     # 이미지 옵션
+    # image_width  : 메일에서 "보이는" 최대 폭 (예: '1280', '1280px', '100%')
+    # image_resize_px: 첨부 파일의 "실제" 픽셀 폭 (화질을 결정)
     image_width: str | None = Field(default=None, max_length=32)
     image_resize_px: int | None = Field(default=None, gt=0)
+
+    _validate_image_width = field_validator("image_width")(_check_image_width)
 
     # 스케줄 / 형식
     cron_expr: str | None = Field(default=None, max_length=128)
@@ -143,6 +179,9 @@ class MailScheduleUpdate(BaseModel):
     body_footer: str | None = None
     image_width: str | None = Field(default=None, max_length=32)
     image_resize_px: int | None = Field(default=None, gt=0)
+
+    _validate_image_width = field_validator("image_width")(_check_image_width)
+
     cron_expr: str | None = Field(default=None, max_length=128)
     export_format: str | None = Field(default=None, max_length=16)
     enabled: bool | None = None

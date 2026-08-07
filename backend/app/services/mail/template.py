@@ -138,7 +138,42 @@ class InlineImage:
 
     cid: str
     caption: str | None = None
-    display_width: str | None = None  # 예: "600", "80%" (None이면 미지정)
+    # 표시 폭. 첨부 파일의 실제 픽셀 크기(image_resize_px)와 별개로 "화면에 보이는
+    # 크기"만 제어한다. 예: "1280", "1280px", "100%" (None/빈 값이면 기본 최대 폭).
+    display_width: str | None = None
+
+
+# 표시 폭 미지정 시 사용할 기본 최대 폭(px).
+# 첨부 이미지는 이보다 크게 유지하고(고해상도 소스), 화면에서는 이 폭까지만
+# 표시해 PC에서 본문을 넘치지 않게 한다. 모바일은 width:100% 로 축소된다.
+DEFAULT_DISPLAY_MAX_WIDTH_PX = 1280
+
+
+def _parse_display_width(raw: str | None) -> tuple[int | None, str]:
+    """표시 폭 문자열을 (최대 px, 폭 비율) 로 해석한다.
+
+    반환값의 두 번째 항목은 CSS/속성에 쓸 폭 값이며 항상 백분율이다.
+    - None/빈 값 → (기본 최대 폭, "100%")
+    - "80%"      → (None, "80%")          컨테이너 대비 비율만 사용
+    - "1280"/"1280px" → (1280, "100%")    최대 폭 제한 + 반응형 축소
+    - 그 외 형식 → (기본 최대 폭, "100%")  잘못된 값은 기본값으로 폴백
+    """
+    if not raw or not raw.strip():
+        return DEFAULT_DISPLAY_MAX_WIDTH_PX, "100%"
+
+    w = raw.strip().lower()
+    if w.endswith("%"):
+        num = w[:-1].strip()
+        if num.isdigit() and 0 < int(num) <= 100:
+            return None, f"{int(num)}%"
+        return DEFAULT_DISPLAY_MAX_WIDTH_PX, "100%"
+
+    if w.endswith("px"):
+        w = w[:-2].strip()
+    if w.isdigit() and int(w) > 0:
+        return int(w), "100%"
+
+    return DEFAULT_DISPLAY_MAX_WIDTH_PX, "100%"
 
 
 def render_subject(
@@ -151,16 +186,43 @@ def render_subject(
 
 
 def _img_tag(image: InlineImage) -> str:
-    """cid inline <img> 태그. display_width 적용(px는 숫자, %는 그대로)."""
-    width_attr = ""
-    if image.display_width:
-        w = image.display_width.strip()
-        if w.endswith("%"):
-            width_attr = f' width="{html.escape(w)}"'
-        elif w.isdigit():
-            width_attr = f' width="{w}"'
+    """cid inline <img> 를 반응형 table 로 감싼 블록을 만든다.
+
+    첨부 이미지의 실제 해상도와 화면 표시 크기를 분리하는 것이 핵심이다.
+    고해상도 PNG 를 첨부한 뒤 표시 폭만 제한하면, PC 에서는 본문을 넘치지 않고
+    모바일에서는 화면 폭에 맞춰 축소되면서도 원본 픽셀이 남아 있어 선명하다.
+
+    호환성 고려:
+      - ``max-width`` 를 무시하는 클라이언트(구형 Outlook 등)를 위해 table/img 에
+        ``width`` 속성을 함께 넣는다.
+      - 모바일에서 가로로 넘치지 않도록 ``width:100%`` 를 지정한다.
+      - 세로 비율이 찌그러지지 않도록 ``height:auto`` 를 지정한다.
+      - Outlook 의 이미지 축소 품질 저하를 줄이기 위해
+        ``-ms-interpolation-mode:bicubic`` 을 지정한다.
+    """
+    max_px, width_pct = _parse_display_width(image.display_width)
     alt = html.escape(image.caption or "")
-    return f'<img src="cid:{html.escape(image.cid)}"{width_attr} alt="{alt}" />'
+    cid = html.escape(image.cid)
+
+    # max-width 를 지원하지 않는 클라이언트용 폭 속성(px 우선, 없으면 비율).
+    width_attr = f'{max_px}' if max_px else width_pct
+
+    img_style = (
+        f"display:block;width:{width_pct};"
+        + (f"max-width:{max_px}px;" if max_px else "")
+        + "height:auto;border:0;outline:none;text-decoration:none;"
+        "-ms-interpolation-mode:bicubic;"
+    )
+    table_style = "width:100%;" + (f"max-width:{max_px}px;" if max_px else "")
+
+    return (
+        '<table role="presentation" border="0" cellpadding="0" cellspacing="0"'
+        f' width="100%" style="{table_style}border-collapse:collapse">'
+        '<tr><td style="padding:0">'
+        f'<img src="cid:{cid}" width="{html.escape(width_attr)}" alt="{alt}"'
+        f' style="{img_style}" />'
+        "</td></tr></table>"
+    )
 
 
 def assemble_body(
