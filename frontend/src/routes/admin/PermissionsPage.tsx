@@ -18,10 +18,11 @@ import { foldersAdminApi, reportAdminApi } from '@/api/reportAdminApi'
 import { MENU_CATALOG } from '@/constants/menus'
 import type { PermissionAction } from '@/types/reportAdmin'
 import type { DirectReportPermission, InheritedReportPermission } from '@/types/admin'
-import PermissionHint from './PermissionHint'
+import HintTip from '@/components/HintTip'
 import ReportMultiPicker from './ReportMultiPicker'
 import GroupTreeSelector, { type GroupSelection } from './GroupTreeSelector'
 import { UserPicker } from './EntityPicker'
+import { buildSearchTerms, matchesSearchTerms } from '@/utils/hangulKeyboard'
 
 const REPORT_PERMISSIONS: { value: PermissionAction; label: string; hint?: string }[] = [
   { value: 'VIEW', label: '조회' },
@@ -312,7 +313,7 @@ function GroupDetailPanel({ groupId, groupName }: { groupId: number; groupName: 
                       className="h-4 w-4 rounded border-slate-300" />
                     {p.label}
                   </label>
-                  {p.hint && <PermissionHint text={p.hint} label={p.label} />}
+                  {p.hint && <HintTip text={p.hint} label={p.label} />}
                 </span>
               ))}
               <button type="button"
@@ -789,7 +790,7 @@ function UserDetailPanel({ userId }: { userId: number }) {
     folders.filter((folder) => folder.parent_id !== null).map((folder) => folder.id),
   )
   const collapsedInheritedFolders = inheritedCollapsedFolders ?? defaultInheritedCollapsedFolders
-  const inheritedTerm = inheritedQuery.trim().toLowerCase()
+  const inheritedTerms = buildSearchTerms(inheritedQuery)
   const inheritedSourceFilters: { value: 'all' | 'group' | 'role' | 'dept'; label: string }[] = [
     { value: 'all', label: '전체' },
     { value: 'group', label: '그룹' },
@@ -801,10 +802,9 @@ function UserDetailPanel({ userId }: { userId: number }) {
   const matchesInheritedGroup = (group: InheritedReportGroup, reportName: string) => {
     const items = visibleInheritedItems(group)
     if (items.length === 0) return false
-    if (!inheritedTerm) return true
-    return `${reportName} ${group.report_name} ${items.map((item) => `${item.permission} ${item.source_label}`).join(' ')}`
-      .toLowerCase()
-      .includes(inheritedTerm)
+    if (inheritedTerms.length === 0) return true
+    const haystack = `${reportName} ${group.report_name} ${items.map((item) => `${item.permission} ${item.source_label}`).join(' ')}`
+    return matchesSearchTerms([haystack], inheritedTerms)
   }
   const reportHasInheritedMatch = (report: (typeof reports)[number]) => {
     const group = inheritedGroupsByReportId.get(report.id)
@@ -850,7 +850,7 @@ function UserDetailPanel({ userId }: { userId: number }) {
   }
   function renderInheritedFolder(folder: (typeof folders)[number], depth: number): ReactNode {
     if (!folderHasInheritedMatch(folder.id)) return null
-    const isOpen = inheritedTerm ? true : !collapsedInheritedFolders.has(folder.id)
+    const isOpen = inheritedTerms.length > 0 ? true : !collapsedInheritedFolders.has(folder.id)
     const children = inheritedChildFolders.get(folder.id) ?? []
     const folderReports = (inheritedReportsByFolder.get(folder.id) ?? []).filter(reportHasInheritedMatch)
     return (
@@ -1044,7 +1044,7 @@ function UserDetailPanel({ userId }: { userId: number }) {
                             className="h-4 w-4 rounded border-slate-300" />
                           {p.label}
                         </label>
-                        {p.hint && <PermissionHint text={p.hint} label={p.label} />}
+                        {p.hint && <HintTip text={p.hint} label={p.label} />}
                       </span>
                     ))}
                     <button type="button"

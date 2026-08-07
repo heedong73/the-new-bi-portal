@@ -7,7 +7,7 @@ import { reportAdminApi } from '@/api/reportAdminApi'
 import { usersApi, groupsApi } from '@/api/adminApi'
 import type { PermissionAction, ReportPermission, SubjectType } from '@/types/reportAdmin'
 import { GroupPicker, UserPicker } from './EntityPicker'
-import PermissionHint from './PermissionHint'
+import HintTip from '@/components/HintTip'
 
 const SUBJECT_TYPES: { value: SubjectType; label: string }[] = [
   { value: 'user', label: '사용자' },
@@ -140,7 +140,7 @@ export default function ReportPermissionPanel({ reportId }: { reportId: number }
                   className="h-4 w-4 rounded border-slate-300" />
                 {p.label}
               </label>
-              {p.hint && <PermissionHint text={p.hint} label={p.label} />}
+              {p.hint && <HintTip text={p.hint} label={p.label} />}
             </span>
           ))}
         </div>
