@@ -80,23 +80,23 @@ function HealthCard({
         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${style.icon}`}>
           <Icon className="h-5 w-5" />
         </div>
-        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${style.badge}`}>
+        <span className={`rounded-full px-2 py-0.5 text-[13px]/5 font-semibold ${style.badge}`}>
           {statusLabel ?? style.label}
         </span>
       </div>
-      <h3 className="text-sm font-bold text-slate-800">{koreanName}</h3>
-      <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+      <h3 className="text-[15px]/6 font-bold text-slate-800">{koreanName}</h3>
+      <p className="mt-0.5 text-[12px]/4 font-semibold uppercase tracking-wide text-slate-400">
         {technicalName}
       </p>
-      <p className="mt-2 min-h-10 text-xs leading-5 text-slate-500">{description}</p>
-      <p className="mt-2 text-xs font-medium text-slate-700">{detail}</p>
+      <p className="mt-2 min-h-10 text-[13px]/5 text-slate-500">{description}</p>
+      <p className="mt-2 text-[13px]/5 font-medium text-slate-700">{detail}</p>
       {technicalDetail && (
-        <p className="mt-1 break-all text-[11px] leading-4 text-slate-400" title={technicalDetail}>
+        <p className="mt-1 break-all text-[12px]/4 text-slate-400" title={technicalDetail}>
           {technicalDetail}
         </p>
       )}
       {tone !== 'ok' && (
-        <p className={`mt-2 rounded-md px-2 py-1.5 text-[11px] leading-4 ${
+        <p className={`mt-2 rounded-md px-2 py-1.5 text-[12px]/4 ${
           tone === 'error' ? 'bg-red-50 text-red-700'
             : tone === 'degraded' ? 'bg-amber-50 text-amber-700'
               : 'bg-slate-100 text-slate-600'
@@ -144,22 +144,22 @@ function JobList({ title, Icon, jobs, available, unavailableMessage, fullListTo,
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center gap-2">
         <Icon className="h-4 w-4 shrink-0 text-slate-500" />
-        <h3 className="text-sm font-bold text-slate-700">{title}</h3>
+        <h3 className="text-[15px]/6 font-bold text-slate-700">{title}</h3>
         <Link
           to={fullListTo}
           title={fullListLabel}
-          className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-medium text-blue-700 transition hover:bg-blue-50"
+          className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[13px]/5 font-medium text-blue-700 transition hover:bg-blue-50"
         >
           전체 보기
           <ChevronRight className="h-3.5 w-3.5" />
         </Link>
       </div>
       {!available ? (
-        <div className="rounded-lg bg-red-50 px-3 py-4 text-sm text-red-700">
+        <div className="rounded-lg bg-red-50 px-3 py-4 text-[15px]/6 text-red-700">
           {unavailableMessage || '작업 이력을 조회할 수 없습니다.'}
         </div>
       ) : jobs.length === 0 ? (
-        <p className="rounded-lg bg-slate-50 px-3 py-6 text-center text-sm text-slate-400">
+        <p className="rounded-lg bg-slate-50 px-3 py-6 text-center text-[15px]/6 text-slate-400">
           최근 작업 없음
         </p>
       ) : (
@@ -173,27 +173,27 @@ function JobList({ title, Icon, jobs, available, unavailableMessage, fullListTo,
               <li key={job.id} className="rounded-lg border border-slate-100 bg-slate-50/60 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-700" title={job.target_name ?? undefined}>
+                    <p className="truncate text-[15px]/6 font-semibold text-slate-700" title={job.target_name ?? undefined}>
                       {job.target_name || `작업 #${job.id}`}
                     </p>
                     {job.target_detail && (
-                      <p className="mt-0.5 truncate text-xs text-slate-500" title={job.target_detail}>
+                      <p className="mt-0.5 truncate text-[13px]/5 text-slate-500" title={job.target_detail}>
                         {job.target_detail}
                       </p>
                     )}
                   </div>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${style.badge}`}>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[12px]/4 font-semibold ${style.badge}`}>
                     {status.label}
                   </span>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400">
+                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]/4 text-slate-400">
                   <span>{formatLocalDateTime(time)}</span>
                   {duration && <span>· 소요 {duration}</span>}
                   {job.retry_count != null && job.retry_count > 0 && <span>· 재시도 {job.retry_count}회</span>}
                   <span>· 작업 #{job.id}</span>
                 </div>
                 {job.error_message && (
-                  <p className="mt-2 break-words rounded-md bg-red-50 px-2 py-1.5 text-xs leading-5 text-red-700">
+                  <p className="mt-2 break-words rounded-md bg-red-50 px-2 py-1.5 text-[13px]/5 text-red-700">
                     {job.error_message}
                   </p>
                 )}
@@ -237,7 +237,7 @@ export default function OpsStatusPage() {
     return (
       <div>
         <h1 className="portal-content-page-title portal-content-page-title--mb-5">운영 상태</h1>
-        <p className="text-sm text-slate-400">상태 확인 중…</p>
+        <p className="text-[15px]/6 text-slate-400">상태 확인 중…</p>
       </div>
     )
   }
@@ -246,7 +246,7 @@ export default function OpsStatusPage() {
     return (
       <div>
         <h1 className="portal-content-page-title portal-content-page-title--mb-5">운영 상태</h1>
-        <div role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-[15px]/6 text-red-700">
           운영 상태 API에 연결할 수 없습니다. 백엔드와 네트워크 상태를 확인해 주세요.
         </div>
       </div>
@@ -291,7 +291,7 @@ export default function OpsStatusPage() {
           type="button"
           onClick={() => statusQuery.refetch()}
           disabled={statusQuery.isFetching}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px]/5 font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${statusQuery.isFetching ? 'animate-spin' : ''}`} />
           지금 새로 확인
@@ -309,22 +309,22 @@ export default function OpsStatusPage() {
               ? <XCircle className="h-5 w-5 text-red-600" />
               : <AlertTriangle className="h-5 w-5 text-amber-600" />}
           <div>
-            <p className="text-sm font-bold text-slate-800">
+            <p className="text-[15px]/6 font-bold text-slate-800">
               종합 상태: {overallTone === 'ok' ? '정상' : overallTone === 'error' ? '장애' : '주의 필요'}
             </p>
-            <p className="text-xs text-slate-500">
+            <p className="text-[13px]/5 text-slate-500">
               마지막 확인 {formatLocalDateTime(s.checked_at)} · {POLL_MS / 1000}초마다 자동 갱신
             </p>
           </div>
         </div>
         {statusQuery.isError && (
-          <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">
+          <span className="rounded-full bg-red-100 px-2.5 py-1 text-[13px]/5 font-semibold text-red-700">
             최신 상태 갱신 실패 · 직전 결과 표시 중
           </span>
         )}
       </section>
 
-      <h2 className="mb-2 text-sm font-bold text-slate-700">핵심 구성요소</h2>
+      <h2 className="mb-2 text-[15px]/6 font-bold text-slate-700">핵심 구성요소</h2>
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <HealthCard
           koreanName="데이터 저장소"
@@ -385,7 +385,7 @@ export default function OpsStatusPage() {
         />
       </div>
 
-      <h2 className="mb-2 text-sm font-bold text-slate-700">발송·저장</h2>
+      <h2 className="mb-2 text-[15px]/6 font-bold text-slate-700">발송·저장</h2>
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <HealthCard
           koreanName="메일 서버 연결"
@@ -414,7 +414,7 @@ export default function OpsStatusPage() {
       </div>
 
       {s.has_recent_failures && (
-        <div role="alert" className="mb-6 flex items-start gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div role="alert" className="mb-6 flex items-start gap-2 rounded-lg bg-red-50 px-4 py-3 text-[15px]/6 text-red-700">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             최근 24시간 실패: 데이터 새로고침 {s.recent_failures.refresh}건 · 메일 {s.recent_failures.mail}건 · 파일 내보내기 {s.recent_failures.export}건
@@ -424,7 +424,7 @@ export default function OpsStatusPage() {
 
       <div className="mb-2 flex items-center gap-2">
         <Activity className="h-4 w-4 text-slate-500" />
-        <h2 className="text-sm font-bold text-slate-700">최근 작업</h2>
+        <h2 className="text-[15px]/6 font-bold text-slate-700">최근 작업</h2>
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <JobList
@@ -457,14 +457,14 @@ export default function OpsStatusPage() {
         />
       </div>
 
-      <p className="mt-4 text-xs text-slate-400">
+      <p className="mt-4 text-[13px]/5 text-slate-400">
         실행 모드: {APP_MODE_LABEL[s.app_mode] ?? s.app_mode} · 인증 방식: {AUTH_MODE_LABEL[s.auth_mode] ?? s.auth_mode}
       </p>
-      <p className="mt-1 text-xs text-slate-400">
+      <p className="mt-1 text-[13px]/5 text-slate-400">
         {deploymentLabel} · 기동 {formatLocalDateTime(s.deployment.started_at)}
         {formatDurationKo(s.deployment.uptime_seconds) ? ` · 가동 ${formatDurationKo(s.deployment.uptime_seconds)}` : ''}
       </p>
-      <p className="mt-1 text-xs text-slate-400">
+      <p className="mt-1 text-[13px]/5 text-slate-400">
         장애 알림: {s.alerts.enabled && s.alerts.recipient_count > 0
           ? `사용 중 · 수신 ${s.alerts.recipient_count}명 · 같은 장애는 ${s.alerts.resend_minutes}분간 재발송 억제`
           : '사용하지 않음'}
