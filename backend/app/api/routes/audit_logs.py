@@ -10,9 +10,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.deps import SessionDep, require_menu
+from app.core.hangul_keyboard import expand_search_terms
 from app.models.log import AuditLog
 from app.schemas.audit import AuditLogResponse
 
@@ -50,9 +51,14 @@ async def list_audit_logs(
         stmt = stmt.where(AuditLog.resource_type == resource_type)
     if result is not None:
         stmt = stmt.where(AuditLog.result == result)
-    if q:
-        pattern = f"%{q}%"
-        stmt = stmt.where(AuditLog.actor_label.ilike(pattern) | AuditLog.resource_id.ilike(pattern))
+    # 영문 자판으로 입력한 한글(예: tjgmldus)도 찾도록 변환 검색어를 함께 비교한다.
+    search_terms = expand_search_terms(q)
+    if search_terms:
+        stmt = stmt.where(or_(*[
+            column.ilike(f"%{term}%")
+            for term in search_terms
+            for column in (AuditLog.actor_label, AuditLog.resource_id)
+        ]))
 
     stmt = stmt.order_by(AuditLog.occurred_at_utc.desc(), AuditLog.id.desc())
     stmt = stmt.limit(limit).offset(offset)

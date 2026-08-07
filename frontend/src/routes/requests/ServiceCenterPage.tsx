@@ -11,6 +11,7 @@ import { Plus, Search, RotateCcw, ClipboardList, Paperclip, X, ChevronLeft, Chev
 import { requestsApi } from '@/api/requestsApi'
 import { useAuthStore } from '@/stores/useAuthStore'
 import RequestDetailModal from '@/components/RequestDetailModal'
+import { buildSearchTerms, matchesSearchTerms } from '@/utils/hangulKeyboard'
 import {
   REQUEST_STATUS_CLS,
   REQUEST_STATUS_DOT,
@@ -84,16 +85,12 @@ export default function ServiceCenterPage() {
   const all = listQuery.data ?? []
 
   const filtered = useMemo(() => {
-    const q = appliedSearch.trim().toLowerCase()
+    // 원문과 두벌식 한글 변환값을 함께 비교해 영문 자판 입력도 검색된다.
+    const terms = buildSearchTerms(appliedSearch)
     return all.filter((r) => {
       if (typeFilter && r.request_type !== typeFilter) return false
       if (statusFilter && r.status !== statusFilter) return false
-      if (q) {
-        const t = r.title.toLowerCase()
-        const name = (r.requester_name ?? '').toLowerCase()
-        if (!t.includes(q) && !name.includes(q)) return false
-      }
-      return true
+      return matchesSearchTerms([r.title, r.requester_name], terms)
     })
   }, [all, typeFilter, statusFilter, appliedSearch])
 

@@ -5,7 +5,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Search, X } from 'lucide-react'
 
-import { englishKeyboardToHangul } from '@/utils/hangulKeyboard'
+import { buildSearchTerms, matchesSearchTerms } from '@/utils/hangulKeyboard'
 import type {
   LifecycleAction,
   LifecycleResponse,
@@ -402,19 +402,12 @@ function UserSearchBox({ value, onChange }: { value: string; onChange: (value: s
 export function UserActivityTable({ rows, loading }: { rows: UserActivityRow[]; loading?: boolean }) {
   const [query, setQuery] = useState('')
   const filteredRows = useMemo(() => {
-    const rawQuery = query.trim()
-    if (!rawQuery) return rows
-    // 영문 자판으로 입력한 경우에도 원문(사번 등)과 두벌식 한글 변환값을 함께 비교한다.
-    // 예: tjgmldus → "tjgmldus" 및 "서희연" 모두 검색어로 사용.
-    const terms = [...new Set([
-      rawQuery.toLowerCase(),
-      englishKeyboardToHangul(rawQuery).toLowerCase(),
-    ])]
-    return rows.filter((row) => {
-      const values = [row.user_name ?? '', row.emp_no ?? '', row.department, row.company ?? '']
-        .map((value) => value.toLowerCase())
-      return terms.some((term) => values.some((value) => value.includes(term)))
-    })
+    const terms = buildSearchTerms(query)
+    if (terms.length === 0) return rows
+    return rows.filter((row) => matchesSearchTerms(
+      [row.user_name, row.emp_no, row.department, row.company],
+      terms,
+    ))
   }, [rows, query])
   const { sortedRows, sort, toggle } = useSortedRows(filteredRows, USER_SORT_ACCESSORS, 'report_views')
 

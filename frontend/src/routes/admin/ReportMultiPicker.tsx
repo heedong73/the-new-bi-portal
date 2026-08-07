@@ -7,6 +7,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, FileBarChart, Folder, Search } from 'lucide-react'
 
 import type { FolderItem, ReportAdmin } from '@/types/reportAdmin'
+import { buildSearchTerms, matchesSearchTerms } from '@/utils/hangulKeyboard'
 
 interface Props {
   folders: FolderItem[]
@@ -23,9 +24,9 @@ export default function ReportMultiPicker({ folders, reports, value, onChange }:
     () => new Set(folders.filter((folder) => folder.parent_id !== null).map((folder) => folder.id)),
   )
 
-  const term = q.trim().toLowerCase()
+  const terms = buildSearchTerms(q)
   const matches = (r: ReportAdmin) =>
-    !term || `${r.display_name ?? ''} ${r.report_name ?? ''}`.toLowerCase().includes(term)
+    matchesSearchTerms([r.display_name, r.report_name], terms)
 
   const childFolders = useMemo(() => {
     const m = new Map<number | null, FolderItem[]>()
@@ -63,7 +64,7 @@ export default function ReportMultiPicker({ folders, reports, value, onChange }:
     }
     return check
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [childFolders, reportsByFolder, term])
+  }, [childFolders, reportsByFolder, terms])
 
   function toggleReport(id: number) {
     const next = new Set(value)
@@ -90,8 +91,9 @@ export default function ReportMultiPicker({ folders, reports, value, onChange }:
   }
 
   const renderFolder = (folder: FolderItem, depth: number): ReactNode => {
-    if (term && !folderHasMatch(folder.id)) return null
-    const isOpen = term ? true : !collapsed.has(folder.id)
+    const searching = terms.length > 0
+    if (searching && !folderHasMatch(folder.id)) return null
+    const isOpen = searching ? true : !collapsed.has(folder.id)
     const subFolders = childFolders.get(folder.id) ?? []
     const subReports = (reportsByFolder.get(folder.id) ?? []).filter(matches)
     return (

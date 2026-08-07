@@ -11,6 +11,7 @@ from sqlalchemy import select, func, or_
 from app.core.constants import AuditAction, RoleCode, PermissionAction
 from app.core.deps import SessionDep, require_menu, get_current_user
 from app.core.errors import NotFoundError, ConflictError
+from app.core.hangul_keyboard import expand_search_terms
 from app.models.report import ReportFolder, Report
 from app.schemas.folder import FolderCreate, FolderUpdate, FolderResponse, FolderTreeNode
 from app.services.audit_service import append_audit
@@ -102,17 +103,21 @@ async def folder_tree(
     (System_Operator/로컬 관리자)는 관리 목적상 빈 폴더까지 본다.
     """
     folders = (await db.execute(select(ReportFolder).order_by(ReportFolder.sort_order, ReportFolder.id))).scalars().all()
-    normalized_query = (q or "").strip()
+    # 영문 자판으로 입력한 한글(예: tjgmldus)도 찾도록 변환 검색어를 함께 비교한다.
+    search_terms = expand_search_terms(q)
     reports_stmt = select(Report)
-    if normalized_query:
-        pattern = f"%{normalized_query}%"
-        reports_stmt = reports_stmt.where(or_(
-            Report.display_name.ilike(pattern),
-            Report.report_name.ilike(pattern),
-            Report.description.ilike(pattern),
-            Report.author_label.ilike(pattern),
-            Report.category.ilike(pattern),
-        ))
+    if search_terms:
+        reports_stmt = reports_stmt.where(or_(*[
+            column.ilike(f"%{term}%")
+            for term in search_terms
+            for column in (
+                Report.display_name,
+                Report.report_name,
+                Report.description,
+                Report.author_label,
+                Report.category,
+            )
+        ]))
     reports = (await db.execute(reports_stmt)).scalars().all()
 
     accessible = await permission_service.accessible_report_ids(
@@ -145,7 +150,7 @@ async def folder_tree(
         RoleCode.SYSTEM_OPERATOR.value in current.get("roles", [])
         or bool(current.get("is_local_admin"))
     )
-    if is_operator and not normalized_query:
+    if is_operator and not search_terms:
         return roots
 
     # (일반 사용자) 하위(자기 포함)에 조회권 있는 레포트가 하나도 없는 폴더는 숨긴다(R41.4/R41.7).

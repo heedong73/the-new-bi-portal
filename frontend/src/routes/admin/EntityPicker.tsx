@@ -2,6 +2,7 @@ import { useId, useMemo, useState, type FocusEvent, type KeyboardEvent } from 'r
 import { ChevronDown, Search, X } from 'lucide-react'
 
 import type { GroupResponse, UserListItem } from '@/types/admin'
+import { buildSearchTerms, matchesSearchTerms } from '@/utils/hangulKeyboard'
 
 interface PickerItem {
   id: number
@@ -51,10 +52,6 @@ const DENSITY = {
   },
 } as const
 
-function normalize(value: string): string {
-  return value.trim().toLocaleLowerCase('ko')
-}
-
 function SearchablePicker({
   items,
   value,
@@ -73,11 +70,11 @@ function SearchablePicker({
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const selected = items.find((item) => item.id === value)
-  const term = normalize(query)
-  const filtered = useMemo(
-    () => (term ? items.filter((item) => normalize(item.searchText).includes(term)) : items),
-    [items, term],
-  )
+  const filtered = useMemo(() => {
+    const terms = buildSearchTerms(query)
+    if (terms.length === 0) return items
+    return items.filter((item) => matchesSearchTerms([item.searchText], terms))
+  }, [items, query])
   const visibleItems = filtered.slice(0, 100)
 
   function close() {

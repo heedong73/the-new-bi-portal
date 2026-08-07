@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.hangul_keyboard import expand_search_terms
 from app.models.report import (
     Report,
     ReportFavorite,
@@ -143,15 +144,19 @@ async def catalog(
             return [], 0
         conditions.append(Report.folder_id.in_(scoped_folder_ids))
 
-    normalized_query = (query or "").strip()
-    if normalized_query:
-        pattern = f"%{normalized_query}%"
+    # 영문 자판으로 입력한 한글(예: tjgmldus)도 찾도록 변환 검색어를 함께 비교한다.
+    search_terms = expand_search_terms(query)
+    if search_terms:
         search_conditions = [
-            Report.display_name.ilike(pattern),
-            Report.report_name.ilike(pattern),
-            Report.description.ilike(pattern),
-            Report.author_label.ilike(pattern),
-            Report.category.ilike(pattern),
+            column.ilike(f"%{term}%")
+            for term in search_terms
+            for column in (
+                Report.display_name,
+                Report.report_name,
+                Report.description,
+                Report.author_label,
+                Report.category,
+            )
         ]
         conditions.append(or_(*search_conditions))
 

@@ -14,6 +14,7 @@ from sqlalchemy import delete, select, text
 from app.core.constants import AuditAction, RoleCode
 from app.core.deps import SessionDep, require_menu
 from app.core.errors import NotFoundError, ValidationError
+from app.core.hangul_keyboard import expand_search_terms
 from app.models.auth import Role, User, UserRole
 from app.models.portal import UserGroup, UserGroupMember
 from app.schemas.org import (
@@ -110,9 +111,18 @@ async def org_members(
         params["dept"] = dept_id
 
     where_q = ""
-    if q and q.strip():
-        where_q = "AND (u.user_name ILIKE :q OR u.emp_no ILIKE :q OR u.cmp_email ILIKE :q)"
-        params["q"] = f"%{q.strip()}%"
+    # 영문 자판으로 입력한 한글(예: tjgmldus → 서희연)도 찾도록 변환 검색어를 함께 비교한다.
+    # 검색어는 SQL 문자열에 넣지 않고 후보별 바인드 파라미터로만 전달한다.
+    search_terms = expand_search_terms(q)
+    if search_terms:
+        clauses = []
+        for index, term in enumerate(search_terms):
+            key = f"q{index}"
+            clauses.append(
+                f"u.user_name ILIKE :{key} OR u.emp_no ILIKE :{key} OR u.cmp_email ILIKE :{key}"
+            )
+            params[key] = f"%{term}%"
+        where_q = f"AND ({' OR '.join(clauses)})"
 
     sql = (
         "SELECT u.emp_no, u.user_name, u.cmp_email, j.dept_id, d.dept_name, "

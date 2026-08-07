@@ -10,15 +10,12 @@ import { Folder, FolderOpen, FileBarChart, ChevronRight, ChevronDown, Search, X 
 
 import { foldersAdminApi, reportAdminApi } from '@/api/reportAdminApi'
 import type { FolderItem, ReportAdmin } from '@/types/reportAdmin'
+import { buildSearchTerms, matchesSearchTerms } from '@/utils/hangulKeyboard'
 
 function reportName(r: ReportAdmin): string {
   return r.display_name || r.report_name || r.report_id
 }
 
-/** 검색 비교용 정규화. 앞뒤 공백과 대소문자 차이는 무시한다. */
-function normalize(value: string): string {
-  return value.trim().toLocaleLowerCase('ko')
-}
 
 /** 로딩 중 기본값. 참조가 고정돼야 useMemo 의존성이 안정적으로 유지된다. */
 const NO_FOLDERS: FolderItem[] = []
@@ -46,8 +43,9 @@ export default function ReportPickerTree({ value, onChange }: Props) {
   const reports = reportsQuery.data ?? NO_REPORTS
 
   const [query, setQuery] = useState('')
-  const term = normalize(query)
-  const searching = term !== ''
+  // 원문과 두벌식 한글 변환값을 함께 비교해 영문 자판 입력도 검색된다.
+  const terms = useMemo(() => buildSearchTerms(query), [query])
+  const searching = terms.length > 0
 
   // 수정 화면의 선택 레포트가 보이도록 해당 폴더부터 루트까지의 경로를 구한다.
   const selectedFolderPath = useMemo(() => {
@@ -120,7 +118,7 @@ export default function ReportPickerTree({ value, onChange }: Props) {
 
     // 폴더명이 걸리면 그 안의 하위 폴더·레포트도 이어서 탐색할 수 있게 모두 포함한다.
     const insideMatchedFolder = new Set<number>()
-    const stack = folders.filter((f) => normalize(f.name).includes(term)).map((f) => f.id)
+    const stack = folders.filter((f) => matchesSearchTerms([f.name], terms)).map((f) => f.id)
     while (stack.length > 0) {
       const id = stack.pop()!
       if (insideMatchedFolder.has(id)) continue
@@ -131,7 +129,7 @@ export default function ReportPickerTree({ value, onChange }: Props) {
     const visibleReports = new Set<number>()
     for (const r of reports) {
       const inMatchedFolder = r.folder_id != null && insideMatchedFolder.has(r.folder_id)
-      if (inMatchedFolder || normalize(reportName(r)).includes(term)) visibleReports.add(r.id)
+      if (inMatchedFolder || matchesSearchTerms([reportName(r)], terms)) visibleReports.add(r.id)
     }
 
     // 걸린 항목까지 내려가는 상위 폴더가 없으면 트리에서 보이지 않으므로 조상도 채운다.
@@ -149,7 +147,7 @@ export default function ReportPickerTree({ value, onChange }: Props) {
     }
 
     return { visibleFolders, visibleReports }
-  }, [searching, term, folders, reports, childrenOf])
+  }, [searching, terms, folders, reports, childrenOf])
 
   const visibleFoldersOf = (parentId: number | null): FolderItem[] => {
     const list = childrenOf.get(parentId) ?? []

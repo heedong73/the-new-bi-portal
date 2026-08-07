@@ -22,10 +22,11 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.config import settings
 from app.core.constants import AuditAction, RequestStatus, RoleCode
+from app.core.hangul_keyboard import expand_search_terms
 from app.core.timezone import to_local
 from app.core.deps import SessionDep, get_current_user, require_role
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -367,11 +368,14 @@ async def list_requests(
         stmt = stmt.where(RequestModel.status == status)
     if request_type:
         stmt = stmt.where(RequestModel.request_type == request_type)
-    if q and q.strip():
-        like = f"%{q.strip()}%"
-        stmt = stmt.join(User, User.id == RequestModel.requester_id).where(
-            RequestModel.title.ilike(like) | User.name.ilike(like)
-        )
+    # 영문 자판으로 입력한 한글(예: tjgmldus)도 찾도록 변환 검색어를 함께 비교한다.
+    search_terms = expand_search_terms(q)
+    if search_terms:
+        stmt = stmt.join(User, User.id == RequestModel.requester_id).where(or_(*[
+            column.ilike(f"%{term}%")
+            for term in search_terms
+            for column in (RequestModel.title, User.name)
+        ]))
 
     rows = (await db.execute(stmt)).scalars().all()
     ids = {r.id for r in rows}

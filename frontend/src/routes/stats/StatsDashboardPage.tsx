@@ -13,10 +13,12 @@ import {
   ResponsiveContainer, ComposedChart, BarChart, Bar, Line, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
+import type { TooltipContentProps } from 'recharts'
 
 import { statsApi } from '@/api/dashboardApi'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { BOM, escapeCsvField } from '@/utils/csv'
+import { buildSearchTerms, matchesSearchTerms } from '@/utils/hangulKeyboard'
 import {
   HoverTooltip,
   InsightsPanel,
@@ -165,9 +167,9 @@ function ReportSearchSelect({ reports, value, onChange, placeholder, ariaLabel }
 
   const selected = value != null ? reports.find((r) => r.id === value) ?? null : null
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return reports
-    return reports.filter((r) => r.name.toLowerCase().includes(q))
+    const terms = buildSearchTerms(query)
+    if (terms.length === 0) return reports
+    return reports.filter((r) => matchesSearchTerms([r.name], terms))
   }, [reports, query])
 
   useEffect(() => {
@@ -289,7 +291,7 @@ function HourlyChart({ data, height = 240 }: { data: HourlyPoint[]; height?: num
           <YAxis yAxisId="left" tick={{ fontSize: 11 }} allowDecimals={false} />
           <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} />
           <Tooltip labelFormatter={(h) => `${h}시`} />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Legend wrapperStyle={{ fontSize: 13 }} formatter={legendLabel} />
           <Bar yAxisId="left" dataKey="views" name="레포트 조회 수" fill="#93c5fd" radius={[3, 3, 0, 0]} />
           <Line yAxisId="right" dataKey="users" name="사용자 수" stroke="#7c3aed" strokeWidth={2} dot={{ r: 2 }} />
         </ComposedChart>
@@ -364,56 +366,290 @@ function TopReportsBar({ data, selectedReportId, onSelect, height = 240, nameAxi
   )
 }
 
-const GRANULARITY_LABEL: Record<'day' | 'week' | 'month', string> = { day: '전일', week: '전주', month: '전월' }
+const TREND_AXIS_TICK = { fontSize: 11, fill: '#64748b' } as const
 
-/** 마지막 포인트 vs 그 이전 포인트의 전기간 대비 변화율 배지. */
-function TrendSummaryBadges({ series, granularity }: { series: TrendPoint[]; granularity: 'day' | 'week' | 'month' }) {
-  if (series.length < 2) return null
-  const cur = series[series.length - 1]
-  const prev = series[series.length - 2]
-  const pct = (a: number, b: number): number | null => (b === 0 ? null : Math.round(((a - b) / b) * 1000) / 10)
+type TrendGranularity = 'day' | 'week' | 'month'
+type TrendMetricKey = 'views' | 'unique_users' | 'new_reports' | 'total_reports'
+type TrendComparisonMode = 'rate' | 'absolute'
+type TrendDeltaTone = 'up' | 'down' | 'neutral'
 
-  const items: { label: string; value: number; pct: number | null }[] = [
-    { label: '조회 수', value: cur.views, pct: pct(cur.views, prev.views) },
-    { label: '접속자 수', value: cur.unique_users, pct: pct(cur.unique_users, prev.unique_users) },
-    { label: '신규 레포트', value: cur.new_reports, pct: pct(cur.new_reports, prev.new_reports) },
-  ]
-  const label = GRANULARITY_LABEL[granularity]
+type TrendMetric = {
+  key: TrendMetricKey
+  label: string
+  color: string
+  comparison: TrendComparisonMode
+}
+
+type TrendChartProps = {
+  series: TrendPoint[]
+  granularity: TrendGranularity
+  fromDate: string
+  toDate: string
+}
+
+const USAGE_TREND_METRICS = [
+  { key: 'views', label: '조회 수', color: '#93c5fd', comparison: 'rate' },
+  { key: 'unique_users', label: '접속자 수', color: '#7c3aed', comparison: 'rate' },
+] as const satisfies readonly TrendMetric[]
+
+const REPORT_TREND_METRICS = [
+  { key: 'new_reports', label: '신규 레포트 수', color: '#86efac', comparison: 'rate' },
+  { key: 'total_reports', label: '누적 레포트 수', color: '#16a34a', comparison: 'absolute' },
+] as const satisfies readonly TrendMetric[]
+
+const TREND_DELTA_TONE_CLASS: Record<TrendDeltaTone, string> = {
+  up: 'text-emerald-300',
+  down: 'text-rose-300',
+  neutral: 'text-slate-400',
+}
+
+/** 계열 구분은 아이콘 색으로 유지하고 범례 글자는 항상 읽기 쉬운 색으로 표시한다. */
+function legendLabel(value: string) {
+  return <span style={{ color: '#334155', fontWeight: 600 }}>{value}</span>
+}
+
+/** KST 기준 API 버킷 라벨을 로컬 날짜 경계로 변환한다. */
+function trendPeriodBounds(period: string, granularity: TrendGranularity): { start: Date; end: Date } | null {
+  if (granularity === 'day') {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(period)
+    if (!match) return null
+    const start = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    return { start, end: start }
+  }
+
+  if (granularity === 'month') {
+    const match = /^(\d{4})-(\d{2})$/.exec(period)
+    if (!match) return null
+    const year = Number(match[1])
+    const month = Number(match[2])
+    if (month < 1 || month > 12) return null
+    return {
+      start: new Date(year, month - 1, 1),
+      end: new Date(year, month, 0),
+    }
+  }
+
+  const match = /^(\d{4})-W(\d{2})$/.exec(period)
+  if (!match) return null
+  const year = Number(match[1])
+  const week = Number(match[2])
+  if (week < 1 || week > 53) return null
+  const januaryFourth = new Date(year, 0, 4)
+  const isoWeekday = januaryFourth.getDay() || 7
+  const start = new Date(year, 0, 4 - isoWeekday + 1 + (week - 1) * 7)
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6)
+  return { start, end }
+}
+
+/** 조회 범위가 버킷 전체를 포함하지 않거나 아직 끝나지 않은 현재 버킷이면 부분 집계다. */
+function isPartialTrendPeriod(
+  period: string,
+  granularity: TrendGranularity,
+  fromDate: string,
+  toDate: string,
+): boolean {
+  const bounds = trendPeriodBounds(period, granularity)
+  if (!bounds) return false
+  const selectedStart = fromDate ? parseYmd(fromDate) : null
+  const selectedEnd = toDate ? parseYmd(toDate) : null
+  const today = startOfDay(new Date())
 
   return (
-    <div className="mb-3 flex flex-wrap gap-4 rounded-lg bg-slate-100/70 px-4 py-2 text-xs text-slate-500">
-      {items.map((it) => (
-        <span key={it.label}>
-          {it.label} <b className="text-slate-700">{it.value.toLocaleString()}</b>{' '}
-          {it.pct == null ? (
-            <span className="text-slate-400">({label} 대비 -)</span>
-          ) : (
-            <span className={it.pct >= 0 ? 'text-green-600' : 'text-red-500'}>
-              ({label} 대비 {it.pct >= 0 ? '+' : ''}{it.pct}%)
-            </span>
-          )}
-        </span>
-      ))}
+    (selectedStart != null && bounds.start.getTime() < selectedStart.getTime())
+    || (selectedEnd != null && bounds.end.getTime() > selectedEnd.getTime())
+    || bounds.end.getTime() >= today.getTime()
+  )
+}
+
+function signedValue(value: number): string {
+  return `${value > 0 ? '+' : ''}${value.toLocaleString()}`
+}
+
+function trendComparison(
+  current: number,
+  previous: number,
+  previousPeriod: string,
+  mode: TrendComparisonMode,
+): { text: string; tone: TrendDeltaTone } {
+  const delta = current - previous
+  if (delta === 0) {
+    return { text: `${previousPeriod} 대비 변동 없음`, tone: 'neutral' }
+  }
+  const tone: TrendDeltaTone = delta > 0 ? 'up' : 'down'
+  if (mode === 'absolute') {
+    return { text: `${previousPeriod} 대비 ${signedValue(delta)}`, tone }
+  }
+  if (previous === 0) {
+    return {
+      text: `${previousPeriod} 0 → ${current.toLocaleString()} (${signedValue(delta)})`,
+      tone,
+    }
+  }
+  const percentage = Math.round(((current - previous) / previous) * 1000) / 10
+  return {
+    text: `${previousPeriod} 대비 ${signedValue(delta)} (${signedValue(percentage)}%)`,
+    tone,
+  }
+}
+
+type TrendComparisonTooltipProps = Pick<TooltipContentProps<number, string>, 'active' | 'label'> & {
+  series: TrendPoint[]
+  metrics: readonly TrendMetric[]
+  granularity: TrendGranularity
+  fromDate: string
+  toDate: string
+}
+
+function TrendComparisonTooltip({
+  active,
+  label,
+  series,
+  metrics,
+  granularity,
+  fromDate,
+  toDate,
+}: TrendComparisonTooltipProps) {
+  if (!active || label == null) return null
+  const index = series.findIndex((point) => point.period === String(label))
+  if (index < 0) return null
+
+  const current = series[index]
+  const previous = index > 0 ? series[index - 1] : null
+  const currentPartial = isPartialTrendPeriod(current.period, granularity, fromDate, toDate)
+  const previousPartial = previous != null
+    && isPartialTrendPeriod(previous.period, granularity, fromDate, toDate)
+  const comparisonNotice = previous == null
+    ? '이전 비교 구간 없음'
+    : currentPartial || previousPartial
+      ? `부분 집계 구간 포함 · ${previous.period} 대비 증감 비교 제외`
+      : null
+
+  return (
+    <div role="tooltip" className="min-w-[220px] rounded-lg bg-slate-900 px-3 py-2.5 text-xs text-white shadow-xl">
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-semibold">{current.period}</p>
+        {currentPartial && (
+          <span className="rounded bg-amber-400/20 px-1.5 py-0.5 text-[11px] font-medium text-amber-200">
+            부분 집계
+          </span>
+        )}
+      </div>
+      <div className="mt-2 space-y-2">
+        {metrics.map((metric) => {
+          const comparison = previous != null && comparisonNotice == null
+            ? trendComparison(current[metric.key], previous[metric.key], previous.period, metric.comparison)
+            : null
+          return (
+            <div key={metric.key}>
+              <div className="flex items-center justify-between gap-4">
+                <span className="flex items-center gap-1.5 text-slate-200">
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 rounded-full ring-1 ring-white/40"
+                    style={{ backgroundColor: metric.color }}
+                  />
+                  {metric.label}
+                </span>
+                <strong className="tabular-nums">{current[metric.key].toLocaleString()}</strong>
+              </div>
+              {comparison && (
+                <p className={`mt-0.5 pl-3.5 tabular-nums ${TREND_DELTA_TONE_CLASS[comparison.tone]}`}>
+                  {comparison.text}
+                </p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {comparisonNotice && (
+        <p className="mt-2 border-t border-slate-700 pt-2 text-slate-400">{comparisonNotice}</p>
+      )}
     </div>
   )
 }
 
-function TrendsChart({ series }: { series: TrendPoint[] }) {
+function UsageTrendsChart({ series, granularity, fromDate, toDate }: TrendChartProps) {
   if (series.length === 0) return <p className="text-sm text-slate-400">데이터 없음</p>
   return (
-    <div className="h-80 w-full">
+    <div className="h-72 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={series} margin={{ top: 8, right: 8, bottom: 4, left: -8 }}>
+        <ComposedChart data={series} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-          <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-          <YAxis yAxisId="left" tick={{ fontSize: 11 }} allowDecimals={false} />
-          <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} />
-          <Tooltip />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar yAxisId="right" dataKey="views" name="조회 수" fill="#bfdbfe" radius={[3, 3, 0, 0]} barSize={18} />
-          <Bar yAxisId="left" dataKey="new_reports" name="신규 레포트 수" fill="#bbf7d0" radius={[3, 3, 0, 0]} barSize={10} />
-          <Line yAxisId="left" dataKey="unique_users" name="접속자 수" stroke="#2563eb" strokeWidth={2} dot={{ r: 2 }} />
-          <Line yAxisId="left" dataKey="total_reports" name="누적 레포트 수" stroke="#16a34a" strokeWidth={2} dot={{ r: 2 }} />
+          <XAxis dataKey="period" tick={TREND_AXIS_TICK} />
+          <YAxis
+            yAxisId="views"
+            tick={TREND_AXIS_TICK}
+            allowDecimals={false}
+            label={{ value: '조회 수', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 11 }}
+          />
+          <YAxis
+            yAxisId="users"
+            orientation="right"
+            tick={TREND_AXIS_TICK}
+            allowDecimals={false}
+            label={{ value: '접속자 수', angle: 90, position: 'insideRight', fill: '#64748b', fontSize: 11 }}
+          />
+          <Tooltip
+            cursor={{ fill: '#f8fafc' }}
+            content={({ active, label }) => (
+              <TrendComparisonTooltip
+                active={active}
+                label={label}
+                series={series}
+                metrics={USAGE_TREND_METRICS}
+                granularity={granularity}
+                fromDate={fromDate}
+                toDate={toDate}
+              />
+            )}
+          />
+          <Legend wrapperStyle={{ fontSize: 13 }} formatter={legendLabel} />
+          <Bar yAxisId="views" dataKey="views" name="조회 수" fill="#93c5fd" radius={[3, 3, 0, 0]} barSize={20} />
+          <Line yAxisId="users" dataKey="unique_users" name="접속자 수" stroke="#7c3aed" strokeWidth={2} dot={{ r: 2 }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function ReportTrendsChart({ series, granularity, fromDate, toDate }: TrendChartProps) {
+  if (series.length === 0) return <p className="text-sm text-slate-400">데이터 없음</p>
+  return (
+    <div className="h-72 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={series} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+          <XAxis dataKey="period" tick={TREND_AXIS_TICK} />
+          <YAxis
+            yAxisId="new"
+            tick={TREND_AXIS_TICK}
+            allowDecimals={false}
+            label={{ value: '신규', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 11 }}
+          />
+          <YAxis
+            yAxisId="total"
+            orientation="right"
+            tick={TREND_AXIS_TICK}
+            allowDecimals={false}
+            label={{ value: '누적', angle: 90, position: 'insideRight', fill: '#64748b', fontSize: 11 }}
+          />
+          <Tooltip
+            cursor={{ fill: '#f8fafc' }}
+            content={({ active, label }) => (
+              <TrendComparisonTooltip
+                active={active}
+                label={label}
+                series={series}
+                metrics={REPORT_TREND_METRICS}
+                granularity={granularity}
+                fromDate={fromDate}
+                toDate={toDate}
+              />
+            )}
+          />
+          <Legend wrapperStyle={{ fontSize: 13 }} formatter={legendLabel} />
+          <Bar yAxisId="new" dataKey="new_reports" name="신규 레포트 수" fill="#86efac" radius={[3, 3, 0, 0]} barSize={20} />
+          <Line yAxisId="total" dataKey="total_reports" name="누적 레포트 수" stroke="#16a34a" strokeWidth={2} dot={{ r: 2 }} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -967,9 +1203,9 @@ function OperatorStats() {
 
       {/* ── 추이 탭 ── */}
       {tab === 'trends' && (
-        <SectionCard
-          title="일별/주별/월별 추이 (접속자 · 신규/누적 레포트 · 조회 수)"
-          action={
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className="text-xs font-medium text-slate-500">집계 단위</span>
             <div className="flex gap-1">
               {(['day', 'week', 'month'] as const).map((g) => (
                 <button
@@ -987,17 +1223,33 @@ function OperatorStats() {
                 </button>
               ))}
             </div>
-          }
-        >
+          </div>
+
           {trendsQuery.isLoading || !trendsQuery.data ? (
-            <p className="text-sm text-slate-400">불러오는 중…</p>
+            <SectionCard title="추이">
+              <p className="text-sm text-slate-400">불러오는 중…</p>
+            </SectionCard>
           ) : (
             <>
-              <TrendSummaryBadges series={trendsQuery.data.series} granularity={granularity} />
-              <TrendsChart series={trendsQuery.data.series} />
+              <SectionCard title="이용 추이">
+                <UsageTrendsChart
+                  series={trendsQuery.data.series}
+                  granularity={granularity}
+                  fromDate={fromDate}
+                  toDate={toDate}
+                />
+              </SectionCard>
+              <SectionCard title="레포트 추이">
+                <ReportTrendsChart
+                  series={trendsQuery.data.series}
+                  granularity={granularity}
+                  fromDate={fromDate}
+                  toDate={toDate}
+                />
+              </SectionCard>
             </>
           )}
-        </SectionCard>
+        </div>
       )}
 
       {/* ── 상세 조회 탭 ── */}

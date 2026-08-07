@@ -29,6 +29,7 @@ import { STATUS_COLORS } from "@/components/gantt/ganttGeometry";
 import { compareIsoAsc, formatLocalDateTime } from "@/utils/date";
 import { formatDuration } from "@/utils/duration";
 import { downloadCSV } from "@/utils/csv";
+import { buildSearchTerms, matchesSearchTerms } from "@/utils/hangulKeyboard";
 
 /** 오류 메시지 셀의 표시 최대 길이 (초과 시 truncate + title) */
 const ERROR_CELL_MAX = 80;
@@ -191,15 +192,12 @@ export default function RefreshTable({ runs, onVisibleRowsChange }: RefreshTable
    * 이 결과가 CSV 내보내기 대상(R18.5)이자 onVisibleRowsChange로 상위에 전달된다.
    */
   const visibleRows = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    // 원문과 두벌식 한글 변환값을 함께 비교해 영문 자판 입력도 검색된다.
+    const terms = buildSearchTerms(query);
 
     let result = runs.filter((r) => {
       // 검색: 리포트명 또는 데이터셋명 부분 일치 (R18.2)
-      if (q) {
-        const inReport = r.reportName.toLowerCase().includes(q);
-        const inDataset = r.datasetName.toLowerCase().includes(q);
-        if (!inReport && !inDataset) return false;
-      }
+      if (!matchesSearchTerms([r.reportName, r.datasetName], terms)) return false;
       // 토글: 실패만 / 진행중만 (R18.4)
       if (failedOnly && r.status !== "failed") return false;
       if (inProgressOnly && r.status !== "in_progress") return false;

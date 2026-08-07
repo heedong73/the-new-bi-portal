@@ -136,3 +136,34 @@ export function englishKeyboardToHangul(input: string): string {
   flush()
   return result
 }
+
+/**
+ * 검색어를 비교용 후보 목록으로 확장한다.
+ *
+ * 원문과 두벌식 한글 변환값을 함께 돌려주므로, 영문 자판으로 입력한 한글
+ * (`tjgmldus` → `서희연`)과 실제 영문·숫자 값(사번·이메일 등)이 모두 검색된다.
+ * 변환은 대소문자에 의존하므로(`R`→`ㄲ`) 소문자화보다 먼저 수행한다.
+ */
+export function buildSearchTerms(input: string): string[] {
+  const raw = input.trim()
+  if (!raw) return []
+  return [...new Set([
+    raw.toLocaleLowerCase('ko'),
+    englishKeyboardToHangul(raw).toLocaleLowerCase('ko'),
+  ])]
+}
+
+/**
+ * 검색 대상 값 중 하나라도 확장된 검색어를 포함하는지 확인한다.
+ * `values`의 null/undefined 항목은 무시한다.
+ */
+export function matchesSearchTerms(
+  values: readonly (string | null | undefined)[],
+  terms: readonly string[],
+): boolean {
+  if (terms.length === 0) return true
+  const haystack = values
+    .filter((value): value is string => !!value)
+    .map((value) => value.toLocaleLowerCase('ko'))
+  return terms.some((term) => haystack.some((value) => value.includes(term)))
+}
