@@ -35,7 +35,7 @@ export default function PowerBIEmbed({ embed, onReport, onRendered }: Props) {
             displayOption: models.DisplayOption.FitToPage,
           },
           panes: {
-            filters: { expanded: false, visible: true },
+            filters: { expanded: false, visible: false },
             pageNavigation: { visible: false },
           },
           background: models.BackgroundType.Default,
