@@ -4,13 +4,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Shield, X, Upload, Folder, FolderPlus,
   ChevronRight, ChevronDown, Pencil, Trash2, FileBarChart, FolderInput,
-  ArrowUp, ArrowDown, Info, Copy, Check,
+  ArrowUp, ArrowDown, Info, Copy, Check, Search,
 } from 'lucide-react'
 
 import { reportAdminApi, foldersAdminApi } from '@/api/reportAdminApi'
 import type { FolderItem, ReportAdmin } from '@/types/reportAdmin'
 import { useTaskStore } from '@/stores/useTaskStore'
 import { useBeforeUnload } from '@/hooks/useBeforeUnload'
+import { buildSearchTerms, matchesSearchTerms } from '@/utils/hangulKeyboard'
 import ReportPermissionPanel from './ReportPermissionPanel'
 import FolderTreePicker from './FolderTreePicker'
 import AuthorPicker from './AuthorPicker'
@@ -35,6 +36,10 @@ function formatTechnicalInfo(report: ReportAdmin): string {
     .map((field) => `${field.label}: ${field.value || '-'}`)
     .join('\n')
 }
+
+/** 로딩 중 기본값. 참조가 고정돼야 트리·검색 useMemo가 불필요하게 다시 계산되지 않는다. */
+const NO_FOLDERS: FolderItem[] = []
+const NO_REPORTS: ReportAdmin[] = []
 
 export default function ReportsPage() {
   const queryClient = useQueryClient()
@@ -61,10 +66,13 @@ export default function ReportsPage() {
   const [copiedTechnicalKey, setCopiedTechnicalKey] = useState<string | null>(null)
   const [technicalCopyError, setTechnicalCopyError] = useState(false)
   const pbixInputRef = useRef<HTMLInputElement>(null)
-  // 트리 펼침/폴더 추가 대상
-  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
+  // 트리 펼침/폴더 추가 대상.
+  // null이면 아직 사용자가 펼침을 건드리지 않은 상태로, 아래 기본 접힘 규칙을 따른다.
+  const [collapsedOverride, setCollapsedOverride] = useState<Set<number> | null>(null)
   const [addParentId, setAddParentId] = useState<number | null | 'root'>(null)
   const [newFolderName, setNewFolderName] = useState('')
+  // 목록 검색어. 영문 자판으로 입력한 한글(tjgmldus → 서희연)도 함께 비교한다.
+  const [query, setQuery] = useState('')
 
   function openTechnicalInfo(report: ReportAdmin) {
     setTechnicalInfoReport(report)
@@ -205,8 +213,9 @@ export default function ReportsPage() {
   }
 
   // ---- 트리 구성 ----
-  const folders = foldersQuery.data ?? []
-  const reports = reportsQuery.data ?? []
+  // ?? [] 를 인라인으로 쓰면 렌더마다 새 배열이 생겨 아래 useMemo가 매번 다시 계산된다.
+  const folders = foldersQuery.data ?? NO_FOLDERS
+  const reports = reportsQuery.data ?? NO_REPORTS
   const childFolders = useMemo(() => {
     const m = new Map<number | null, FolderItem[]>()
     for (const f of [...folders].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))) {
@@ -226,9 +235,100 @@ export default function ReportsPage() {
     return m
   }, [reports])
 
+  const terms = useMemo(() => buildSearchTerms(query), [query])
+  const searching = terms.length > 0
+
+  /** 폴더 ID → 루트부터의 폴더명 경로. 최상위 폴더(계열사)명으로도 검색되게 한다. */
+  const folderPathById = useMemo(() => {
+    const folderById = new Map(folders.map((f) => [f.id, f]))
+    const cache = new Map<number, string>()
+    const pathOf = (id: number): string => {
+      const cached = cache.get(id)
+      if (cached !== undefined) return cached
+      const folder = folderById.get(id)
+      if (!folder) return ''
+      // 순환 참조가 있어도 멈추도록 자기 자신을 먼저 채운 뒤 부모를 붙인다.
+      cache.set(id, folder.name)
+      const parentId = folder.parent_id ?? null
+      const path = parentId == null ? folder.name : `${pathOf(parentId)} ${folder.name}`
+      cache.set(id, path)
+      return path
+    }
+    for (const folder of folders) pathOf(folder.id)
+    return cache
+  }, [folders])
+
+  /** 검색 결과로 보일 폴더·레포트 집합. 검색 중이 아니면 null(전체 표시). */
+  const filtered = useMemo(() => {
+    if (!searching) return null
+
+    const folderById = new Map(folders.map((f) => [f.id, f]))
+
+    // 폴더명이 걸리면 그 하위 폴더·레포트도 모두 결과에 포함한다.
+    const insideMatchedFolder = new Set<number>()
+    const stack = folders
+      .filter((f) => matchesSearchTerms([f.name, folderPathById.get(f.id)], terms))
+      .map((f) => f.id)
+    while (stack.length > 0) {
+      const id = stack.pop()!
+      if (insideMatchedFolder.has(id)) continue
+      insideMatchedFolder.add(id)
+      for (const child of childFolders.get(id) ?? []) stack.push(child.id)
+    }
+
+    const visibleReports = new Set<number>()
+    for (const r of reports) {
+      if (r.folder_id != null && insideMatchedFolder.has(r.folder_id)) {
+        visibleReports.add(r.id)
+        continue
+      }
+      const matched = matchesSearchTerms([
+        r.display_name,
+        r.report_name,
+        r.created_by_label,
+        r.author_label,
+        r.description,
+        r.folder_id != null ? folderPathById.get(r.folder_id) : null,
+      ], terms)
+      if (matched) visibleReports.add(r.id)
+    }
+
+    // 걸린 항목까지 내려가는 상위 폴더가 없으면 트리에서 보이지 않으므로 조상도 채운다.
+    const visibleFolders = new Set<number>(insideMatchedFolder)
+    const addSelfAndAncestors = (folderId: number | null) => {
+      let current = folderId
+      while (current != null && !visibleFolders.has(current)) {
+        visibleFolders.add(current)
+        current = folderById.get(current)?.parent_id ?? null
+      }
+    }
+    for (const id of insideMatchedFolder) addSelfAndAncestors(folderById.get(id)?.parent_id ?? null)
+    for (const r of reports) {
+      if (visibleReports.has(r.id)) addSelfAndAncestors(r.folder_id ?? null)
+    }
+
+    return { visibleFolders, visibleReports }
+  }, [searching, terms, folders, reports, childFolders, folderPathById])
+
+  const visibleFoldersOf = (parentId: number | null): FolderItem[] => {
+    const list = childFolders.get(parentId) ?? []
+    return filtered === null ? list : list.filter((f) => filtered.visibleFolders.has(f.id))
+  }
+  const visibleReportsOf = (folderId: number | null): ReportAdmin[] => {
+    const list = reportsByFolder.get(folderId) ?? []
+    return filtered === null ? list : list.filter((r) => filtered.visibleReports.has(r.id))
+  }
+
+  /** 처음에는 모든 폴더를 접어 최상위 폴더만 보여 준다(필요한 폴더만 펼쳐서 본다). */
+  const defaultCollapsed = useMemo(
+    () => new Set(folders.map((f) => f.id)),
+    [folders],
+  )
+  const collapsed = collapsedOverride ?? defaultCollapsed
+
   function toggle(id: number) {
-    setCollapsed((prev) => {
-      const next = new Set(prev)
+    setCollapsedOverride((prev) => {
+      const next = new Set(prev ?? defaultCollapsed)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
@@ -242,6 +342,8 @@ export default function ReportsPage() {
     const idx = siblings.findIndex((x) => x.id === r.id)
     const isFirst = idx <= 0
     const isLast = idx >= siblings.length - 1
+    // 검색 중에는 형제 일부가 숨겨져 순서 변경 결과를 예측할 수 없으므로 잠근다.
+    const orderLocked = searching
     const moveReport = (dir: -1 | 1) => {
       const target = idx + dir
       if (target < 0 || target >= siblings.length) return
@@ -267,12 +369,14 @@ export default function ReportsPage() {
         <span className="truncate text-slate-500" title={r.author_label ?? ''}>{r.author_label || '-'}</span>
         <span className="truncate text-slate-500" title={r.description ?? ''}>{r.description || '-'}</span>
         <div className="flex shrink-0 items-center justify-end gap-1 whitespace-nowrap">
-          <button type="button" disabled={isFirst} onClick={() => moveReport(-1)}
-            title="위로" aria-label={`${name} 위로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30">
+          <button type="button" disabled={orderLocked || isFirst} onClick={() => moveReport(-1)}
+            title={orderLocked ? '검색 중에는 순서를 바꿀 수 없습니다' : '위로'} aria-label={`${name} 위로`}
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30">
             <ArrowUp className="h-4 w-4" />
           </button>
-          <button type="button" disabled={isLast} onClick={() => moveReport(1)}
-            title="아래로" aria-label={`${name} 아래로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30">
+          <button type="button" disabled={orderLocked || isLast} onClick={() => moveReport(1)}
+            title={orderLocked ? '검색 중에는 순서를 바꿀 수 없습니다' : '아래로'} aria-label={`${name} 아래로`}
+            className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30">
             <ArrowDown className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => openEdit(r, 'move')}
@@ -299,13 +403,17 @@ export default function ReportsPage() {
 
   // ---- 렌더: 폴더 노드 (재귀, 렌더 함수) ----
   const renderFolderNode = (folder: FolderItem, depth: number): ReactNode => {
-    const isOpen = !collapsed.has(folder.id)
-    const subFolders = childFolders.get(folder.id) ?? []
-    const subReports = reportsByFolder.get(folder.id) ?? []
+    // 폴더 구조는 항상 최하위까지 보여 주고, 접힘은 그 폴더의 레포트 목록만 감춘다.
+    // 검색 중에는 결과가 바로 보이도록 접힘과 무관하게 펼친다.
+    const subFolders = visibleFoldersOf(folder.id)
+    const subReports = visibleReportsOf(folder.id)
+    const reportsOpen = searching || !collapsed.has(folder.id)
+    const hasReports = subReports.length > 0
     const siblings = childFolders.get(folder.parent_id ?? null) ?? []
     const sibIdx = siblings.findIndex((f) => f.id === folder.id)
     const isFirst = sibIdx <= 0
     const isLast = sibIdx >= siblings.length - 1
+    const orderLocked = searching
     const move = (dir: -1 | 1) => {
       const target = sibIdx + dir
       if (target < 0 || target >= siblings.length) return
@@ -317,15 +425,23 @@ export default function ReportsPage() {
     return (
       <div key={folder.id}>
         <div className="flex items-center gap-1 rounded-md py-1.5 pr-2 hover:bg-slate-100" style={{ paddingLeft: depth * 20 + 4 }}>
-          <button type="button" onClick={() => toggle(folder.id)} aria-label={isOpen ? '접기' : '펼치기'} className="shrink-0 text-slate-400">
-            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </button>
+          {hasReports ? (
+            <button type="button" onClick={() => toggle(folder.id)}
+              aria-label={`${folder.name} 레포트 ${reportsOpen ? '접기' : '펼치기'}`}
+              title={reportsOpen ? '레포트 접기' : `레포트 ${subReports.length}건 펼치기`}
+              className="shrink-0 text-slate-400 hover:text-blue-600">
+              {reportsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+          ) : (
+            // 레포트가 없는 폴더는 펼칠 것이 없으므로 아이콘 자리만 비워 정렬을 맞춘다.
+            <span aria-hidden="true" className="h-4 w-4 shrink-0" />
+          )}
           <Folder className="h-4 w-4 shrink-0 text-amber-500" />
           <span className="flex-1 truncate text-sm font-bold text-slate-800">{folder.name}</span>
-          <button type="button" disabled={isFirst} onClick={() => move(-1)}
-            title="위로" aria-label={`${folder.name} 위로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30"><ArrowUp className="h-[18px] w-[18px]" /></button>
-          <button type="button" disabled={isLast} onClick={() => move(1)}
-            title="아래로" aria-label={`${folder.name} 아래로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30"><ArrowDown className="h-[18px] w-[18px]" /></button>
+          <button type="button" disabled={orderLocked || isFirst} onClick={() => move(-1)}
+            title={orderLocked ? '검색 중에는 순서를 바꿀 수 없습니다' : '위로'} aria-label={`${folder.name} 위로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30"><ArrowUp className="h-[18px] w-[18px]" /></button>
+          <button type="button" disabled={orderLocked || isLast} onClick={() => move(1)}
+            title={orderLocked ? '검색 중에는 순서를 바꿀 수 없습니다' : '아래로'} aria-label={`${folder.name} 아래로`} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600 disabled:opacity-30"><ArrowDown className="h-[18px] w-[18px]" /></button>
           <button type="button" onClick={() => { setAddParentId(folder.id); setNewFolderName('') }}
             title="하위 폴더 추가" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600"><FolderPlus className="h-[18px] w-[18px]" /></button>
           <button type="button" onClick={() => { const n = prompt('폴더 이름', folder.name); if (n && n.trim()) renameFolderMutation.mutate({ id: folder.id, name: n.trim() }) }}
@@ -345,21 +461,18 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {isOpen && (
-          <div>
-            {subFolders.map((sf) => renderFolderNode(sf, depth + 1))}
-            {subReports.map((r) => renderReportRow(r, depth + 1))}
-            {subFolders.length === 0 && subReports.length === 0 && (
-              <p className="py-1 text-xs text-slate-400" style={{ paddingLeft: (depth + 1) * 20 + 28 }}>(비어 있음)</p>
-            )}
-          </div>
-        )}
+        <div>
+          {/* 하위 폴더는 접힘과 무관하게 항상 표시한다. */}
+          {subFolders.map((sf) => renderFolderNode(sf, depth + 1))}
+          {reportsOpen && subReports.map((r) => renderReportRow(r, depth + 1))}
+        </div>
       </div>
     )
   }
 
-  const rootFolders = childFolders.get(null) ?? []
-  const rootReports = reportsByFolder.get(null) ?? []
+  const rootFolders = visibleFoldersOf(null)
+  const rootReports = visibleReportsOf(null)
+  const noSearchMatch = searching && rootFolders.length === 0 && rootReports.length === 0
   const permsReport = permsReportId !== null ? reports.find((r) => r.id === permsReportId) ?? null : null
   const permsReportName = permsReport
     ? (permsReport.display_name || permsReport.report_name || permsReport.report_id)
@@ -394,6 +507,32 @@ export default function ReportsPage() {
 
       {/* 트리 */}
       <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
+        {/* 목록 검색 — 서버 재조회 없이 이미 불러온 목록을 바로 좁힌다. */}
+        <div className="flex items-center justify-end gap-2 px-2 pb-2">
+          <div className="relative w-56 shrink-0">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setQuery('') } }}
+              aria-label="레포트 검색"
+              placeholder="레포트명·작성자·폴더 검색…"
+              className="w-full rounded-lg border border-slate-300 py-1.5 pl-8 pr-8 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+            {query !== '' && (
+              <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          {/* 건수가 나타나고 사라져도 검색창이 밀리지 않도록 자리를 미리 확보한다. */}
+          <span aria-live="polite" className="w-24 shrink-0 whitespace-nowrap text-xs text-slate-400">
+            {searching ? `${filtered?.visibleReports.size.toLocaleString() ?? 0}건 검색됨` : ''}
+          </span>
+        </div>
+
         {/* 컬럼 헤더 */}
         <div className="grid grid-cols-[minmax(0,1.35fr)_110px_150px_130px_minmax(0,1.65fr)_280px] items-center gap-3 border-b border-slate-200 px-2 py-2.5 text-xs font-extrabold text-slate-500">
           <span className="pl-1">레포트명</span>
@@ -405,6 +544,8 @@ export default function ReportsPage() {
         </div>
         {reportsQuery.isLoading || foldersQuery.isLoading ? (
           <p className="px-2 py-6 text-sm text-slate-400">불러오는 중…</p>
+        ) : noSearchMatch ? (
+          <p className="px-2 py-10 text-center text-sm text-slate-400">검색 결과가 없습니다.</p>
         ) : (
           <>
             {rootFolders.map((f) => renderFolderNode(f, 0))}

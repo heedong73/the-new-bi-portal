@@ -96,4 +96,67 @@ describe('ReportsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '삭제' }))
     await waitFor(() => expect(reportAdminApi.remove).toHaveBeenCalledWith(1))
   })
+
+  it('폴더 구조는 최하위까지 보이고 레포트만 접힌 상태로 시작한다', async () => {
+    vi.mocked(reportAdminApi.list).mockResolvedValue([
+      {
+        id: 2, workspace_id: 'ws', report_id: 'pbi-2', display_name: '국내 실적',
+        is_published: true, folder_id: 2, created_at: '2026-06-25T00:00:00Z',
+      },
+    ])
+    wrap(<ReportsPage />)
+
+    // 폴더는 최하위까지 모두 보이고, 레포트만 숨어 있다.
+    expect(await screen.findByText('영업부', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.getByText('국내영업', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.queryByText('국내 실적')).not.toBeInTheDocument()
+
+    // 레포트가 없는 폴더에는 펼치기 버튼이 없다.
+    expect(screen.queryByRole('button', { name: '영업부 레포트 펼치기' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '국내영업 레포트 펼치기' }))
+    expect(await screen.findByText('국내 실적')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '국내영업 레포트 접기' }))
+    expect(screen.queryByText('국내 실적')).not.toBeInTheDocument()
+  })
+
+  it('검색어로 목록을 좁히고 결과가 없으면 안내한다', async () => {
+    wrap(<ReportsPage />)
+    const search = await screen.findByLabelText('레포트 검색')
+
+    fireEvent.change(search, { target: { value: '월간' } })
+    expect(await screen.findByText('월간 매출')).toBeInTheDocument()
+    expect(screen.getByText('1건 검색됨')).toBeInTheDocument()
+
+    fireEvent.change(search, { target: { value: '없는레포트' } })
+    expect(await screen.findByText('검색 결과가 없습니다.')).toBeInTheDocument()
+    expect(screen.queryByText('월간 매출')).not.toBeInTheDocument()
+  })
+
+  it('영문 자판으로 입력한 한글도 검색된다', async () => {
+    wrap(<ReportsPage />)
+    const search = await screen.findByLabelText('레포트 검색')
+    // dnjfrks = 월간
+    fireEvent.change(search, { target: { value: 'dnjfrks' } })
+    expect(await screen.findByText('월간 매출')).toBeInTheDocument()
+  })
+
+  it('폴더명으로 검색하면 그 폴더의 레포트가 보이고 순서 변경은 잠긴다', async () => {
+    vi.mocked(reportAdminApi.list).mockResolvedValue([
+      ...REPORTS,
+      {
+        id: 2, workspace_id: 'ws', report_id: 'pbi-2', display_name: '국내 실적',
+        is_published: true, folder_id: 2, created_at: '2026-06-25T00:00:00Z',
+      },
+    ])
+    wrap(<ReportsPage />)
+    const search = await screen.findByLabelText('레포트 검색')
+
+    fireEvent.change(search, { target: { value: '국내영업' } })
+    expect(await screen.findByText('국내 실적')).toBeInTheDocument()
+    expect(screen.queryByText('월간 매출')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('국내 실적 위로')).toBeDisabled()
+    expect(screen.getByLabelText('국내 실적 아래로')).toBeDisabled()
+  })
 })
