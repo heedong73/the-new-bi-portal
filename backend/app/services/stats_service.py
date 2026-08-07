@@ -1551,13 +1551,27 @@ async def get_lifecycle_activity(
     company_id: int | None = None,
     owner_user_id: int | None = None,
     limit: int = 200,
+    offset: int = 0,
+    action: str | None = None,
 ) -> dict:
-    """감사 원장 기준 레포트 생성·수정·삭제 요약과 최근 이벤트."""
-    actions = [
+    """감사 원장 기준 레포트 생성·수정·삭제 요약과 이벤트 목록.
+
+    요약은 항상 기간 전체 집계이고, 이벤트는 최신순 페이지 단위로 내려준다.
+    ``action``을 주면 그 구분만 조회해 화면 카드 필터가 기간 전체를 훑을 수 있다.
+    ``total``은 현재 필터에 해당하는 기간 전체 건수이므로 "더 보기" 종료 판단에 쓴다.
+    """
+    all_actions = [
         AuditAction.REPORT_CREATE,
         AuditAction.REPORT_UPDATE,
         AuditAction.REPORT_DELETE,
     ]
+    # 요약은 세 구분 모두 필요하고, 목록만 선택 구분으로 좁힌다. 알 수 없는 값은
+    # 필터 없음으로 되돌려 잘못된 파라미터가 빈 목록으로 오해되지 않게 한다.
+    normalized_action = action if action in {a.value for a in all_actions} else None
+    actions = (
+        [a for a in all_actions if a.value == normalized_action]
+        if normalized_action else list(all_actions)
+    )
     scope_condition = None
     if company_id is not None:
         scope_condition = AuditLog.report_company_id == company_id
@@ -1574,7 +1588,7 @@ async def get_lifecycle_activity(
     )
     count_stmt = (
         select(AuditLog.action, func.count())
-        .where(AuditLog.action.in_(actions), AuditLog.result == "success")
+        .where(AuditLog.action.in_(all_actions), AuditLog.result == "success")
         .group_by(AuditLog.action)
     )
     if scope_condition is not None:
@@ -1583,9 +1597,13 @@ async def get_lifecycle_activity(
     base = _apply_audit_period(base, from_dt, to_dt)
     count_stmt = _apply_audit_period(count_stmt, from_dt, to_dt)
 
-    counts = {str(action): int(count) for action, count in (await db.execute(count_stmt)).all()}
+    counts = {str(row_action): int(count) for row_action, count in (await db.execute(count_stmt)).all()}
+    page_size = max(1, min(limit, 1000))
+    page_offset = max(0, offset)
     logs = (await db.execute(
-        base.order_by(AuditLog.occurred_at_utc.desc()).limit(max(1, min(limit, 1000)))
+        base.order_by(AuditLog.occurred_at_utc.desc(), AuditLog.id.desc())
+        .offset(page_offset)
+        .limit(page_size)
     )).scalars().all()
     report_ids_to_load: set[int] = set()
     for log in logs:
@@ -1619,13 +1637,20 @@ async def get_lifecycle_activity(
             "owner_label": log.report_owner_label,
             "actor_name": log.actor_name_snapshot or log.actor_label,
         })
+    summary = {
+        "created": counts.get(AuditAction.REPORT_CREATE.value, 0),
+        "updated": counts.get(AuditAction.REPORT_UPDATE.value, 0),
+        "deleted": counts.get(AuditAction.REPORT_DELETE.value, 0),
+    }
+    # 요약이 이미 기간 전체 집계이므로 별도 count 질의 없이 총 건수를 얻는다.
+    total = sum(counts.get(a.value, 0) for a in actions)
     return {
-        "summary": {
-            "created": counts.get(AuditAction.REPORT_CREATE.value, 0),
-            "updated": counts.get(AuditAction.REPORT_UPDATE.value, 0),
-            "deleted": counts.get(AuditAction.REPORT_DELETE.value, 0),
-        },
+        "summary": summary,
         "events": events,
+        "total": total,
+        "limit": page_size,
+        "offset": page_offset,
+        "action": normalized_action,
     }
 
 

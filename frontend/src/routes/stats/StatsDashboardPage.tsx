@@ -26,7 +26,7 @@ import {
   UserActivityTable,
 } from './StatsAnalysisPanels'
 import type {
-  CompanyReports, HourlyPoint, RawViewEvent, ReportDetailRow, ReportDetailUserRow, StatsHighlights, StatsOverview, StatsReport, TopReport, TrendPoint,
+  CompanyReports, HourlyPoint, LifecycleAction, RawViewEvent, ReportDetailRow, ReportDetailUserRow, StatsHighlights, StatsOverview, StatsReport, TopReport, TrendPoint,
 } from '@/types/dashboard'
 
 // ── 날짜 유틸 ────────────────────────────────────────────────────────────────
@@ -703,6 +703,9 @@ function OverviewKpis({ o, periodActive }: { o: StatsOverview; periodActive: boo
 
 // ── 전역 대시보드 (시스템 운영자 전용) ─────────────────────────────────────
 type Tab = 'main' | 'teams' | 'users' | 'reports' | 'lifecycle' | 'insights' | 'detail' | 'trends'
+
+/** 생명주기 이벤트 목록을 한 번에 불러오는 단위. '더 보기'로 이 크기만큼 늘린다. */
+const LIFECYCLE_PAGE_SIZE = 200
 const TABS: { key: Tab; label: string }[] = [
   { key: 'main', label: '요약' },
   { key: 'teams', label: '팀별' },
@@ -721,6 +724,15 @@ function OperatorStats() {
   const [companyId, setCompanyId] = useState<number | null>(null)
   const [granularity, setGranularity] = useState<'day' | 'week' | 'month'>('month')
   const [detailReportId, setDetailReportId] = useState<number | null>(null)
+  // 추가·수정·삭제 탭: 카드로 구분을 좁히고 '더 보기'로 기간 전체까지 불러온다.
+  const [lifecycleAction, setLifecycleAction] = useState<LifecycleAction | null>(null)
+  const [lifecycleLimit, setLifecycleLimit] = useState(LIFECYCLE_PAGE_SIZE)
+
+  function selectLifecycleAction(action: LifecycleAction | null) {
+    setLifecycleAction(action)
+    // 구분을 바꾸면 처음 페이지부터 다시 본다.
+    setLifecycleLimit(LIFECYCLE_PAGE_SIZE)
+  }
   // 상세 조회 탭: 부서/사용자 선택(상호 배타) → 시간대별 차트 드릴다운
   const [detailDept, setDetailDept] = useState<DepartmentSelection | null>(null)
   const [detailUser, setDetailUser] = useState<{ id: number; name: string } | null>(null)
@@ -780,9 +792,12 @@ function OperatorStats() {
     enabled: tab === 'reports',
     staleTime: 60_000,
   })
+  // 생명주기 목록은 기간 전체를 볼 수 있게 서버에서 구분 필터 + 페이지 단위로 받는다.
   const lifecycleQuery = useQuery({
-    queryKey: ['stats-lifecycle', ...pk],
-    queryFn: ({ signal }) => statsApi.lifecycle(base, signal),
+    queryKey: ['stats-lifecycle', lifecycleAction ?? 'all', lifecycleLimit, ...pk],
+    queryFn: ({ signal }) => statsApi.lifecycle(
+      base, { action: lifecycleAction, limit: lifecycleLimit }, signal,
+    ),
     enabled: tab === 'lifecycle',
     staleTime: 60_000,
   })
@@ -936,7 +951,14 @@ function OperatorStats() {
       )}
 
       {tab === 'lifecycle' && (
-        <LifecyclePanel data={lifecycleQuery.data} loading={lifecycleQuery.isLoading} />
+        <LifecyclePanel
+          data={lifecycleQuery.data}
+          loading={lifecycleQuery.isLoading}
+          selectedAction={lifecycleAction}
+          onSelectAction={selectLifecycleAction}
+          onLoadMore={() => setLifecycleLimit((current) => current + LIFECYCLE_PAGE_SIZE)}
+          loadingMore={lifecycleQuery.isFetching && !lifecycleQuery.isLoading}
+        />
       )}
 
       {tab === 'insights' && (

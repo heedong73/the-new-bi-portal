@@ -506,14 +506,19 @@ async def stats_lifecycle(
     report_id: int | None = Query(default=None),
     company_id: int | None = Query(default=None, alias="company"),
     limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    action: str | None = Query(
+        default=None,
+        description="report_create/report_update/report_delete 중 하나. 미지정은 전체",
+    ),
     *,
     db: SessionDep,
     redis: RedisDep,
     current: dict = Depends(require_menu("stats")),
 ):
-    """감사 원장 기준 레포트 생성·수정·삭제 요약과 최근 이벤트."""
+    """감사 원장 기준 레포트 생성·수정·삭제 요약과 이벤트 목록(구분 필터·페이지)."""
     scope, scope_key = await _resolve_scope(db, current, report_id, company_id)
-    key = _cache_key(f"lifecycle:{limit}", from_, to, scope_key)
+    key = _cache_key(f"lifecycle:{action or 'all'}:{limit}:{offset}", from_, to, scope_key)
     cached = await cache_get_json(redis, key)
     if cached is not None:
         return cached
@@ -530,6 +535,8 @@ async def stats_lifecycle(
         company_id=_event_company_scope(report_id, company_id),
         owner_user_id=owner_user_id,
         limit=limit,
+        offset=offset,
+        action=action,
     )
     await cache_set_json(redis, key, data, settings.CACHE_TTL_SECONDS)
     return data

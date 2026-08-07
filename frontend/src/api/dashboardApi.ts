@@ -3,6 +3,7 @@ import apiClient from '@/api/client'
 import type {
   CompanyItem,
   HourlyPoint,
+  LifecycleAction,
   LifecycleResponse,
   MonitoringStatus,
   RawViewEvent,
@@ -98,9 +99,19 @@ export const statsApi = {
     apiClient.get<ReportPerformanceRow[]>('/api/stats/report-performance', {
       query: q(query), signal,
     }),
-  /** 감사 원장 기준 레포트 생성·수정·삭제. */
-  lifecycle: (query: StatsQuery = {}, signal?: AbortSignal) =>
-    apiClient.get<LifecycleResponse>('/api/stats/lifecycle', { query: q(query), signal }),
+  /** 감사 원장 기준 레포트 생성·수정·삭제. action으로 구분을 좁히고 limit으로 더 불러온다. */
+  lifecycle: (
+    query: StatsQuery = {},
+    options: { action?: LifecycleAction | null; limit?: number } = {},
+    signal?: AbortSignal,
+  ) =>
+    apiClient.get<LifecycleResponse>('/api/stats/lifecycle', {
+      query: q(query, {
+        action: options.action ?? undefined,
+        limit: options.limit ?? undefined,
+      }),
+      signal,
+    }),
   /** 참여도·활용률·미사용/급감 인사이트. */
   insights: (query: StatsQuery = {}, signal?: AbortSignal) =>
     apiClient.get<StatsInsights>('/api/stats/insights', { query: q(query), signal }),

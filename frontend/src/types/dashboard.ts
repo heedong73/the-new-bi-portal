@@ -315,9 +315,17 @@ export interface LifecycleEvent {
   owner_label: string | null
   actor_name: string | null
 }
+/** 생명주기 이벤트 구분. 카드 필터와 서버 조회에 함께 쓰인다. */
+export type LifecycleAction = 'report_create' | 'report_update' | 'report_delete'
+
 export interface LifecycleResponse {
   summary: LifecycleSummary
   events: LifecycleEvent[]
+  /** 현재 필터 기준 기간 전체 건수. '더 보기' 종료 판단에 쓴다. */
+  total: number
+  limit: number
+  offset: number
+  action: LifecycleAction | null
 }
 
 export interface InsightMetrics {
